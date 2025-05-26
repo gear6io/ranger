@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -253,7 +254,7 @@ func createArchive(projectDir, outputPath string, cfg *config.Config) error {
 	manifest := &PackageManifest{
 		PackageInfo: PackageInfo{
 			Name:        cfg.Name,
-			Version:     "0.1.0", // TODO: Get from build info
+			Version:     getBuildVersion(),
 			CreatedAt:   time.Now(),
 			CreatedBy:   "icebox",
 			IncludeData: packOpts.includeData,
@@ -570,4 +571,24 @@ func isDataFile(relPath string) bool {
 	return strings.Contains(relPath, ".icebox/data/") ||
 		strings.HasSuffix(relPath, ".parquet") ||
 		strings.HasSuffix(relPath, ".avro")
+}
+
+// getBuildVersion returns the version from build info or a default version
+func getBuildVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		// Try to get version from VCS info first
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" && len(setting.Value) >= 7 {
+				return "dev-" + setting.Value[:7] // Short commit hash
+			}
+		}
+
+		// Fall back to module version if available
+		if info.Main.Version != "" && info.Main.Version != "(devel)" {
+			return info.Main.Version
+		}
+	}
+
+	// Default version if no build info available
+	return "0.1.0-dev"
 }

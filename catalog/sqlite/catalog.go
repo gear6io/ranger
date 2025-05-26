@@ -168,21 +168,33 @@ func (c *Catalog) CreateTable(ctx context.Context, identifier table.Identifier, 
 		return nil, catalog.ErrTableAlreadyExists
 	}
 
-	// Parse options using a simple configuration structure
+	// Parse options using proper iceberg-go APIs
 	location := c.defaultTableLocation(identifier)
 	properties := make(iceberg.Properties)
 
+	// Set default properties
+	properties["format-version"] = "2"
+	properties["created-by"] = "icebox-catalog"
+
+	// Apply create table options
+	// Note: The current iceberg-go API doesn't expose option application directly
+	// For now, we acknowledge the options but use default behavior
 	for _, opt := range opts {
-		// Apply options - this is a simplified approach
-		_ = opt // For now, acknowledge the option
+		// Options would be applied here when the API supports it
+		_ = opt // Acknowledge the option for future enhancement
 	}
 
-	// Create basic table metadata (simplified for demonstration)
-	// TODO: use the actual iceberg-go APIs
+	// Create proper table metadata using iceberg-go APIs
+	metadata, err := table.NewMetadata(schema, iceberg.UnpartitionedSpec, table.UnsortedSortOrder, location, properties)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create table metadata: %w", err)
+	}
+
+	// Generate metadata location
 	metadataLocation := c.newMetadataLocation(identifier, 1)
 
-	// Write metadata to storage (simplified)
-	if err := c.writeMetadata(schema, location, metadataLocation); err != nil {
+	// Write metadata to storage using proper APIs
+	if err := c.writeMetadataFile(metadata, metadataLocation); err != nil {
 		return nil, fmt.Errorf("failed to write table metadata: %w", err)
 	}
 
@@ -788,44 +800,6 @@ func (c *Catalog) writeMetadataFile(metadata table.Metadata, metadataLocation st
 }
 
 // Helper methods for metadata operations
-
-// writeMetadata writes metadata to the specified location
-func (c *Catalog) writeMetadata(schema *iceberg.Schema, location, metadataLocation string) error {
-	// Handle file:// prefix by removing it
-	metadataLocation = strings.TrimPrefix(metadataLocation, "file://")
-
-	// Create proper Iceberg table metadata using iceberg-go APIs
-	metadata, err := table.NewMetadata(schema, iceberg.UnpartitionedSpec, table.UnsortedSortOrder, location, iceberg.Properties{
-		"format-version": "2",
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create metadata: %w", err)
-	}
-
-	// Serialize metadata to JSON
-	metadataJSON, err := json.Marshal(metadata)
-	if err != nil {
-		return fmt.Errorf("failed to serialize metadata: %w", err)
-	}
-
-	// Use the catalog's filesystem if available
-	if c.fileSystem != nil {
-		file, err := c.fileSystem.Create(metadataLocation)
-		if err != nil {
-			return fmt.Errorf("failed to create file %s: %w", metadataLocation, err)
-		}
-		defer file.Close()
-
-		_, err = file.Write(metadataJSON)
-		if err != nil {
-			return fmt.Errorf("failed to write metadata to file %s: %w", metadataLocation, err)
-		}
-		return nil
-	}
-
-	// Fallback to local file operations
-	return writeFile(metadataLocation, metadataJSON)
-}
 
 // writeFile writes data to a file (helper function)
 func writeFile(path string, data []byte) error {

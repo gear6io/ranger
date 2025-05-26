@@ -26,3 +26,4 @@ go.work.sum
 iceberg-go/
 go-duckdb/
 art/
+gocheck_artifacts/
