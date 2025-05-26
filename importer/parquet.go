@@ -250,15 +250,14 @@ func (p *ParquetImporter) readParquetSchema(parquetFile string) (*arrow.Schema, 
 		return nil, 0, fmt.Errorf("failed to get arrow schema: %w", err)
 	}
 
-	// TODO: For record count, we'll read the table to get the exact count
-	// This is more reliable than trying to parse metadata directly
-	arrowTable, err := arrowReader.ReadTable(context.Background())
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to read arrow table for record count: %w", err)
+	// Get record count from Parquet metadata
+	recordCount := int64(0)
+	for i := 0; i < parquetReader.NumRowGroups(); i++ {
+		rowGroup := parquetReader.RowGroup(i)
+		recordCount += rowGroup.NumRows()
 	}
-	defer arrowTable.Release()
 
-	return schema, arrowTable.NumRows(), nil
+	return schema, recordCount, nil
 }
 
 // readParquetFile reads a Parquet file and returns an Arrow table

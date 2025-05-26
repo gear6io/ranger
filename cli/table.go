@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -784,9 +785,111 @@ func readSchemaFromFile(filename string) (*iceberg.Schema, error) {
 }
 
 func parseSchemaFromJSON(schemaJSON string) (*iceberg.Schema, error) {
-	// TODO: Implement JSON schema parsing
-	// For now, return a simple default schema
-	return createDefaultSchema(), nil
+	// Define the JSON schema structure
+	type JSONField struct {
+		ID       int    `json:"id"`
+		Name     string `json:"name"`
+		Type     string `json:"type"`
+		Required bool   `json:"required"`
+	}
+
+	type JSONSchema struct {
+		Type   string      `json:"type"`
+		Fields []JSONField `json:"fields"`
+	}
+
+	// Parse the JSON
+	var jsonSchema JSONSchema
+	if err := json.Unmarshal([]byte(schemaJSON), &jsonSchema); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON schema: %w", err)
+	}
+
+	// Validate schema type
+	if jsonSchema.Type != "struct" {
+		return nil, fmt.Errorf("schema type must be 'struct', got '%s'", jsonSchema.Type)
+	}
+
+	// Convert JSON fields to Iceberg fields
+	var icebergFields []iceberg.NestedField
+	for _, field := range jsonSchema.Fields {
+		icebergType, err := parseIcebergType(field.Type)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse type for field '%s': %w", field.Name, err)
+		}
+
+		icebergField := iceberg.NestedField{
+			ID:       field.ID,
+			Name:     field.Name,
+			Type:     icebergType,
+			Required: field.Required,
+		}
+		icebergFields = append(icebergFields, icebergField)
+	}
+
+	// Create and return the schema
+	return iceberg.NewSchema(0, icebergFields...), nil
+}
+
+// parseIcebergType converts a string type to an Iceberg type
+func parseIcebergType(typeStr string) (iceberg.Type, error) {
+	switch strings.ToLower(typeStr) {
+	case "boolean", "bool":
+		return iceberg.PrimitiveTypes.Bool, nil
+	case "int", "integer", "int32":
+		return iceberg.PrimitiveTypes.Int32, nil
+	case "long", "int64", "bigint":
+		return iceberg.PrimitiveTypes.Int64, nil
+	case "float", "float32":
+		return iceberg.PrimitiveTypes.Float32, nil
+	case "double", "float64":
+		return iceberg.PrimitiveTypes.Float64, nil
+	case "decimal":
+		// Default decimal(38,18) - could be enhanced to parse precision/scale
+		return iceberg.DecimalTypeOf(38, 18), nil
+	case "date":
+		return iceberg.PrimitiveTypes.Date, nil
+	case "time":
+		return iceberg.PrimitiveTypes.Time, nil
+	case "timestamp":
+		return iceberg.PrimitiveTypes.Timestamp, nil
+	case "timestamptz", "timestamp_tz":
+		return iceberg.PrimitiveTypes.TimestampTz, nil
+	case "string", "varchar", "text":
+		return iceberg.PrimitiveTypes.String, nil
+	case "uuid":
+		return iceberg.PrimitiveTypes.UUID, nil
+	case "fixed":
+		// Default fixed(16) - could be enhanced to parse length
+		return iceberg.FixedTypeOf(16), nil
+	case "binary":
+		return iceberg.PrimitiveTypes.Binary, nil
+	default:
+		// Try to parse complex types like decimal(10,2), fixed(8), etc.
+		if strings.HasPrefix(typeStr, "decimal(") && strings.HasSuffix(typeStr, ")") {
+			// Parse decimal(precision,scale)
+			params := strings.TrimPrefix(strings.TrimSuffix(typeStr, ")"), "decimal(")
+			parts := strings.Split(params, ",")
+			if len(parts) == 2 {
+				var precision, scale int
+				if _, err := fmt.Sscanf(parts[0], "%d", &precision); err == nil {
+					if _, err := fmt.Sscanf(parts[1], "%d", &scale); err == nil {
+						return iceberg.DecimalTypeOf(precision, scale), nil
+					}
+				}
+			}
+		}
+
+		if strings.HasPrefix(typeStr, "fixed(") && strings.HasSuffix(typeStr, ")") {
+			// Parse fixed(length)
+			lengthStr := strings.TrimPrefix(strings.TrimSuffix(typeStr, ")"), "fixed(")
+			var length int
+			if _, err := fmt.Sscanf(lengthStr, "%d", &length); err == nil {
+				return iceberg.FixedTypeOf(length), nil
+			}
+		}
+
+		return nil, fmt.Errorf("unsupported type: %s", typeStr)
+	}
 }
 
 func createDefaultSchema() *iceberg.Schema {
