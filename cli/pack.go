@@ -372,7 +372,11 @@ func extractArchive(archivePath, targetDir string) error {
 			return fmt.Errorf("failed to read tar header: %w", err)
 		}
 
-		targetPath := filepath.Join(targetDir, header.Name)
+		// Validate and sanitize the path to prevent zip slip attacks
+		targetPath, err := sanitizeExtractPath(targetDir, header.Name)
+		if err != nil {
+			return fmt.Errorf("invalid archive entry '%s': %w", header.Name, err)
+		}
 
 		// Handle manifest
 		if header.Name == "manifest.json" {
@@ -591,4 +595,82 @@ func getBuildVersion() string {
 
 	// Default version if no build info available
 	return "0.1.0-dev"
+}
+
+// sanitizeExtractPath validates and sanitizes archive entry paths to prevent zip slip attacks
+func sanitizeExtractPath(targetDir, entryName string) (string, error) {
+	// Clean the entry name to normalize path separators and remove redundant elements
+	cleanName := filepath.Clean(entryName)
+
+	// Check for absolute paths (both Unix and Windows style)
+	if filepath.IsAbs(cleanName) || isWindowsAbsolutePath(cleanName) {
+		return "", fmt.Errorf("absolute paths not allowed in archives")
+	}
+
+	// Check for path traversal attempts
+	if strings.Contains(cleanName, "..") {
+		return "", fmt.Errorf("path traversal attempts not allowed")
+	}
+
+	// Check for empty or current directory references
+	if cleanName == "." || cleanName == "" {
+		return "", fmt.Errorf("invalid path: empty or current directory reference")
+	}
+
+	// Join with target directory
+	targetPath := filepath.Join(targetDir, cleanName)
+
+	// Ensure the resolved path is still within the target directory
+	absTargetDir, err := filepath.Abs(targetDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve target directory: %w", err)
+	}
+
+	absTargetPath, err := filepath.Abs(targetPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve target path: %w", err)
+	}
+
+	// Check if the target path is within the target directory
+	relPath, err := filepath.Rel(absTargetDir, absTargetPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to compute relative path: %w", err)
+	}
+
+	// If the relative path starts with "..", it's outside the target directory
+	if strings.HasPrefix(relPath, "..") {
+		return "", fmt.Errorf("path escapes target directory")
+	}
+
+	// Additional security checks
+	if len(cleanName) > 255 {
+		return "", fmt.Errorf("path too long (max 255 characters)")
+	}
+
+	// Check for suspicious characters that might be used in attacks
+	suspiciousChars := []string{"\x00", "\r", "\n"}
+	for _, char := range suspiciousChars {
+		if strings.Contains(cleanName, char) {
+			return "", fmt.Errorf("path contains suspicious characters")
+		}
+	}
+
+	return targetPath, nil
+}
+
+// isWindowsAbsolutePath checks if a path is a Windows-style absolute path
+func isWindowsAbsolutePath(path string) bool {
+	// Check for Windows drive letter patterns like C:\ or C:/
+	if len(path) >= 3 && path[1] == ':' && (path[2] == '\\' || path[2] == '/') {
+		// Check if first character is a letter
+		c := path[0]
+		return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+	}
+
+	// Check for UNC paths like \\server\share
+	if len(path) >= 2 && path[0] == '\\' && path[1] == '\\' {
+		return true
+	}
+
+	return false
 }

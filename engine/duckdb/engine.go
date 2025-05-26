@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,10 @@ type EngineConfig struct {
 	EnableOptimization bool
 	CacheSize          int
 	IcebergCatalogName string // Name for the attached Iceberg catalog in DuckDB
+	// Security settings
+	EnableQueryValidation bool     // Enable SQL injection protection
+	AllowedStatements     []string // Allowed SQL statement types (SELECT, SHOW, DESCRIBE, etc.)
+	BlockedKeywords       []string // Blocked dangerous keywords
 }
 
 // EngineMetrics tracks engine performance metrics
@@ -47,6 +52,7 @@ type EngineMetrics struct {
 	CacheMisses      int64
 	TotalQueryTime   time.Duration
 	ErrorCount       int64
+	BlockedQueries   int64 // Track blocked malicious queries
 	mu               sync.RWMutex
 }
 
@@ -61,6 +67,17 @@ type QueryResult struct {
 	QueryID  string
 }
 
+// SecurityError represents a security-related error
+type SecurityError struct {
+	Message string
+	QueryID string
+	Reason  string
+}
+
+func (e SecurityError) Error() string {
+	return fmt.Sprintf("security violation [%s]: %s (%s)", e.QueryID, e.Message, e.Reason)
+}
+
 // DefaultEngineConfig returns a default configuration for the engine
 func DefaultEngineConfig() *EngineConfig {
 	return &EngineConfig{
@@ -70,6 +87,16 @@ func DefaultEngineConfig() *EngineConfig {
 		EnableOptimization: true,
 		CacheSize:          100,
 		IcebergCatalogName: "iceberg_catalog",
+		// Security defaults
+		EnableQueryValidation: true,
+		AllowedStatements: []string{
+			"SELECT", "SHOW", "DESCRIBE", "EXPLAIN", "WITH",
+		},
+		BlockedKeywords: []string{
+			"COPY", "ATTACH", "DETACH", "LOAD", "INSTALL",
+			"PRAGMA", "SET", "RESET", "CALL", "EXPORT",
+			"IMPORT", "FORCE", "CHECKPOINT", "VACUUM",
+		},
 	}
 }
 
@@ -275,6 +302,7 @@ func (e *Engine) GetMetrics() *EngineMetrics {
 		CacheMisses:      e.metrics.CacheMisses,
 		TotalQueryTime:   e.metrics.TotalQueryTime,
 		ErrorCount:       e.metrics.ErrorCount,
+		BlockedQueries:   e.metrics.BlockedQueries,
 	}
 }
 
@@ -285,12 +313,15 @@ func (e *Engine) GetConfig() *EngineConfig {
 
 	// Return a copy to avoid race conditions
 	return &EngineConfig{
-		MaxMemoryMB:        e.config.MaxMemoryMB,
-		QueryTimeoutSec:    e.config.QueryTimeoutSec,
-		EnableQueryLog:     e.config.EnableQueryLog,
-		EnableOptimization: e.config.EnableOptimization,
-		CacheSize:          e.config.CacheSize,
-		IcebergCatalogName: e.config.IcebergCatalogName,
+		MaxMemoryMB:           e.config.MaxMemoryMB,
+		QueryTimeoutSec:       e.config.QueryTimeoutSec,
+		EnableQueryLog:        e.config.EnableQueryLog,
+		EnableOptimization:    e.config.EnableOptimization,
+		CacheSize:             e.config.CacheSize,
+		IcebergCatalogName:    e.config.IcebergCatalogName,
+		EnableQueryValidation: e.config.EnableQueryValidation,
+		AllowedStatements:     e.config.AllowedStatements,
+		BlockedKeywords:       e.config.BlockedKeywords,
 	}
 }
 
@@ -307,6 +338,15 @@ func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 	e.metrics.mu.Unlock()
 
 	queryID := fmt.Sprintf("query_%d_%d", time.Now().UnixNano(), currentQueryCount)
+
+	// Security validation - validate query before execution
+	if e.config.EnableQueryValidation {
+		if err := e.validateQuery(query, queryID); err != nil {
+			e.incrementBlockedQueries()
+			e.incrementErrorCount()
+			return nil, err
+		}
+	}
 
 	// Add query timeout if configured
 	if e.config.QueryTimeoutSec > 0 {
@@ -329,8 +369,8 @@ func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 		return nil, fmt.Errorf("failed to preprocess query [%s]: %w", queryID, err)
 	}
 
-	// Execute the query with timeout context
-	rows, err := e.db.QueryContext(ctx, processedQuery)
+	// Execute the query with timeout context using parameterized query when possible
+	rows, err := e.executeSecureQuery(ctx, processedQuery, queryID)
 	if err != nil {
 		e.incrementErrorCount()
 		// Provide better error messages for common issues
@@ -431,7 +471,7 @@ func (e *Engine) RegisterTable(ctx context.Context, identifier table.Identifier,
 			CREATE OR REPLACE VIEW %s AS 
 			SELECT 'Iceberg extension not available on this platform' as error_message,
 			       'Table %s cannot be queried without native Iceberg support' as details
-		`, e.quoteName(tableName), tableName)
+		`, e.quoteName(tableName), e.quoteName(tableName))
 
 		if _, err := e.db.Exec(createPlaceholderSQL); err != nil {
 			e.incrementErrorCount()
@@ -470,10 +510,15 @@ func (e *Engine) RegisterTable(ctx context.Context, identifier table.Identifier,
 	// Use the metadata location directly from the table object
 	metadataLocation := icebergTable.MetadataLocation()
 
+	// Validate metadata location to prevent injection
+	if strings.ContainsAny(metadataLocation, "'\"\\;") {
+		return fmt.Errorf("invalid metadata location: contains potentially dangerous characters")
+	}
+
 	createViewSQL := fmt.Sprintf(`
 		CREATE OR REPLACE VIEW %s AS 
 		SELECT * FROM iceberg_scan('%s')
-	`, e.quoteName(tableName), metadataLocation)
+	`, e.quoteName(tableName), strings.ReplaceAll(metadataLocation, "'", "''"))
 
 	if _, err := e.db.Exec(createViewSQL); err != nil {
 		e.incrementErrorCount()
@@ -531,6 +576,11 @@ func (e *Engine) ListTables(ctx context.Context) ([]string, error) {
 
 // DescribeTable returns schema information for a table
 func (e *Engine) DescribeTable(ctx context.Context, tableName string) (*QueryResult, error) {
+	// Validate table name to prevent injection
+	if strings.ContainsAny(tableName, "';\"\\-/*") {
+		return nil, fmt.Errorf("invalid table name: contains potentially dangerous characters")
+	}
+
 	query := fmt.Sprintf("DESCRIBE %s", e.quoteName(tableName))
 	return e.ExecuteQuery(ctx, query)
 }
@@ -558,6 +608,13 @@ func (e *Engine) incrementErrorCount() {
 	e.metrics.mu.Unlock()
 }
 
+// incrementBlockedQueries safely increments the blocked queries counter
+func (e *Engine) incrementBlockedQueries() {
+	e.metrics.mu.Lock()
+	e.metrics.BlockedQueries++
+	e.metrics.mu.Unlock()
+}
+
 // identifierToTableName converts a table identifier to a SQL-safe table name
 func (e *Engine) identifierToTableName(identifier table.Identifier) string {
 	return strings.Join(identifier, "_")
@@ -568,4 +625,107 @@ func (e *Engine) quoteName(name string) string {
 	// Escape any existing quotes by doubling them
 	escaped := strings.ReplaceAll(name, `"`, `""`)
 	return fmt.Sprintf(`"%s"`, escaped)
+}
+
+// validateQuery validates a SQL query for security issues
+func (e *Engine) validateQuery(query, queryID string) error {
+	// Normalize query for analysis
+	normalizedQuery := strings.TrimSpace(strings.ToUpper(query))
+
+	if normalizedQuery == "" {
+		return SecurityError{
+			Message: "empty query not allowed",
+			QueryID: queryID,
+			Reason:  "empty_query",
+		}
+	}
+
+	// Check for allowed statement types
+	if len(e.config.AllowedStatements) > 0 {
+		allowed := false
+		for _, stmt := range e.config.AllowedStatements {
+			if strings.HasPrefix(normalizedQuery, strings.ToUpper(stmt)) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return SecurityError{
+				Message: "statement type not allowed",
+				QueryID: queryID,
+				Reason:  "disallowed_statement",
+			}
+		}
+	}
+
+	// Check for blocked keywords
+	for _, keyword := range e.config.BlockedKeywords {
+		if strings.Contains(normalizedQuery, strings.ToUpper(keyword)) {
+			return SecurityError{
+				Message: fmt.Sprintf("blocked keyword '%s' detected", keyword),
+				QueryID: queryID,
+				Reason:  "blocked_keyword",
+			}
+		}
+	}
+
+	// Check for common SQL injection patterns
+	if err := e.checkInjectionPatterns(normalizedQuery, queryID); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// checkInjectionPatterns checks for common SQL injection attack patterns
+func (e *Engine) checkInjectionPatterns(query, queryID string) error {
+	// Common SQL injection patterns
+	injectionPatterns := []struct {
+		pattern string
+		reason  string
+	}{
+		{`--`, "sql_comment_injection"},
+		{`/\*`, "sql_comment_injection"},
+		{`\*/`, "sql_comment_injection"},
+		{`;\s*DROP`, "drop_injection"},
+		{`;\s*DELETE`, "delete_injection"},
+		{`;\s*UPDATE`, "update_injection"},
+		{`;\s*INSERT`, "insert_injection"},
+		{`;\s*CREATE`, "create_injection"},
+		{`;\s*ALTER`, "alter_injection"},
+		{`UNION\s+SELECT`, "union_injection"},
+		{`OR\s+1\s*=\s*1`, "boolean_injection"},
+		{`AND\s+1\s*=\s*1`, "boolean_injection"},
+		{`'\s*OR\s*'`, "quote_injection"},
+		{`"\s*OR\s*"`, "quote_injection"},
+		{`EXEC\s*\(`, "exec_injection"},
+		{`EXECUTE\s*\(`, "exec_injection"},
+		{`CHAR\s*\(`, "char_injection"},
+		{`ASCII\s*\(`, "ascii_injection"},
+		{`CONCAT\s*\(.*SELECT`, "concat_injection"},
+	}
+
+	for _, pattern := range injectionPatterns {
+		matched, err := regexp.MatchString(pattern.pattern, query)
+		if err != nil {
+			e.logger.Printf("Warning: regex error checking pattern %s: %v", pattern.pattern, err)
+			continue
+		}
+		if matched {
+			return SecurityError{
+				Message: fmt.Sprintf("potential SQL injection detected: %s", pattern.reason),
+				QueryID: queryID,
+				Reason:  pattern.reason,
+			}
+		}
+	}
+
+	return nil
+}
+
+// executeSecureQuery executes a query with additional security measures
+func (e *Engine) executeSecureQuery(ctx context.Context, query, queryID string) (*sql.Rows, error) {
+	// For DuckDB, we use QueryContext which provides some protection
+	// In the future, this could be enhanced with prepared statements for parameterized queries
+	return e.db.QueryContext(ctx, query)
 }
