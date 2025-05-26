@@ -42,6 +42,7 @@ Now we're looking for early contributors to help shape what comes next—whether
 - **REST catalog support** - Connect to existing Iceberg REST catalogs  
 - **Embedded MinIO server** - S3-compatible storage for testing production workflows
 - **Parquet & Avro import** with automatic schema inference
+- **Enhanced table creation** - Full support for partitioning and sort orders
 - **DuckDB v1.3.0 integration** - High-performance analytics with native Iceberg support
 - **Universal catalog compatibility** - All catalog types work seamlessly with query engine
 - **Interactive SQL shell** with command history and multi-line support
@@ -98,6 +99,23 @@ cd my-lakehouse
    Records: 1,000,000
    Size: 45.2 MB
    Location: file:///.icebox/data/default/sales
+```
+
+### 3.5. Create Optimized Tables (Optional)
+
+```bash
+# Create tables with partitioning and sorting for better performance
+./icebox table create analytics_events \
+  --partition-by "date,region" \
+  --sort-by "timestamp ASC,user_id ASC" \
+  --schema events_schema.json
+
+✅ Successfully created table!
+✅ Applied partition specification with 2 field(s)
+✅ Applied sort order with 2 field(s)
+
+# Import data into the optimized table
+./icebox import events.parquet --table analytics_events
 ```
 
 ### 4. Query Your Data
