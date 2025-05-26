@@ -11,6 +11,7 @@ import (
 	"github.com/TFMV/icebox/catalog"
 	"github.com/TFMV/icebox/config"
 	"github.com/apache/iceberg-go"
+	icebergcatalog "github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/table"
 	"github.com/spf13/cobra"
 )
@@ -906,30 +907,43 @@ func createDefaultSchema() *iceberg.Schema {
 // createTableWithOptions creates a table with comprehensive options
 func createTableWithOptions(ctx context.Context, cat catalog.CatalogInterface,
 	tableIdent table.Identifier, schema *iceberg.Schema,
-	partitionSpec *iceberg.PartitionSpec, sortOrder *SortOrder,
+	partitionSpec *iceberg.PartitionSpec, sortOrder *table.SortOrder,
 	properties iceberg.Properties) (*table.Table, error) {
 
-	// For now, use the basic CreateTable method
-	// In a full implementation, we would use a method that accepts all options
-	// TODO: Enhance catalog interface to support partition spec, sort order, and properties
-	createdTable, err := cat.CreateTable(ctx, tableIdent, schema)
+	// Create catalog options for table creation
+	var opts []icebergcatalog.CreateTableOpt
+
+	// Add partition specification if provided
+	if partitionSpec != nil && !partitionSpec.IsUnpartitioned() {
+		opts = append(opts, icebergcatalog.WithPartitionSpec(partitionSpec))
+	}
+
+	// Add sort order if provided
+	if sortOrder != nil && len(sortOrder.Fields) > 0 {
+		opts = append(opts, icebergcatalog.WithSortOrder(*sortOrder))
+	}
+
+	// Add properties if provided
+	if len(properties) > 0 {
+		opts = append(opts, icebergcatalog.WithProperties(properties))
+	}
+
+	// Create table with all options
+	createdTable, err := cat.CreateTable(ctx, tableIdent, schema, opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	// Log what would be applied (since current catalog doesn't support full options)
-	if partitionSpec != nil {
-		var hasFields bool
+	// Log what was applied
+	if partitionSpec != nil && !partitionSpec.IsUnpartitioned() {
+		var fieldCount int
 		for range partitionSpec.Fields() {
-			hasFields = true
-			break
+			fieldCount++
 		}
-		if hasFields {
-			fmt.Printf("ℹ️  Note: Partition specification created but not yet applied (requires catalog enhancement)\n")
-		}
+		fmt.Printf("✅ Applied partition specification with %d field(s)\n", fieldCount)
 	}
 	if sortOrder != nil && len(sortOrder.Fields) > 0 {
-		fmt.Printf("ℹ️  Note: Sort order created but not yet applied (requires catalog enhancement)\n")
+		fmt.Printf("✅ Applied sort order with %d field(s)\n", len(sortOrder.Fields))
 	}
 
 	return createdTable, nil
@@ -942,26 +956,24 @@ func createPartitionSpec(schema *iceberg.Schema, partitionColumns []string) (*ic
 		return &spec, nil
 	}
 
-	// TODO: Enhance to properly create partition spec with fields
-	// This requires extending the iceberg-go library or using a different approach
-
-	// var partitionFields []iceberg.PartitionField
-	// fieldID := 1000 // Start partition field IDs at 1000
+	// Create partition fields for the specified columns
+	var partitionFields []iceberg.PartitionField
+	fieldID := 1000 // Start partition field IDs at 1000
 
 	for _, colName := range partitionColumns {
 		// Find the field in the schema to validate it exists
 		var found bool
 		for _, field := range schema.Fields() {
 			if field.Name == colName {
-				// TODO: Create and use partition field when implementation is enhanced
-				// partitionField := iceberg.PartitionField{
-				//     SourceID:  field.ID,
-				//     FieldID:   fieldID,
-				//     Transform: iceberg.IdentityTransform{},
-				//     Name:      colName,
-				// }
-				// partitionFields = append(partitionFields, partitionField)
-				// fieldID++
+				// Create partition field with identity transform
+				partitionField := iceberg.PartitionField{
+					SourceID:  field.ID,
+					FieldID:   fieldID,
+					Transform: iceberg.IdentityTransform{},
+					Name:      colName,
+				}
+				partitionFields = append(partitionFields, partitionField)
+				fieldID++
 				found = true
 				break
 			}
@@ -973,30 +985,30 @@ func createPartitionSpec(schema *iceberg.Schema, partitionColumns []string) (*ic
 	}
 
 	// Create partition spec with fields
-	// For now, create an empty spec and note that this needs enhancement
-	spec := iceberg.NewPartitionSpec()
-
+	spec := iceberg.NewPartitionSpec(partitionFields...)
 	return &spec, nil
 }
 
 // createSortOrder creates a sort order from column names
-func createSortOrder(schema *iceberg.Schema, sortColumns []string) (*SortOrder, error) {
+func createSortOrder(schema *iceberg.Schema, sortColumns []string) (*table.SortOrder, error) {
 	if len(sortColumns) == 0 {
-		return &SortOrder{OrderID: 0, Fields: []SortField{}}, nil
+		return &table.UnsortedSortOrder, nil
 	}
 
-	var sortFields []SortField
+	var sortFields []table.SortField
 
 	for _, colName := range sortColumns {
 		// Parse direction if specified (e.g., "name DESC" or "age ASC")
 		parts := strings.Fields(colName)
 		columnName := parts[0]
-		direction := "ASC" // default
+		direction := table.SortASC // default
 
 		if len(parts) > 1 {
 			upperDir := strings.ToUpper(parts[1])
-			if upperDir == "DESC" || upperDir == "ASC" {
-				direction = upperDir
+			if upperDir == "DESC" {
+				direction = table.SortDESC
+			} else if upperDir == "ASC" {
+				direction = table.SortASC
 			}
 		}
 
@@ -1004,11 +1016,16 @@ func createSortOrder(schema *iceberg.Schema, sortColumns []string) (*SortOrder, 
 		var found bool
 		for _, field := range schema.Fields() {
 			if field.Name == columnName {
-				sortField := SortField{
+				nullOrder := table.NullsLast
+				if direction == table.SortASC {
+					nullOrder = table.NullsFirst
+				}
+
+				sortField := table.SortField{
 					SourceID:  field.ID,
 					Transform: iceberg.IdentityTransform{},
 					Direction: direction,
-					NullOrder: "NULLS_LAST", // sensible default
+					NullOrder: nullOrder,
 				}
 				sortFields = append(sortFields, sortField)
 				found = true
@@ -1021,27 +1038,8 @@ func createSortOrder(schema *iceberg.Schema, sortColumns []string) (*SortOrder, 
 		}
 	}
 
-	return &SortOrder{
-		OrderID: 1,
+	return &table.SortOrder{
+		OrderID: table.InitialSortOrderID,
 		Fields:  sortFields,
 	}, nil
-}
-
-// SortOrder represents a table sort order
-type SortOrder struct {
-	OrderID int         `json:"order-id"`
-	Fields  []SortField `json:"fields"`
-}
-
-// SortField represents a sort field in a sort order
-type SortField struct {
-	SourceID  int               `json:"source-id"`
-	Transform iceberg.Transform `json:"transform"`
-	Direction string            `json:"direction"`
-	NullOrder string            `json:"null-order"`
-}
-
-// String returns a string representation of the sort field
-func (sf SortField) String() string {
-	return fmt.Sprintf("field_%d %s %s", sf.SourceID, sf.Direction, sf.NullOrder)
 }

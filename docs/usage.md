@@ -1458,13 +1458,112 @@ Comprehensive table management with creation, modification, and maintenance oper
 ./icebox table create events --partition-by event_date,user_segment
 
 # Create with sort order
-./icebox table create transactions --sort-by timestamp,account_id
+./icebox table create transactions --sort-by "timestamp ASC,account_id DESC"
+
+# Create with both partitioning and sorting
+./icebox table create analytics_events \
+  --partition-by date,region \
+  --sort-by "timestamp ASC,user_id ASC"
 
 # Create with properties
 ./icebox table create customers \
   --property "owner=analytics-team" \
   --property "retention.years=7" \
   --property "classification=sensitive"
+
+# Create with custom location
+./icebox table create warehouse_data \
+  --location /custom/path/warehouse \
+  --partition-by category \
+  --sort-by "created_at DESC"
+```
+
+#### Enhanced Partitioning Support
+
+Icebox now provides full support for Apache Iceberg partition specifications:
+
+```bash
+# Single column partitioning
+./icebox table create sales --partition-by region
+
+# Multi-column partitioning
+./icebox table create events --partition-by date,event_type,region
+
+# Partitioning with identity transform (default)
+./icebox table create logs --partition-by "date,level"
+```
+
+**Partition Benefits:**
+
+- ✅ **Query Performance** - Partition pruning reduces data scanned
+- ✅ **Data Organization** - Logical grouping of related data
+- ✅ **Maintenance** - Efficient data lifecycle management
+- ✅ **Parallel Processing** - Better parallelization during queries
+
+#### Enhanced Sort Order Support
+
+Icebox now provides full support for Apache Iceberg sort orders:
+
+```bash
+# Single column sorting (default ASC)
+./icebox table create transactions --sort-by timestamp
+
+# Multi-column sorting with directions
+./icebox table create user_events \
+  --sort-by "timestamp ASC,user_id ASC,event_type DESC"
+
+# Complex sorting scenarios
+./icebox table create financial_data \
+  --sort-by "trade_date DESC,symbol ASC,volume DESC"
+```
+
+**Sort Order Benefits:**
+
+- ✅ **Query Performance** - Faster range queries and filtering
+- ✅ **Data Clustering** - Related data stored together
+- ✅ **Compression** - Better compression ratios
+- ✅ **Index Efficiency** - Improved min/max statistics
+
+#### Combined Partitioning and Sorting
+
+```bash
+# Optimal table layout for analytics workloads
+./icebox table create web_analytics \
+  --partition-by "date,country" \
+  --sort-by "timestamp ASC,session_id ASC,page_views DESC" \
+  --property "optimization.target=query_performance"
+
+# Time-series data optimization
+./icebox table create sensor_data \
+  --partition-by "date,sensor_type" \
+  --sort-by "timestamp ASC,sensor_id ASC" \
+  --property "retention.days=365"
+```
+
+#### Table Creation Output
+
+```
+✅ Successfully created table!
+
+📊 Table Details:
+   Name: [analytics web_analytics]
+   Location: file:///.icebox/data/analytics/web_analytics
+   Schema ID: 0
+   Columns: 8
+
+✅ Applied partition specification with 2 field(s)
+   - date (identity transform)
+   - country (identity transform)
+
+✅ Applied sort order with 3 field(s)
+   - timestamp ASC NULLS_FIRST
+   - session_id ASC NULLS_FIRST  
+   - page_views DESC NULLS_LAST
+
+   Properties:
+     optimization.target: query_performance
+     format-version: 2
+     created-by: icebox-catalog
 ```
 
 #### Schema File Format
