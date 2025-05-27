@@ -1,14 +1,20 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/TFMV/icebox/catalog"
 	"github.com/TFMV/icebox/catalog/json"
 	"github.com/TFMV/icebox/catalog/sqlite"
 	"github.com/TFMV/icebox/config"
 	"github.com/TFMV/icebox/display"
+	"github.com/apache/iceberg-go"
+	"github.com/apache/iceberg-go/table"
+	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 )
 
@@ -43,6 +49,10 @@ func init() {
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	d := getDisplayFromContext(ctx)
+	logger := getLoggerFromContext(ctx)
+
 	// Determine target directory
 	var targetDir string
 	if len(args) > 0 {
@@ -51,23 +61,42 @@ func runInit(cmd *cobra.Command, args []string) error {
 		targetDir = "icebox-lakehouse"
 	}
 
+	if logger != nil {
+		logger.Info().Str("cmd", "init").Str("target_dir", targetDir).Msg("Starting project initialization")
+	}
+
 	// Get absolute path
 	absPath, err := filepath.Abs(targetDir)
 	if err != nil {
-		return fmt.Errorf("failed to get absolute path: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "init").Str("target_dir", targetDir).Err(err).Msg("Failed to get absolute path")
+		}
+		d.Error("Failed to get absolute path: %v", err)
+		return err
 	}
 
 	// Check if directory exists, create if it doesn't
 	if _, err := os.Stat(absPath); os.IsNotExist(err) {
 		if err := os.MkdirAll(absPath, 0755); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", absPath, err)
+			if logger != nil {
+				logger.Error().Str("cmd", "init").Str("path", absPath).Err(err).Msg("Failed to create directory")
+			}
+			d.Error("Failed to create directory %s: %v", absPath, err)
+			return err
 		}
-		fmt.Printf("Created directory: %s\n", absPath)
+		if logger != nil {
+			logger.Info().Str("cmd", "init").Str("path", absPath).Msg("Created directory")
+		}
+		d.Info("Created directory: %s", absPath)
 	}
 
 	// Check if already initialized
 	configPath := filepath.Join(absPath, ".icebox.yml")
 	if _, err := os.Stat(configPath); err == nil {
+		if logger != nil {
+			logger.Warn().Str("cmd", "init").Str("path", absPath).Msg("Directory already contains an Icebox project")
+		}
+		d.Error("Directory already contains an Icebox project (found .icebox.yml)")
 		return fmt.Errorf("directory already contains an Icebox project (found .icebox.yml)")
 	}
 
@@ -86,45 +115,93 @@ func runInit(cmd *cobra.Command, args []string) error {
 	switch initOpts.catalog {
 	case "sqlite":
 		if err := initSQLiteCatalog(absPath, cfg); err != nil {
-			return fmt.Errorf("failed to initialize SQLite catalog: %w", err)
+			if logger != nil {
+				logger.Error().Str("cmd", "init").Err(err).Msg("Failed to initialize SQLite catalog")
+			}
+			d.Error("Failed to initialize SQLite catalog: %v", err)
+			return err
 		}
 	case "json":
 		if err := initJSONCatalog(absPath, cfg); err != nil {
-			return fmt.Errorf("failed to initialize JSON catalog: %w", err)
+			if logger != nil {
+				logger.Error().Str("cmd", "init").Err(err).Msg("Failed to initialize JSON catalog")
+			}
+			d.Error("Failed to initialize JSON catalog: %v", err)
+			return err
 		}
 	case "rest":
+		d.Error("REST catalog initialization not yet implemented")
 		return fmt.Errorf("REST catalog initialization not yet implemented")
 	default:
+		d.Error("Unsupported catalog type: %s", initOpts.catalog)
 		return fmt.Errorf("unsupported catalog type: %s", initOpts.catalog)
 	}
 
 	// Initialize storage
 	if err := initStorage(absPath, cfg); err != nil {
-		return fmt.Errorf("failed to initialize storage: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "init").Err(err).Msg("Failed to initialize storage")
+		}
+		d.Error("Failed to initialize storage: %v", err)
+		return err
 	}
 
 	// Write configuration file
 	if err := config.WriteConfig(configPath, cfg); err != nil {
-		return fmt.Errorf("failed to write configuration: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "init").Err(err).Msg("Failed to write configuration")
+		}
+		d.Error("Failed to write configuration: %v", err)
+		return err
 	}
 
 	// Actually initialize the catalog
 	if err := initializeCatalog(cfg); err != nil {
-		return fmt.Errorf("failed to initialize catalog: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "init").Err(err).Msg("Failed to initialize catalog")
+		}
+		d.Error("Failed to initialize catalog: %v", err)
+		return err
+	}
+
+	// Create default namespace for better user experience
+	if err := createDefaultNamespace(cfg, d, logger); err != nil {
+		// Non-fatal error - just warn the user
+		if logger != nil {
+			logger.Warn().Str("cmd", "init").Str("path", absPath).Err(err).Msg("Could not create default namespace")
+		}
+		d.Warning("Could not create default namespace: %v", err)
 	}
 
 	// Initialize display configuration
 	if err := initDisplayConfig(absPath); err != nil {
 		// Non-fatal error - just warn the user
-		fmt.Printf("⚠️  Warning: Could not create display configuration: %v\n", err)
+		if logger != nil {
+			logger.Warn().Str("cmd", "init").Str("path", absPath).Err(err).Msg("Could not create display configuration")
+		}
+		d.Warning("Could not create display configuration: %v", err)
 	}
 
-	fmt.Printf("✅ Initialized Icebox project in %s\n", absPath)
-	fmt.Printf("   Catalog: %s\n", cfg.Catalog.Type)
-	fmt.Printf("   Storage: %s\n", cfg.Storage.Type)
-	fmt.Printf("\nNext steps:\n")
-	fmt.Printf("   icebox import your-data.parquet --table your_table\n")
-	fmt.Printf("   icebox sql 'SELECT * FROM your_table LIMIT 10'\n")
+	// Create log file in the project directory
+	if err := initLogFile(absPath); err != nil {
+		// Non-fatal error - just warn the user
+		if logger != nil {
+			logger.Warn().Str("cmd", "init").Str("path", absPath).Err(err).Msg("Could not create log file")
+		}
+		d.Warning("Could not create log file: %v", err)
+	}
+
+	if logger != nil {
+		logger.Info().Str("cmd", "init").Str("path", absPath).Str("catalog", cfg.Catalog.Type).Str("storage", cfg.Storage.Type).Msg("Successfully initialized Icebox project")
+	}
+
+	d.Success("Initialized Icebox project in %s", absPath)
+	d.Info("   Catalog: %s", cfg.Catalog.Type)
+	d.Info("   Storage: %s", cfg.Storage.Type)
+	d.Info("")
+	d.Info("Next steps:")
+	d.Info("   icebox import your-data.parquet --table your_table")
+	d.Info("   icebox sql 'SELECT * FROM your_table LIMIT 10'")
 
 	return nil
 }
@@ -241,6 +318,67 @@ func initDisplayConfig(projectDir string) error {
 	if err := display.SaveConfigToFile(displayConfig, configPath); err != nil {
 		return fmt.Errorf("failed to save display configuration: %w", err)
 	}
+
+	return nil
+}
+
+// initLogFile creates an initial log file in the project directory
+func initLogFile(projectDir string) error {
+	logPath := filepath.Join(projectDir, "icebox.log")
+
+	// Create an empty log file if it doesn't exist
+	if _, err := os.Stat(logPath); os.IsNotExist(err) {
+		file, err := os.Create(logPath)
+		if err != nil {
+			return fmt.Errorf("failed to create log file: %w", err)
+		}
+		defer file.Close()
+
+		// Write initial log entry
+		_, err = file.WriteString(fmt.Sprintf(`{"level":"info","app":"icebox","cmd":"init","time":%d,"message":"Icebox project initialized"}%s`,
+			time.Now().Unix(), "\n"))
+		if err != nil {
+			return fmt.Errorf("failed to write initial log entry: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// createDefaultNamespace creates a default namespace for better user experience
+func createDefaultNamespace(cfg *config.Config, d display.Display, logger *zerolog.Logger) error {
+	// Create catalog
+	cat, err := catalog.NewCatalog(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create catalog: %w", err)
+	}
+	defer cat.Close()
+
+	ctx := context.Background()
+	defaultNamespace := table.Identifier{"default"}
+
+	// Check if default namespace already exists
+	exists, err := cat.CheckNamespaceExists(ctx, defaultNamespace)
+	if err != nil {
+		return fmt.Errorf("failed to check namespace existence: %w", err)
+	}
+
+	if exists {
+		if logger != nil {
+			logger.Info().Str("cmd", "init").Msg("Default namespace already exists")
+		}
+		return nil
+	}
+
+	// Create the default namespace
+	if err := cat.CreateNamespace(ctx, defaultNamespace, iceberg.Properties{}); err != nil {
+		return fmt.Errorf("failed to create default namespace: %w", err)
+	}
+
+	if logger != nil {
+		logger.Info().Str("cmd", "init").Msg("Created default namespace")
+	}
+	d.Info("Created default namespace")
 
 	return nil
 }

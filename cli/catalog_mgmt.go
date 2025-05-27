@@ -6,6 +6,7 @@ import (
 
 	"github.com/TFMV/icebox/catalog"
 	"github.com/TFMV/icebox/config"
+	"github.com/TFMV/icebox/display"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
 	"github.com/spf13/cobra"
@@ -116,25 +117,39 @@ func init() {
 }
 
 func runCatalogList(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	d := getDisplayFromContext(ctx)
+	logger := getLoggerFromContext(ctx)
+
+	if logger != nil {
+		logger.Info().Str("cmd", "catalog-list").Str("parent", catalogListOpts.parent).Msg("Starting catalog list operation")
+	}
+
 	// Find the Icebox configuration
 	configPath, cfg, err := config.FindConfig()
 	if err != nil {
-		return fmt.Errorf("❌ Failed to find Icebox configuration\n"+
-			"💡 Try running 'icebox init' first to create a new project: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "catalog-list").Err(err).Msg("Failed to find Icebox configuration")
+		}
+		d.Error("Failed to find Icebox configuration: %v", err)
+		d.Info("Try running 'icebox init' first to create a new project")
+		return err
 	}
 
 	if cmd.Flag("verbose").Value.String() == "true" {
-		fmt.Printf("Using configuration: %s\n", configPath)
+		d.Info("Using configuration: %s", configPath)
 	}
 
 	// Create catalog
 	cat, err := catalog.NewCatalog(cfg)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create catalog: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "catalog-list").Err(err).Msg("Failed to create catalog")
+		}
+		d.Error("Failed to create catalog: %v", err)
+		return err
 	}
 	defer cat.Close()
-
-	ctx := cmd.Context()
 
 	// Determine parent namespace
 	var parent table.Identifier
@@ -145,12 +160,24 @@ func runCatalogList(cmd *cobra.Command, args []string) error {
 	// List namespaces
 	namespaces, err := cat.ListNamespaces(ctx, parent)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to list namespaces: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "catalog-list").Err(err).Msg("Failed to list namespaces")
+		}
+		d.Error("Failed to list namespaces: %v", err)
+		return err
+	}
+
+	if logger != nil {
+		logger.Info().Str("cmd", "catalog-list").Int("namespace_count", len(namespaces)).Msg("Successfully listed namespaces")
 	}
 
 	// Display results
-	if err := displayNamespaceList(namespaces, parent); err != nil {
-		return fmt.Errorf("❌ Failed to display namespace list: %w", err)
+	if err := displayNamespaceListWithDisplay(namespaces, parent, d); err != nil {
+		if logger != nil {
+			logger.Error().Str("cmd", "catalog-list").Err(err).Msg("Failed to display namespace list")
+		}
+		d.Error("Failed to display namespace list: %v", err)
+		return err
 	}
 
 	return nil
@@ -158,17 +185,33 @@ func runCatalogList(cmd *cobra.Command, args []string) error {
 
 func runCatalogCreate(cmd *cobra.Command, args []string) error {
 	namespaceName := args[0]
+	ctx := cmd.Context()
+	d := getDisplayFromContext(ctx)
+	logger := getLoggerFromContext(ctx)
+
+	if logger != nil {
+		logger.Info().Str("cmd", "catalog-create").Str("namespace", namespaceName).Msg("Starting namespace creation")
+	}
 
 	// Find the Icebox configuration
 	_, cfg, err := config.FindConfig()
 	if err != nil {
-		return fmt.Errorf("❌ Failed to find Icebox configuration: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "catalog-create").Err(err).Msg("Failed to find Icebox configuration")
+		}
+		d.Error("Failed to find Icebox configuration: %v", err)
+		d.Info("Try running 'icebox init' first to create a new project")
+		return err
 	}
 
 	// Create catalog
 	cat, err := catalog.NewCatalog(cfg)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create catalog: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "catalog-create").Err(err).Msg("Failed to create catalog")
+		}
+		d.Error("Failed to create catalog: %v", err)
+		return err
 	}
 	defer cat.Close()
 
@@ -176,12 +219,20 @@ func runCatalogCreate(cmd *cobra.Command, args []string) error {
 	namespace := strings.Split(namespaceName, ".")
 
 	// Check if namespace already exists
-	exists, err := cat.CheckNamespaceExists(cmd.Context(), namespace)
+	exists, err := cat.CheckNamespaceExists(ctx, namespace)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to check namespace existence: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "catalog-create").Str("namespace", namespaceName).Err(err).Msg("Failed to check namespace existence")
+		}
+		d.Error("Failed to check namespace existence: %v", err)
+		return err
 	}
 	if exists {
-		return fmt.Errorf("❌ Namespace '%s' already exists", namespaceName)
+		if logger != nil {
+			logger.Warn().Str("cmd", "catalog-create").Str("namespace", namespaceName).Msg("Namespace already exists")
+		}
+		d.Error("Namespace '%s' already exists", namespaceName)
+		return fmt.Errorf("namespace '%s' already exists", namespaceName)
 	}
 
 	// Prepare properties
@@ -195,18 +246,26 @@ func runCatalogCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create the namespace
-	if err := cat.CreateNamespace(cmd.Context(), namespace, properties); err != nil {
-		return fmt.Errorf("❌ Failed to create namespace: %w", err)
+	if err := cat.CreateNamespace(ctx, namespace, properties); err != nil {
+		if logger != nil {
+			logger.Error().Str("cmd", "catalog-create").Str("namespace", namespaceName).Err(err).Msg("Failed to create namespace")
+		}
+		d.Error("Failed to create namespace: %v", err)
+		return err
+	}
+
+	if logger != nil {
+		logger.Info().Str("cmd", "catalog-create").Str("namespace", namespaceName).Int("property_count", len(properties)).Msg("Successfully created namespace")
 	}
 
 	// Display success message
-	fmt.Printf("✅ Successfully created namespace!\n\n")
-	fmt.Printf("📁 Namespace Details:\n")
-	fmt.Printf("   Name: %s\n", namespaceName)
+	d.Success("Successfully created namespace!")
+	d.Info("Namespace Details:")
+	d.Info("   Name: %s", namespaceName)
 	if len(properties) > 0 {
-		fmt.Printf("   Properties:\n")
+		d.Info("   Properties:")
 		for key, value := range properties {
-			fmt.Printf("     %s: %s\n", key, value)
+			d.Info("     %s: %s", key, value)
 		}
 	}
 
@@ -215,17 +274,33 @@ func runCatalogCreate(cmd *cobra.Command, args []string) error {
 
 func runCatalogDrop(cmd *cobra.Command, args []string) error {
 	namespaceName := args[0]
+	ctx := cmd.Context()
+	d := getDisplayFromContext(ctx)
+	logger := getLoggerFromContext(ctx)
+
+	if logger != nil {
+		logger.Info().Str("cmd", "catalog-drop").Str("namespace", namespaceName).Bool("force", catalogDropOpts.force).Msg("Starting namespace drop")
+	}
 
 	// Find the Icebox configuration
 	_, cfg, err := config.FindConfig()
 	if err != nil {
-		return fmt.Errorf("❌ Failed to find Icebox configuration: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "catalog-drop").Err(err).Msg("Failed to find Icebox configuration")
+		}
+		d.Error("Failed to find Icebox configuration: %v", err)
+		d.Info("Try running 'icebox init' first to create a new project")
+		return err
 	}
 
 	// Create catalog
 	cat, err := catalog.NewCatalog(cfg)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create catalog: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "catalog-drop").Err(err).Msg("Failed to create catalog")
+		}
+		d.Error("Failed to create catalog: %v", err)
+		return err
 	}
 	defer cat.Close()
 
@@ -233,37 +308,61 @@ func runCatalogDrop(cmd *cobra.Command, args []string) error {
 	namespace := strings.Split(namespaceName, ".")
 
 	// Check if namespace exists
-	exists, err := cat.CheckNamespaceExists(cmd.Context(), namespace)
+	exists, err := cat.CheckNamespaceExists(ctx, namespace)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to check namespace existence: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "catalog-drop").Str("namespace", namespaceName).Err(err).Msg("Failed to check namespace existence")
+		}
+		d.Error("Failed to check namespace existence: %v", err)
+		return err
 	}
 	if !exists {
-		return fmt.Errorf("❌ Namespace '%s' does not exist", namespaceName)
+		if logger != nil {
+			logger.Warn().Str("cmd", "catalog-drop").Str("namespace", namespaceName).Msg("Namespace does not exist")
+		}
+		d.Error("Namespace '%s' does not exist", namespaceName)
+		return fmt.Errorf("namespace '%s' does not exist", namespaceName)
 	}
 
 	// Check if namespace is empty (unless force is used)
 	if !catalogDropOpts.force {
 		var tables []table.Identifier
-		for identifier, err := range cat.ListTables(cmd.Context(), namespace) {
+		for identifier, err := range cat.ListTables(ctx, namespace) {
 			if err != nil {
-				return fmt.Errorf("❌ Failed to check if namespace is empty: %w", err)
+				if logger != nil {
+					logger.Error().Str("cmd", "catalog-drop").Str("namespace", namespaceName).Err(err).Msg("Failed to check if namespace is empty")
+				}
+				d.Error("Failed to check if namespace is empty: %v", err)
+				return err
 			}
 			tables = append(tables, identifier)
 		}
 
 		if len(tables) > 0 {
-			return fmt.Errorf("❌ Namespace '%s' is not empty (contains %d tables)\n"+
-				"💡 Use --force to drop non-empty namespace or remove tables first", namespaceName, len(tables))
+			if logger != nil {
+				logger.Warn().Str("cmd", "catalog-drop").Str("namespace", namespaceName).Int("table_count", len(tables)).Msg("Namespace is not empty")
+			}
+			d.Error("Namespace '%s' is not empty (contains %d tables)", namespaceName, len(tables))
+			d.Info("Use --force to drop non-empty namespace or remove tables first")
+			return fmt.Errorf("namespace '%s' is not empty (contains %d tables)", namespaceName, len(tables))
 		}
 	}
 
 	// Drop the namespace
-	if err := cat.DropNamespace(cmd.Context(), namespace); err != nil {
-		return fmt.Errorf("❌ Failed to drop namespace: %w", err)
+	if err := cat.DropNamespace(ctx, namespace); err != nil {
+		if logger != nil {
+			logger.Error().Str("cmd", "catalog-drop").Str("namespace", namespaceName).Err(err).Msg("Failed to drop namespace")
+		}
+		d.Error("Failed to drop namespace: %v", err)
+		return err
+	}
+
+	if logger != nil {
+		logger.Info().Str("cmd", "catalog-drop").Str("namespace", namespaceName).Msg("Successfully dropped namespace")
 	}
 
 	// Display success message
-	fmt.Printf("✅ Successfully dropped namespace '%s'\n", namespaceName)
+	d.Success("Successfully dropped namespace '%s'", namespaceName)
 
 	return nil
 }
@@ -292,6 +391,55 @@ func displayNamespaceList(namespaces []table.Identifier, parent table.Identifier
 	}
 }
 
+// displayNamespaceListWithDisplay displays namespace list using the display package
+func displayNamespaceListWithDisplay(namespaces []table.Identifier, parent table.Identifier, d display.Display) error {
+	if len(namespaces) == 0 {
+		if parent != nil {
+			d.Info("No namespaces found under '%s'", strings.Join(parent, "."))
+		} else {
+			d.Info("No namespaces found")
+		}
+		return nil
+	}
+
+	switch catalogListOpts.format {
+	case "table":
+		return displayNamespaceListTableWithDisplay(namespaces, parent, d)
+	case "csv":
+		return displayNamespaceListCSVWithDisplay(namespaces, d)
+	case "json":
+		return displayNamespaceListJSONWithDisplay(namespaces, d)
+	default:
+		d.Error("Unsupported format: %s", catalogListOpts.format)
+		return fmt.Errorf("unsupported format: %s", catalogListOpts.format)
+	}
+}
+
+// displayNamespaceListTableWithDisplay displays namespace list in table format using display package
+func displayNamespaceListTableWithDisplay(namespaces []table.Identifier, parent table.Identifier, d display.Display) error {
+	// Prepare table data
+	headers := []string{"#", "Namespace", "Level"}
+	var rows [][]interface{}
+
+	for i, namespace := range namespaces {
+		namespaceName := strings.Join(namespace, ".")
+		level := len(namespace)
+		rows = append(rows, []interface{}{i + 1, namespaceName, level})
+	}
+
+	tableData := display.TableData{
+		Headers: headers,
+		Rows:    rows,
+	}
+
+	title := fmt.Sprintf("All Namespaces (%d namespaces)", len(namespaces))
+	if parent != nil {
+		title = fmt.Sprintf("Namespaces under '%s' (%d namespaces)", strings.Join(parent, "."), len(namespaces))
+	}
+
+	return d.Table(tableData).WithTitle(title).Render()
+}
+
 func displayNamespaceListTable(namespaces []table.Identifier, parent table.Identifier) error {
 	if parent != nil {
 		fmt.Printf("📁 Namespaces under '%s' (%d namespaces):\n", strings.Join(parent, "."), len(namespaces))
@@ -309,7 +457,7 @@ func displayNamespaceListTable(namespaces []table.Identifier, parent table.Ident
 
 		fmt.Printf("│%-3d │ %-39s │ %-11s │\n",
 			i+1,
-			truncateString(namespaceName, 39),
+			display.TruncateString(namespaceName, 39),
 			level)
 	}
 
@@ -327,6 +475,26 @@ func displayNamespaceListCSV(namespaces []table.Identifier) error {
 	return nil
 }
 
+// displayNamespaceListCSVWithDisplay displays namespace list in CSV format using display package
+func displayNamespaceListCSVWithDisplay(namespaces []table.Identifier, d display.Display) error {
+	// Prepare table data
+	headers := []string{"namespace", "level"}
+	var rows [][]interface{}
+
+	for _, namespace := range namespaces {
+		namespaceName := strings.Join(namespace, ".")
+		level := len(namespace)
+		rows = append(rows, []interface{}{namespaceName, level})
+	}
+
+	tableData := display.TableData{
+		Headers: headers,
+		Rows:    rows,
+	}
+
+	return d.Table(tableData).WithFormat(display.FormatCSV).Render()
+}
+
 func displayNamespaceListJSON(namespaces []table.Identifier) error {
 	fmt.Println("[")
 	for i, namespace := range namespaces {
@@ -341,4 +509,24 @@ func displayNamespaceListJSON(namespaces []table.Identifier) error {
 	}
 	fmt.Println("]")
 	return nil
+}
+
+// displayNamespaceListJSONWithDisplay displays namespace list in JSON format using display package
+func displayNamespaceListJSONWithDisplay(namespaces []table.Identifier, d display.Display) error {
+	// Prepare table data
+	headers := []string{"namespace", "level"}
+	var rows [][]interface{}
+
+	for _, namespace := range namespaces {
+		namespaceName := strings.Join(namespace, ".")
+		level := len(namespace)
+		rows = append(rows, []interface{}{namespaceName, level})
+	}
+
+	tableData := display.TableData{
+		Headers: headers,
+		Rows:    rows,
+	}
+
+	return d.Table(tableData).WithFormat(display.FormatJSON).Render()
 }

@@ -3,14 +3,15 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/TFMV/icebox/catalog"
 	"github.com/TFMV/icebox/catalog/sqlite"
 	"github.com/TFMV/icebox/config"
+	"github.com/TFMV/icebox/display"
 	"github.com/TFMV/icebox/engine/duckdb"
+	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 )
 
@@ -54,23 +55,38 @@ func init() {
 
 func runSQL(cmd *cobra.Command, args []string) error {
 	query := args[0]
+	ctx := cmd.Context()
+	d := getDisplayFromContext(ctx)
+	logger := getLoggerFromContext(ctx)
+
+	if logger != nil {
+		logger.Info().Str("cmd", "sql").Str("query", query).Msg("Starting SQL query execution")
+	}
 
 	// Find the Icebox configuration
 	configPath, cfg, err := config.FindConfig()
 	if err != nil {
-		return fmt.Errorf("❌ Failed to find Icebox configuration\n"+
-			"💡 Try running 'icebox init' first to create a new project: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "sql").Err(err).Msg("Failed to find Icebox configuration")
+		}
+		d.Error("Failed to find Icebox configuration")
+		d.Info("Try running 'icebox init' first to create a new project")
+		return err
 	}
 
-	if cmd.Flag("verbose").Value.String() == "true" {
-		fmt.Printf("Using configuration: %s\n", configPath)
+	if cmd.Flag("verbose") != nil && cmd.Flag("verbose").Value.String() == "true" {
+		d.Info("Using configuration: %s", configPath)
 	}
 
 	// Create catalog
 	catalog, err := sqlite.NewCatalog(cfg)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create catalog: %w\n"+
-			"💡 Your catalog may be corrupted. Try backing up and running 'icebox init' again", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "sql").Err(err).Msg("Failed to create catalog")
+		}
+		d.Error("Failed to create catalog: %v", err)
+		d.Info("Your catalog may be corrupted. Try backing up and running 'icebox init' again")
+		return err
 	}
 	defer catalog.Close()
 
@@ -82,82 +98,104 @@ func runSQL(cmd *cobra.Command, args []string) error {
 
 	engine, err := duckdb.NewEngineWithConfig(catalog, engineConfig)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create SQL engine: %w\n"+
-			"💡 This might be a DuckDB installation issue", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "sql").Err(err).Msg("Failed to create SQL engine")
+		}
+		d.Error("Failed to create SQL engine: %v", err)
+		d.Info("This might be a DuckDB installation issue")
+		return err
 	}
 	defer engine.Close()
 
 	// Auto-register tables if enabled
 	if sqlOpts.autoRegister {
-		if err := autoRegisterTables(cmd.Context(), engine, catalog); err != nil {
+		if err := autoRegisterTablesWithDisplay(ctx, engine, catalog, d, logger); err != nil {
 			// Don't fail the query if auto-registration fails, just warn
-			fmt.Fprintf(os.Stderr, "⚠️  Warning: Failed to auto-register some tables: %v\n", err)
+			if logger != nil {
+				logger.Warn().Str("cmd", "sql").Err(err).Msg("Failed to auto-register some tables")
+			}
+			d.Warning("Failed to auto-register some tables: %v", err)
 		}
 	}
 
 	// Execute the query
 	start := time.Now()
-	result, err := engine.ExecuteQuery(cmd.Context(), query)
+	result, err := engine.ExecuteQuery(ctx, query)
 	if err != nil {
+		if logger != nil {
+			logger.Error().Str("cmd", "sql").Str("query", query).Err(err).Msg("Query execution failed")
+		}
 		// Enhanced error handling with helpful suggestions
 		if strings.Contains(err.Error(), "timeout") {
-			return fmt.Errorf("❌ Query timed out: %w\n"+
-				"💡 Try simplifying your query or increasing --timeout", err)
+			d.Error("Query timed out: %v", err)
+			d.Info("Try simplifying your query or increasing --timeout")
+		} else if strings.Contains(err.Error(), "table") && strings.Contains(err.Error(), "not found") {
+			d.Error("Table not found: %v", err)
+			d.Info("Run 'icebox sql \"SHOW TABLES\"' to see available tables")
+		} else {
+			d.Error("Query failed: %v", err)
 		}
-		if strings.Contains(err.Error(), "table") && strings.Contains(err.Error(), "not found") {
-			return fmt.Errorf("❌ Table not found: %w\n"+
-				"💡 Run 'icebox sql \"SHOW TABLES\"' to see available tables", err)
-		}
-		return fmt.Errorf("❌ Query failed: %w", err)
+		return err
 	}
 	duration := time.Since(start)
 
+	if logger != nil {
+		logger.Info().Str("cmd", "sql").Str("query", query).Dur("duration", duration).Int64("rows", result.RowCount).Msg("Query executed successfully")
+	}
+
 	// Display results
-	if err := displayResults(result, duration); err != nil {
-		return fmt.Errorf("❌ Failed to display results: %w", err)
+	if err := displayResultsWithDisplay(result, duration, d); err != nil {
+		if logger != nil {
+			logger.Error().Str("cmd", "sql").Err(err).Msg("Failed to display results")
+		}
+		d.Error("Failed to display results: %v", err)
+		return err
 	}
 
 	// Show metrics if requested
 	showMetrics, _ := cmd.Flags().GetBool("metrics")
 	if showMetrics {
 		metrics := engine.GetMetrics()
-		fmt.Printf("\n📈 Engine Metrics:\n")
-		fmt.Printf("  Queries Executed: %d\n", metrics.QueriesExecuted)
-		fmt.Printf("  Tables Registered: %d\n", metrics.TablesRegistered)
-		fmt.Printf("  Cache Hits: %d\n", metrics.CacheHits)
-		fmt.Printf("  Cache Misses: %d\n", metrics.CacheMisses)
-		fmt.Printf("  Total Query Time: %v\n", metrics.TotalQueryTime)
-		fmt.Printf("  Error Count: %d\n", metrics.ErrorCount)
+		d.Info("Engine Metrics:")
+		d.Info("  Queries Executed: %d", metrics.QueriesExecuted)
+		d.Info("  Tables Registered: %d", metrics.TablesRegistered)
+		d.Info("  Cache Hits: %d", metrics.CacheHits)
+		d.Info("  Cache Misses: %d", metrics.CacheMisses)
+		d.Info("  Total Query Time: %v", metrics.TotalQueryTime)
+		d.Info("  Error Count: %d", metrics.ErrorCount)
 		if metrics.QueriesExecuted > 0 {
 			avgTime := metrics.TotalQueryTime / time.Duration(metrics.QueriesExecuted)
-			fmt.Printf("  Average Query Time: %v\n", avgTime)
+			d.Info("  Average Query Time: %v", avgTime)
 		}
 	}
 
 	return nil
 }
 
-// autoRegisterTables automatically registers all catalog tables with the SQL engine
-func autoRegisterTables(ctx context.Context, engine *duckdb.Engine, catalog catalog.CatalogInterface) error {
+// autoRegisterTablesWithDisplay automatically registers all catalog tables with the SQL engine
+func autoRegisterTablesWithDisplay(ctx context.Context, engine *duckdb.Engine, catalog catalog.CatalogInterface, d display.Display, logger *zerolog.Logger) error {
 	// Get all namespaces
 	namespaces, err := catalog.ListNamespaces(ctx, nil)
 	if err != nil {
+		if logger != nil {
+			logger.Error().Str("cmd", "sql").Err(err).Msg("Failed to list namespaces")
+		}
 		return fmt.Errorf("failed to list namespaces: %w", err)
 	}
 
 	if len(namespaces) == 0 {
-		fmt.Printf("📭 No namespaces found in catalog\n")
-		fmt.Printf("💡 Try running 'icebox import <file.parquet> --table <table_name>' to create a table\n")
+		d.Info("No namespaces found in catalog")
+		d.Info("Try running 'icebox import <file.parquet> --table <table_name>' to create a table")
 		return nil
 	}
 
-	fmt.Printf("🔍 Found %d namespaces: %v\n", len(namespaces), namespaces)
+	d.Info("Found %d namespaces: %v", len(namespaces), namespaces)
 
 	registeredCount := 0
 	var errors []string
 
 	for _, namespace := range namespaces {
-		fmt.Printf("🔍 Checking namespace '%s' for tables...\n", strings.Join(namespace, "."))
+		d.Info("Checking namespace '%s' for tables...", strings.Join(namespace, "."))
 
 		// List tables in this namespace
 		var tableCount int
@@ -168,7 +206,7 @@ func autoRegisterTables(ctx context.Context, engine *duckdb.Engine, catalog cata
 			}
 
 			tableCount++
-			fmt.Printf("🔍 Found table: %s\n", strings.Join(identifier, "."))
+			d.Info("Found table: %s", strings.Join(identifier, "."))
 
 			// Load the table
 			icebergTable, err := catalog.LoadTable(ctx, identifier, nil)
@@ -183,12 +221,12 @@ func autoRegisterTables(ctx context.Context, engine *duckdb.Engine, catalog cata
 				continue
 			}
 
-			fmt.Printf("✅ Successfully registered table: %s\n", strings.Join(identifier, "."))
+			d.Success("Successfully registered table: %s", strings.Join(identifier, "."))
 			registeredCount++
 		}
 
 		if tableCount == 0 {
-			fmt.Printf("📭 No tables found in namespace '%s'\n", strings.Join(namespace, "."))
+			d.Info("No tables found in namespace '%s'", strings.Join(namespace, "."))
 		}
 	}
 
@@ -197,186 +235,124 @@ func autoRegisterTables(ctx context.Context, engine *duckdb.Engine, catalog cata
 	}
 
 	if registeredCount > 0 {
-		fmt.Printf("📋 Registered %d tables for querying\n", registeredCount)
+		d.Info("Registered %d tables for querying", registeredCount)
 	} else {
-		fmt.Printf("📭 No tables found to register\n")
-		fmt.Printf("💡 Try running 'icebox table list' to see what tables exist in your catalog\n")
+		d.Info("No tables found to register")
+		d.Info("Try running 'icebox table list' to see what tables exist in your catalog")
+	}
+
+	if logger != nil {
+		logger.Info().Str("cmd", "sql").Int("registered_count", registeredCount).Msg("Auto-registration completed")
 	}
 
 	return nil
 }
 
-// displayResults displays query results in the specified format with enterprise features
-func displayResults(result *duckdb.QueryResult, duration time.Duration) error {
+// Legacy function for backward compatibility
+func autoRegisterTables(ctx context.Context, engine *duckdb.Engine, catalog catalog.CatalogInterface) error {
+	d := display.New()
+	return autoRegisterTablesWithDisplay(ctx, engine, catalog, d, nil)
+}
+
+// displayResultsWithDisplay displays query results in the specified format
+func displayResultsWithDisplay(result *duckdb.QueryResult, duration time.Duration, d display.Display) error {
 	// Show timing if enabled
 	if sqlOpts.timing {
-		fmt.Printf("⏱️  Query [%s] executed in %v\n", result.QueryID, result.Duration)
+		d.Info("Query [%s] executed in %v", result.QueryID, result.Duration)
 	}
 
 	// Show row count
 	if result.RowCount == 0 {
-		fmt.Println("📭 No rows returned")
+		d.Info("No rows returned")
 		return nil
 	}
 
 	// Handle large result sets with user-friendly messaging
 	if result.RowCount >= 100000 {
-		fmt.Printf("⚠️  Large result set detected (%d rows) - performance may vary\n", result.RowCount)
+		d.Warning("Large result set detected (%d rows) - performance may vary", result.RowCount)
 	}
 
-	fmt.Printf("📊 %d rows returned\n", result.RowCount)
+	d.Info("%d rows returned", result.RowCount)
 
 	// Show schema if requested
 	if sqlOpts.showSchema {
-		fmt.Println("📋 Schema:")
+		d.Info("Schema:")
 		for i, col := range result.Columns {
-			fmt.Printf("  %d. %s\n", i+1, col)
+			d.Info("  %d. %s", i+1, col)
 		}
-		fmt.Println()
 	}
 
 	// Limit rows if necessary
 	rows := result.Rows
 	if int64(len(rows)) > int64(sqlOpts.maxRows) {
 		rows = rows[:sqlOpts.maxRows]
-		fmt.Printf("⚠️  Showing first %d rows (use --max-rows to adjust)\n", sqlOpts.maxRows)
+		d.Warning("Showing first %d rows (use --max-rows to adjust)", sqlOpts.maxRows)
 	}
 
 	// Display results based on format
 	switch sqlOpts.format {
 	case "table":
-		return displayTableFormat(result.Columns, rows)
+		return displayTableFormatWithDisplay(result.Columns, rows, d)
 	case "csv":
-		return displayCSVFormat(result.Columns, rows)
+		return displayCSVFormatWithDisplay(result.Columns, rows, d)
 	case "json":
-		return displayJSONFormat(result.Columns, rows)
+		return displayJSONFormatWithDisplay(result.Columns, rows, d)
 	default:
+		d.Error("Unsupported format: %s", sqlOpts.format)
 		return fmt.Errorf("unsupported format: %s", sqlOpts.format)
 	}
 }
 
-// displayTableFormat displays results in a formatted table
-func displayTableFormat(columns []string, rows [][]interface{}) error {
+// displayTableFormatWithDisplay displays results in a formatted table using display package
+func displayTableFormatWithDisplay(columns []string, rows [][]interface{}, d display.Display) error {
 	if len(rows) == 0 {
 		return nil
 	}
 
-	// Calculate column widths
-	widths := make([]int, len(columns))
-	for i, col := range columns {
-		widths[i] = len(col)
+	tableData := display.TableData{
+		Headers: columns,
+		Rows:    rows,
 	}
 
-	// Check data widths
-	for _, row := range rows {
-		for i, value := range row {
-			if i < len(widths) {
-				str := formatValue(value)
-				if len(str) > widths[i] {
-					widths[i] = len(str)
-				}
-			}
-		}
-	}
-
-	// Cap column widths at 50 characters
-	for i := range widths {
-		if widths[i] > 50 {
-			widths[i] = 50
-		}
-	}
-
-	// Print header
-	fmt.Print("┌")
-	for i, width := range widths {
-		fmt.Print(strings.Repeat("─", width+2))
-		if i < len(widths)-1 {
-			fmt.Print("┬")
-		}
-	}
-	fmt.Println("┐")
-
-	// Print column names
-	fmt.Print("│")
-	for i, col := range columns {
-		fmt.Printf(" %-*s │", widths[i], truncateString(col, widths[i]))
-	}
-	fmt.Println()
-
-	// Print separator
-	fmt.Print("├")
-	for i, width := range widths {
-		fmt.Print(strings.Repeat("─", width+2))
-		if i < len(widths)-1 {
-			fmt.Print("┼")
-		}
-	}
-	fmt.Println("┤")
-
-	// Print rows
-	for _, row := range rows {
-		fmt.Print("│")
-		for i, value := range row {
-			if i < len(widths) {
-				str := formatValue(value)
-				fmt.Printf(" %-*s │", widths[i], truncateString(str, widths[i]))
-			}
-		}
-		fmt.Println()
-	}
-
-	// Print footer
-	fmt.Print("└")
-	for i, width := range widths {
-		fmt.Print(strings.Repeat("─", width+2))
-		if i < len(widths)-1 {
-			fmt.Print("┴")
-		}
-	}
-	fmt.Println("┘")
-
-	return nil
+	return d.Table(tableData).Render()
 }
 
-// displayCSVFormat displays results in CSV format
+// Legacy function for backward compatibility
+func displayTableFormat(columns []string, rows [][]interface{}) error {
+	d := display.New()
+	return displayTableFormatWithDisplay(columns, rows, d)
+}
+
+// displayCSVFormatWithDisplay displays results in CSV format using display package
+func displayCSVFormatWithDisplay(columns []string, rows [][]interface{}, d display.Display) error {
+	tableData := display.TableData{
+		Headers: columns,
+		Rows:    rows,
+	}
+
+	return d.Table(tableData).WithFormat(display.FormatCSV).Render()
+}
+
+// Legacy function for backward compatibility
 func displayCSVFormat(columns []string, rows [][]interface{}) error {
-	// Print header
-	fmt.Println(strings.Join(columns, ","))
-
-	// Print rows
-	for _, row := range rows {
-		values := make([]string, len(row))
-		for i, value := range row {
-			values[i] = formatValueCSV(value)
-		}
-		fmt.Println(strings.Join(values, ","))
-	}
-
-	return nil
+	d := display.New()
+	return displayCSVFormatWithDisplay(columns, rows, d)
 }
 
-// displayJSONFormat displays results in JSON format
-func displayJSONFormat(columns []string, rows [][]interface{}) error {
-	fmt.Println("[")
-	for i, row := range rows {
-		fmt.Print("  {")
-		for j, col := range columns {
-			if j < len(row) {
-				fmt.Printf(`"%s": "%s"`, col, formatValue(row[j]))
-				if j < len(columns)-1 {
-					fmt.Print(", ")
-				}
-			}
-		}
-		fmt.Print("}")
-		if i < len(rows)-1 {
-			fmt.Print(",")
-		}
-		fmt.Println()
+// displayJSONFormatWithDisplay displays results in JSON format using display package
+func displayJSONFormatWithDisplay(columns []string, rows [][]interface{}, d display.Display) error {
+	tableData := display.TableData{
+		Headers: columns,
+		Rows:    rows,
 	}
-	fmt.Println("]")
 
-	return nil
+	return d.Table(tableData).WithFormat(display.FormatJSON).Render()
+}
+
+// Legacy function for backward compatibility
+func displayJSONFormat(columns []string, rows [][]interface{}) error {
+	d := display.New()
+	return displayJSONFormatWithDisplay(columns, rows, d)
 }
 
 // formatValue formats a value for display
