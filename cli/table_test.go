@@ -92,7 +92,7 @@ func captureOutput(f func()) string {
 	os.Stdout = old
 
 	var buf bytes.Buffer
-	io.Copy(&buf, r)
+	_, _ = io.Copy(&buf, r) // Ignore error for test output capture
 	return buf.String()
 }
 
@@ -739,7 +739,9 @@ storage:
 	// Change to temp directory
 	oldDir, err := os.Getwd()
 	require.NoError(t, err)
-	defer os.Chdir(oldDir)
+	defer func() {
+		_ = os.Chdir(oldDir) // Ignore error in test cleanup
+	}()
 	err = os.Chdir(tempDir)
 	require.NoError(t, err)
 
@@ -804,7 +806,9 @@ storage:
 	// Change to temp directory
 	oldDir, err := os.Getwd()
 	require.NoError(t, err)
-	defer os.Chdir(oldDir)
+	defer func() {
+		_ = os.Chdir(oldDir) // Ignore error in test cleanup
+	}()
 	err = os.Chdir(tempDir)
 	require.NoError(t, err)
 
@@ -850,7 +854,9 @@ storage:
 	// Change to temp directory
 	oldDir, err := os.Getwd()
 	require.NoError(t, err)
-	defer os.Chdir(oldDir)
+	defer func() {
+		_ = os.Chdir(oldDir) // Ignore error in test cleanup
+	}()
 	err = os.Chdir(tempDir)
 	require.NoError(t, err)
 
@@ -951,7 +957,9 @@ storage:
 	// Change to temp directory
 	oldDir, err := os.Getwd()
 	require.NoError(t, err)
-	defer os.Chdir(oldDir)
+	defer func() {
+		_ = os.Chdir(oldDir) // Ignore error in test cleanup
+	}()
 	err = os.Chdir(tempDir)
 	require.NoError(t, err)
 
@@ -973,7 +981,9 @@ func TestTableCommandsWithoutConfig(t *testing.T) {
 	tempDir := t.TempDir()
 	oldDir, err := os.Getwd()
 	require.NoError(t, err)
-	defer os.Chdir(oldDir)
+	defer func() {
+		_ = os.Chdir(oldDir) // Ignore error in test cleanup
+	}()
 	err = os.Chdir(tempDir)
 	require.NoError(t, err)
 

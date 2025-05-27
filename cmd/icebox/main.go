@@ -11,6 +11,13 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// Context key types to avoid collisions
+type contextKey string
+
+const (
+	loggerKey contextKey = "logger"
+)
+
 func main() {
 	// Initialize logger
 	logger := setupLogger()
@@ -21,7 +28,7 @@ func main() {
 	// Create context with display and logger
 	ctx := context.Background()
 	ctx = display.WithDisplay(ctx, displayInstance)
-	ctx = context.WithValue(ctx, "logger", logger)
+	ctx = context.WithValue(ctx, loggerKey, logger)
 
 	// Log application start
 	logger.Info().Str("cmd", "main").Msg("Starting Icebox CLI")

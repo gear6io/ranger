@@ -8,6 +8,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Context key types to avoid collisions
+type contextKey string
+
+const (
+	loggerKey contextKey = "logger"
+)
+
 var rootCmd = &cobra.Command{
 	Use:   "icebox",
 	Short: "A single-binary playground for Apache Iceberg",
@@ -39,7 +46,7 @@ func ExecuteWithContext(ctx context.Context) error {
 
 // getLoggerFromContext retrieves the logger from context
 func getLoggerFromContext(ctx context.Context) *zerolog.Logger {
-	if logger, ok := ctx.Value("logger").(zerolog.Logger); ok {
+	if logger, ok := ctx.Value(loggerKey).(zerolog.Logger); ok {
 		return &logger
 	}
 	return nil

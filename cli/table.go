@@ -876,6 +876,15 @@ func displayTableDescription(tbl *table.Table, opts *tableDescribeOptions) error
 }
 
 func displayTableHistoryDetailedWithDisplay(tbl *table.Table, opts *tableHistoryOptions, d display.Display) error {
+	// Validate format first
+	switch opts.format {
+	case "table", "json":
+		// Valid formats, continue
+	default:
+		d.Error("Unsupported format: %s", opts.format)
+		return fmt.Errorf("unsupported format: %s", opts.format)
+	}
+
 	snapshots := tbl.Metadata().Snapshots()
 	if len(snapshots) == 0 {
 		d.Info("No snapshots found in table history")
@@ -901,6 +910,7 @@ func displayTableHistoryDetailedWithDisplay(tbl *table.Table, opts *tableHistory
 	case "json":
 		return displayTableHistoryJSONWithDisplay(displaySnapshots, opts.reverse, d)
 	default:
+		// This should never be reached due to validation above
 		d.Error("Unsupported format: %s", opts.format)
 		return fmt.Errorf("unsupported format: %s", opts.format)
 	}
@@ -1017,12 +1027,6 @@ func displayTableHistoryJSONWithDisplay(snapshots []table.Snapshot, reverse bool
 	}
 
 	return d.Table(tableData).WithFormat(display.FormatJSON).Render()
-}
-
-// Legacy function for backward compatibility
-func displayTableHistoryJSON(snapshots []table.Snapshot, reverse bool) error {
-	d := display.New()
-	return displayTableHistoryJSONWithDisplay(snapshots, reverse, d)
 }
 
 func getTableSchema(opts *tableCreateOptions) (*iceberg.Schema, error) {

@@ -369,28 +369,6 @@ func runCatalogDrop(cmd *cobra.Command, args []string) error {
 
 // Helper functions for catalog management
 
-func displayNamespaceList(namespaces []table.Identifier, parent table.Identifier) error {
-	if len(namespaces) == 0 {
-		if parent != nil {
-			fmt.Printf("📭 No namespaces found under '%s'\n", strings.Join(parent, "."))
-		} else {
-			fmt.Println("📭 No namespaces found")
-		}
-		return nil
-	}
-
-	switch catalogListOpts.format {
-	case "table":
-		return displayNamespaceListTable(namespaces, parent)
-	case "csv":
-		return displayNamespaceListCSV(namespaces)
-	case "json":
-		return displayNamespaceListJSON(namespaces)
-	default:
-		return fmt.Errorf("unsupported format: %s", catalogListOpts.format)
-	}
-}
-
 // displayNamespaceListWithDisplay displays namespace list using the display package
 func displayNamespaceListWithDisplay(namespaces []table.Identifier, parent table.Identifier, d display.Display) error {
 	if len(namespaces) == 0 {
@@ -440,41 +418,6 @@ func displayNamespaceListTableWithDisplay(namespaces []table.Identifier, parent 
 	return d.Table(tableData).WithTitle(title).Render()
 }
 
-func displayNamespaceListTable(namespaces []table.Identifier, parent table.Identifier) error {
-	if parent != nil {
-		fmt.Printf("📁 Namespaces under '%s' (%d namespaces):\n", strings.Join(parent, "."), len(namespaces))
-	} else {
-		fmt.Printf("📁 All Namespaces (%d namespaces):\n", len(namespaces))
-	}
-
-	fmt.Println("┌────┬─────────────────────────────────────────┬─────────────┐")
-	fmt.Println("│ #  │                Namespace                │    Level    │")
-	fmt.Println("├────┼─────────────────────────────────────────┼─────────────┤")
-
-	for i, namespace := range namespaces {
-		namespaceName := strings.Join(namespace, ".")
-		level := fmt.Sprintf("%d", len(namespace))
-
-		fmt.Printf("│%-3d │ %-39s │ %-11s │\n",
-			i+1,
-			display.TruncateString(namespaceName, 39),
-			level)
-	}
-
-	fmt.Println("└────┴─────────────────────────────────────────┴─────────────┘")
-	return nil
-}
-
-func displayNamespaceListCSV(namespaces []table.Identifier) error {
-	fmt.Println("namespace,level")
-	for _, namespace := range namespaces {
-		namespaceName := strings.Join(namespace, ".")
-		level := len(namespace)
-		fmt.Printf("%s,%d\n", namespaceName, level)
-	}
-	return nil
-}
-
 // displayNamespaceListCSVWithDisplay displays namespace list in CSV format using display package
 func displayNamespaceListCSVWithDisplay(namespaces []table.Identifier, d display.Display) error {
 	// Prepare table data
@@ -493,22 +436,6 @@ func displayNamespaceListCSVWithDisplay(namespaces []table.Identifier, d display
 	}
 
 	return d.Table(tableData).WithFormat(display.FormatCSV).Render()
-}
-
-func displayNamespaceListJSON(namespaces []table.Identifier) error {
-	fmt.Println("[")
-	for i, namespace := range namespaces {
-		namespaceName := strings.Join(namespace, ".")
-		level := len(namespace)
-
-		fmt.Printf(`  {"namespace": "%s", "level": %d}`, namespaceName, level)
-		if i < len(namespaces)-1 {
-			fmt.Print(",")
-		}
-		fmt.Println()
-	}
-	fmt.Println("]")
-	return nil
 }
 
 // displayNamespaceListJSONWithDisplay displays namespace list in JSON format using display package

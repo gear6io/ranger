@@ -49,7 +49,17 @@ func init() {
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
-	ctx := cmd.Context()
+	// Handle nil command or nil context (for testing)
+	var ctx context.Context
+	if cmd != nil {
+		ctx = cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+	} else {
+		ctx = context.Background()
+	}
+
 	d := getDisplayFromContext(ctx)
 	logger := getLoggerFromContext(ctx)
 

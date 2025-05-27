@@ -66,7 +66,18 @@ func init() {
 
 func runImport(cmd *cobra.Command, args []string) error {
 	dataFile := args[0]
-	ctx := cmd.Context()
+
+	// Handle nil command or nil context (for testing)
+	var ctx context.Context
+	if cmd != nil {
+		ctx = cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+	} else {
+		ctx = context.Background()
+	}
+
 	d := getDisplayFromContext(ctx)
 	logger := getLoggerFromContext(ctx)
 
@@ -248,23 +259,6 @@ func parseTableIdentifier(tableName, namespace string) (tableIdent table.Identif
 	return tableIdent, namespaceIdent, nil
 }
 
-// printSchema prints the inferred schema in a readable format
-func printSchema(schema *importer.Schema) {
-	if schema == nil {
-		fmt.Println("  No schema information available")
-		return
-	}
-
-	fmt.Printf("  Columns (%d):\n", len(schema.Fields))
-	for i, field := range schema.Fields {
-		nullable := ""
-		if field.Nullable {
-			nullable = " (nullable)"
-		}
-		fmt.Printf("    %d. %s: %s%s\n", i+1, field.Name, field.Type, nullable)
-	}
-}
-
 // printSchemaWithDisplay prints the inferred schema using the display package
 func printSchemaWithDisplay(schema *importer.Schema, d display.Display) {
 	if schema == nil {
@@ -280,18 +274,6 @@ func printSchemaWithDisplay(schema *importer.Schema, d display.Display) {
 		}
 		d.Info("    %d. %s: %s%s", i+1, field.Name, field.Type, nullable)
 	}
-}
-
-// printStats prints file statistics in a readable format
-func printStats(stats *importer.FileStats) {
-	if stats == nil {
-		fmt.Println("  No statistics available")
-		return
-	}
-
-	fmt.Printf("  Records: %d\n", stats.RecordCount)
-	fmt.Printf("  File size: %s\n", formatBytes(stats.FileSize))
-	fmt.Printf("  Columns: %d\n", stats.ColumnCount)
 }
 
 // printStatsWithDisplay prints file statistics using the display package
