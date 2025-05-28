@@ -3,6 +3,7 @@ package cli
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	"github.com/TFMV/icebox/config"
+	"github.com/TFMV/icebox/display"
+	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 )
 
@@ -129,15 +132,31 @@ func init() {
 }
 
 func runPack(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	d := getDisplayFromContext(ctx)
+	logger := getLoggerFromContext(ctx)
+
+	if logger != nil {
+		logger.Info().Str("cmd", "pack").Msg("Starting pack operation")
+	}
+
 	// Determine project directory
 	projectDir := "."
 	if len(args) > 0 {
 		projectDir = args[0]
 	}
 
+	if logger != nil {
+		logger.Debug().Str("project_dir", projectDir).Msg("Using project directory")
+	}
+
 	// Make path absolute
 	absProjectDir, err := filepath.Abs(projectDir)
 	if err != nil {
+		if logger != nil {
+			logger.Error().Err(err).Str("project_dir", projectDir).Msg("Failed to resolve project directory")
+		}
+		d.Error("Failed to resolve project directory: %v", err)
 		return fmt.Errorf("❌ Failed to resolve project directory: %w", err)
 	}
 
@@ -145,10 +164,18 @@ func runPack(cmd *cobra.Command, args []string) error {
 	// Change to project directory temporarily to find config
 	originalDir, err := os.Getwd()
 	if err != nil {
+		if logger != nil {
+			logger.Error().Err(err).Msg("Failed to get current directory")
+		}
+		d.Error("Failed to get current directory: %v", err)
 		return fmt.Errorf("❌ Failed to get current directory: %w", err)
 	}
 
 	if err := os.Chdir(absProjectDir); err != nil {
+		if logger != nil {
+			logger.Error().Err(err).Str("project_dir", absProjectDir).Msg("Failed to change to project directory")
+		}
+		d.Error("Failed to change to project directory: %v", err)
 		return fmt.Errorf("❌ Failed to change to project directory: %w", err)
 	}
 
@@ -157,17 +184,28 @@ func runPack(cmd *cobra.Command, args []string) error {
 	// Change back to original directory
 	if chErr := os.Chdir(originalDir); chErr != nil {
 		// Log the error but don't fail the operation
-		fmt.Printf("Warning: Failed to change back to original directory: %v\n", chErr)
+		if logger != nil {
+			logger.Warn().Err(chErr).Msg("Failed to change back to original directory")
+		}
+		d.Warning("Failed to change back to original directory: %v", chErr)
 	}
 
 	if err != nil {
+		if logger != nil {
+			logger.Error().Err(err).Str("project_dir", absProjectDir).Msg("Failed to find Icebox configuration")
+		}
+		d.Error("Failed to find Icebox configuration in %s", absProjectDir)
+		d.Info("Try running 'icebox init' first to create a new project")
 		return fmt.Errorf("❌ Failed to find Icebox configuration in %s\n"+
 			"💡 Try running 'icebox init' first to create a new project: %w", absProjectDir, err)
 	}
 
 	if cmd.Flag("verbose").Value.String() == "true" {
-		fmt.Printf("Packing project: %s\n", absProjectDir)
-		fmt.Printf("Using configuration: %s\n", configPath)
+		d.Info("Packing project: %s", absProjectDir)
+		d.Info("Using configuration: %s", configPath)
+		if logger != nil {
+			logger.Info().Str("project_dir", absProjectDir).Str("config_path", configPath).Msg("Pack configuration details")
+		}
 	}
 
 	// Determine output filename
@@ -180,27 +218,76 @@ func runPack(cmd *cobra.Command, args []string) error {
 		outputPath = fmt.Sprintf("%s.tar.gz", projectName)
 	}
 
+	if logger != nil {
+		logger.Info().Str("output_path", outputPath).Bool("include_data", packOpts.includeData).Msg("Creating archive")
+	}
+
 	// Create the archive
-	if err := createArchive(absProjectDir, outputPath, cfg); err != nil {
+	if err := createArchive(ctx, absProjectDir, outputPath, cfg, d, logger); err != nil {
+		if logger != nil {
+			logger.Error().Err(err).Str("output_path", outputPath).Msg("Failed to create archive")
+		}
+		d.Error("Failed to create archive: %v", err)
 		return fmt.Errorf("❌ Failed to create archive: %w", err)
 	}
 
 	// Display success message
 	fileInfo, _ := os.Stat(outputPath)
-	fmt.Printf("✅ Successfully created archive!\n\n")
-	fmt.Printf("📦 Archive Details:\n")
-	fmt.Printf("   File: %s\n", outputPath)
-	if fileInfo != nil {
-		fmt.Printf("   Size: %s\n", formatBytes(fileInfo.Size()))
+	d.Success("Successfully created archive!")
+
+	// Create a table to display archive details
+	tableData := display.TableData{
+		Headers: []string{"Property", "Value"},
+		Rows: [][]interface{}{
+			{"File", outputPath},
+			{"Includes data", packOpts.includeData},
+			{"Checksums", packOpts.checksum},
+		},
 	}
-	fmt.Printf("   Includes data: %v\n", packOpts.includeData)
-	fmt.Printf("   Checksums: %v\n", packOpts.checksum)
+
+	if fileInfo != nil {
+		tableData.Rows = append(tableData.Rows, []interface{}{"Size", display.FormatBytes(fileInfo.Size())})
+	}
+
+	table := d.Table(tableData).
+		WithTitle("Archive Details").
+		WithCompactMode()
+
+	if err := table.Render(); err != nil {
+		if logger != nil {
+			logger.Warn().Err(err).Msg("Failed to render archive details table")
+		}
+		// Fallback to simple output
+		d.Info("Archive Details:")
+		d.Info("   File: %s", outputPath)
+		if fileInfo != nil {
+			d.Info("   Size: %s", display.FormatBytes(fileInfo.Size()))
+		}
+		d.Info("   Includes data: %v", packOpts.includeData)
+		d.Info("   Checksums: %v", packOpts.checksum)
+	}
+
+	if logger != nil {
+		logger.Info().Str("cmd", "pack").Str("output_path", outputPath).Msg("Pack operation completed successfully")
+	}
 
 	return nil
 }
 
 func runUnpack(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	d := getDisplayFromContext(ctx)
+	logger := getLoggerFromContext(ctx)
+
+	if logger != nil {
+		logger.Info().Str("cmd", "unpack").Msg("Starting unpack operation")
+	}
+
 	archivePath := args[0]
+
+	if logger != nil {
+		logger.Debug().Str("archive_path", archivePath).Msg("Using archive path")
+	}
 
 	// Determine target directory
 	targetDir := unpackOpts.targetDir
@@ -211,28 +298,72 @@ func runUnpack(cmd *cobra.Command, args []string) error {
 	// Make path absolute
 	absTargetDir, err := filepath.Abs(targetDir)
 	if err != nil {
+		if logger != nil {
+			logger.Error().Err(err).Str("target_dir", targetDir).Msg("Failed to resolve target directory")
+		}
+		d.Error("Failed to resolve target directory: %v", err)
 		return fmt.Errorf("❌ Failed to resolve target directory: %w", err)
 	}
 
+	if logger != nil {
+		logger.Info().Str("archive_path", archivePath).Str("target_dir", absTargetDir).Bool("verify", unpackOpts.verify).Msg("Extracting archive")
+	}
+
 	// Extract the archive
-	if err := extractArchive(archivePath, absTargetDir); err != nil {
+	if err := extractArchive(ctx, archivePath, absTargetDir, d, logger); err != nil {
+		if logger != nil {
+			logger.Error().Err(err).Str("archive_path", archivePath).Msg("Failed to extract archive")
+		}
+		d.Error("Failed to extract archive: %v", err)
 		return fmt.Errorf("❌ Failed to extract archive: %w", err)
 	}
 
 	// Display success message
-	fmt.Printf("✅ Successfully extracted archive!\n\n")
-	fmt.Printf("📂 Extraction Details:\n")
-	fmt.Printf("   Archive: %s\n", archivePath)
-	fmt.Printf("   Target: %s\n", absTargetDir)
-	fmt.Printf("   Verified: %v\n", unpackOpts.verify)
+	d.Success("Successfully extracted archive!")
+
+	// Create a table to display extraction details
+	tableData := display.TableData{
+		Headers: []string{"Property", "Value"},
+		Rows: [][]interface{}{
+			{"Archive", archivePath},
+			{"Target", absTargetDir},
+			{"Verified", unpackOpts.verify},
+		},
+	}
+
+	table := d.Table(tableData).
+		WithTitle("Extraction Details").
+		WithCompactMode()
+
+	if err := table.Render(); err != nil {
+		if logger != nil {
+			logger.Warn().Err(err).Msg("Failed to render extraction details table")
+		}
+		// Fallback to simple output
+		d.Info("Extraction Details:")
+		d.Info("   Archive: %s", archivePath)
+		d.Info("   Target: %s", absTargetDir)
+		d.Info("   Verified: %v", unpackOpts.verify)
+	}
+
+	if logger != nil {
+		logger.Info().Str("cmd", "unpack").Str("archive_path", archivePath).Msg("Unpack operation completed successfully")
+	}
 
 	return nil
 }
 
-func createArchive(projectDir, outputPath string, cfg *config.Config) error {
+func createArchive(ctx context.Context, projectDir, outputPath string, cfg *config.Config, d display.Display, logger *zerolog.Logger) error {
+	if logger != nil {
+		logger.Info().Str("project_dir", projectDir).Str("output_path", outputPath).Msg("Starting archive creation")
+	}
+
 	// Create output file
 	outputFile, err := os.Create(outputPath)
 	if err != nil {
+		if logger != nil {
+			logger.Error().Err(err).Str("output_path", outputPath).Msg("Failed to create output file")
+		}
 		return fmt.Errorf("failed to create output file: %w", err)
 	}
 	defer outputFile.Close()
@@ -245,6 +376,9 @@ func createArchive(projectDir, outputPath string, cfg *config.Config) error {
 		gzipWriter = gzip.NewWriter(outputFile)
 		writer = gzipWriter
 		defer gzipWriter.Close()
+		if logger != nil {
+			logger.Debug().Msg("Using gzip compression")
+		}
 	}
 
 	tarWriter := tar.NewWriter(writer)
@@ -266,9 +400,16 @@ func createArchive(projectDir, outputPath string, cfg *config.Config) error {
 	var totalSize int64
 	fileCount := 0
 
+	if logger != nil {
+		logger.Debug().Str("project_dir", projectDir).Msg("Walking project directory")
+	}
+
 	// Walk the project directory
 	err = filepath.Walk(projectDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			if logger != nil {
+				logger.Warn().Err(err).Str("path", path).Msg("Error walking path")
+			}
 			return err
 		}
 
@@ -280,11 +421,17 @@ func createArchive(projectDir, outputPath string, cfg *config.Config) error {
 		// Get relative path
 		relPath, err := filepath.Rel(projectDir, path)
 		if err != nil {
+			if logger != nil {
+				logger.Error().Err(err).Str("path", path).Msg("Failed to get relative path")
+			}
 			return err
 		}
 
 		// Skip certain files/directories
 		if shouldSkip(relPath, info) {
+			if logger != nil {
+				logger.Debug().Str("path", relPath).Msg("Skipping file/directory")
+			}
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -293,25 +440,43 @@ func createArchive(projectDir, outputPath string, cfg *config.Config) error {
 
 		// Skip data files if not including data
 		if !packOpts.includeData && isDataFile(relPath) {
+			if logger != nil {
+				logger.Debug().Str("path", relPath).Msg("Skipping data file")
+			}
 			return nil
 		}
 
 		// Check size limits
 		if totalSize+info.Size() > packOpts.maxSize {
-			return fmt.Errorf("archive would exceed maximum size limit (%s)", formatBytes(packOpts.maxSize))
+			if logger != nil {
+				logger.Error().Int64("current_size", totalSize).Int64("file_size", info.Size()).Int64("max_size", packOpts.maxSize).Msg("Archive would exceed size limit")
+			}
+			return fmt.Errorf("archive would exceed maximum size limit (%s)", display.FormatBytes(packOpts.maxSize))
 		}
 
 		// Add file to archive
 		if !info.IsDir() {
 			if err := addFileToArchive(tarWriter, path, relPath, info, manifest); err != nil {
+				if logger != nil {
+					logger.Error().Err(err).Str("path", relPath).Msg("Failed to add file to archive")
+				}
 				return fmt.Errorf("failed to add file %s: %w", relPath, err)
 			}
 			totalSize += info.Size()
 			fileCount++
+			if logger != nil {
+				logger.Debug().Str("path", relPath).Int64("size", info.Size()).Msg("Added file to archive")
+			}
 		} else {
 			// Add directory entry
 			if err := addDirToArchive(tarWriter, relPath, info); err != nil {
+				if logger != nil {
+					logger.Error().Err(err).Str("path", relPath).Msg("Failed to add directory to archive")
+				}
 				return fmt.Errorf("failed to add directory %s: %w", relPath, err)
+			}
+			if logger != nil {
+				logger.Debug().Str("path", relPath).Msg("Added directory to archive")
 			}
 		}
 
@@ -319,6 +484,9 @@ func createArchive(projectDir, outputPath string, cfg *config.Config) error {
 	})
 
 	if err != nil {
+		if logger != nil {
+			logger.Error().Err(err).Msg("Failed to walk project directory")
+		}
 		return fmt.Errorf("failed to walk project directory: %w", err)
 	}
 
@@ -328,18 +496,32 @@ func createArchive(projectDir, outputPath string, cfg *config.Config) error {
 
 	// Add manifest to archive
 	if err := addManifestToArchive(tarWriter, manifest); err != nil {
+		if logger != nil {
+			logger.Error().Err(err).Msg("Failed to add manifest to archive")
+		}
 		return fmt.Errorf("failed to add manifest: %w", err)
 	}
 
-	fmt.Printf("📦 Packed %d files (%s total)\n", fileCount, formatBytes(totalSize))
+	d.Info("Packed %d files (%s total)", fileCount, display.FormatBytes(totalSize))
+
+	if logger != nil {
+		logger.Info().Int("file_count", fileCount).Int64("total_size", totalSize).Msg("Archive creation completed")
+	}
 
 	return nil
 }
 
-func extractArchive(archivePath, targetDir string) error {
+func extractArchive(ctx context.Context, archivePath, targetDir string, d display.Display, logger *zerolog.Logger) error {
+	if logger != nil {
+		logger.Info().Str("archive_path", archivePath).Str("target_dir", targetDir).Msg("Starting archive extraction")
+	}
+
 	// Open archive file
 	archiveFile, err := os.Open(archivePath)
 	if err != nil {
+		if logger != nil {
+			logger.Error().Err(err).Str("archive_path", archivePath).Msg("Failed to open archive file")
+		}
 		return fmt.Errorf("failed to open archive: %w", err)
 	}
 	defer archiveFile.Close()
@@ -351,16 +533,26 @@ func extractArchive(archivePath, targetDir string) error {
 	if strings.HasSuffix(archivePath, ".gz") {
 		gzipReader, err := gzip.NewReader(archiveFile)
 		if err != nil {
+			if logger != nil {
+				logger.Error().Err(err).Msg("Failed to create gzip reader")
+			}
 			return fmt.Errorf("failed to create gzip reader: %w", err)
 		}
 		defer gzipReader.Close()
 		reader = gzipReader
+		if logger != nil {
+			logger.Debug().Msg("Using gzip decompression")
+		}
 	}
 
 	tarReader := tar.NewReader(reader)
 
 	var manifest *PackageManifest
 	extractedFiles := 0
+
+	if logger != nil {
+		logger.Debug().Msg("Starting file extraction")
+	}
 
 	// Extract files
 	for {
@@ -369,12 +561,18 @@ func extractArchive(archivePath, targetDir string) error {
 			break
 		}
 		if err != nil {
+			if logger != nil {
+				logger.Error().Err(err).Msg("Failed to read tar header")
+			}
 			return fmt.Errorf("failed to read tar header: %w", err)
 		}
 
 		// Validate and sanitize the path to prevent zip slip attacks
 		targetPath, err := sanitizeExtractPath(targetDir, header.Name)
 		if err != nil {
+			if logger != nil {
+				logger.Error().Err(err).Str("entry_name", header.Name).Msg("Invalid archive entry")
+			}
 			return fmt.Errorf("invalid archive entry '%s': %w", header.Name, err)
 		}
 
@@ -382,27 +580,45 @@ func extractArchive(archivePath, targetDir string) error {
 		if header.Name == "manifest.json" {
 			manifestData, err := io.ReadAll(tarReader)
 			if err != nil {
+				if logger != nil {
+					logger.Error().Err(err).Msg("Failed to read manifest")
+				}
 				return fmt.Errorf("failed to read manifest: %w", err)
 			}
 			if err := json.Unmarshal(manifestData, &manifest); err != nil {
+				if logger != nil {
+					logger.Error().Err(err).Msg("Failed to parse manifest")
+				}
 				return fmt.Errorf("failed to parse manifest: %w", err)
+			}
+			if logger != nil {
+				logger.Debug().Msg("Loaded manifest from archive")
 			}
 			continue
 		}
 
 		// Skip data files if requested
 		if unpackOpts.skipData && isDataFile(header.Name) {
+			if logger != nil {
+				logger.Debug().Str("file", header.Name).Msg("Skipping data file")
+			}
 			continue
 		}
 
 		// Check if file exists and handle overwrite
 		if _, err := os.Stat(targetPath); err == nil && !unpackOpts.overwrite {
-			fmt.Printf("⚠️  Skipping existing file: %s (use --overwrite to replace)\n", header.Name)
+			d.Warning("Skipping existing file: %s (use --overwrite to replace)", header.Name)
+			if logger != nil {
+				logger.Debug().Str("file", header.Name).Msg("Skipping existing file")
+			}
 			continue
 		}
 
 		// Create target directory
 		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			if logger != nil {
+				logger.Error().Err(err).Str("dir", filepath.Dir(targetPath)).Msg("Failed to create directory")
+			}
 			return fmt.Errorf("failed to create directory: %w", err)
 		}
 
@@ -410,18 +626,34 @@ func extractArchive(archivePath, targetDir string) error {
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(targetPath, os.FileMode(header.Mode)); err != nil {
+				if logger != nil {
+					logger.Error().Err(err).Str("dir", targetPath).Msg("Failed to create directory")
+				}
 				return fmt.Errorf("failed to create directory %s: %w", targetPath, err)
+			}
+			if logger != nil {
+				logger.Debug().Str("dir", header.Name).Msg("Created directory")
 			}
 
 		case tar.TypeReg:
 			if err := extractFile(tarReader, targetPath, header, manifest); err != nil {
+				if logger != nil {
+					logger.Error().Err(err).Str("file", header.Name).Msg("Failed to extract file")
+				}
 				return fmt.Errorf("failed to extract file %s: %w", header.Name, err)
 			}
 			extractedFiles++
+			if logger != nil {
+				logger.Debug().Str("file", header.Name).Int64("size", header.Size).Msg("Extracted file")
+			}
 		}
 	}
 
-	fmt.Printf("📂 Extracted %d files\n", extractedFiles)
+	d.Info("Extracted %d files", extractedFiles)
+
+	if logger != nil {
+		logger.Info().Int("extracted_files", extractedFiles).Msg("Archive extraction completed")
+	}
 
 	return nil
 }

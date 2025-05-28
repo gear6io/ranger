@@ -3,12 +3,15 @@ package cli
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/TFMV/icebox/display"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -154,8 +157,13 @@ func TestZipSlipProtection(t *testing.T) {
 		err := createMaliciousArchive(archivePath)
 		require.NoError(t, err)
 
+		// Create test context and display
+		ctx := context.Background()
+		d := display.New()
+		logger := zerolog.Nop() // No-op logger for tests
+
 		// Try to extract - should fail
-		err = extractArchive(archivePath, extractDir)
+		err = extractArchive(ctx, archivePath, extractDir, d, &logger)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid archive entry")
 
@@ -185,8 +193,13 @@ func TestZipSlipProtection(t *testing.T) {
 		err = createLegitimateArchive(legitArchivePath)
 		require.NoError(t, err)
 
+		// Create test context and display
+		ctx := context.Background()
+		d := display.New()
+		logger := zerolog.Nop() // No-op logger for tests
+
 		// Extract should succeed
-		err = extractArchive(legitArchivePath, legitExtractDir)
+		err = extractArchive(ctx, legitArchivePath, legitExtractDir, d, &logger)
 		require.NoError(t, err)
 
 		// Verify files were extracted correctly (excluding manifest.json which is handled specially)
@@ -308,8 +321,13 @@ func TestGzipArchiveProtection(t *testing.T) {
 	err = createMaliciousGzipArchive(archivePath)
 	require.NoError(t, err)
 
+	// Create test context and display
+	ctx := context.Background()
+	d := display.New()
+	logger := zerolog.Nop() // No-op logger for tests
+
 	// Try to extract - should fail
-	err = extractArchive(archivePath, extractDir)
+	err = extractArchive(ctx, archivePath, extractDir, d, &logger)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid archive entry")
 }
@@ -356,8 +374,13 @@ func TestArchiveExtractionLimits(t *testing.T) {
 		err := createSymlinkArchive(archivePath)
 		require.NoError(t, err)
 
+		// Create test context and display
+		ctx := context.Background()
+		d := display.New()
+		logger := zerolog.Nop() // No-op logger for tests
+
 		// Extract should handle symlinks safely (or reject them)
-		err = extractArchive(archivePath, extractDir)
+		err = extractArchive(ctx, archivePath, extractDir, d, &logger)
 		// The current implementation doesn't handle symlinks, so this might fail
 		// but it shouldn't create security vulnerabilities
 		if err != nil {
