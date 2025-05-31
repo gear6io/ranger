@@ -24,7 +24,7 @@ type Engine struct {
 	allocator        memory.Allocator
 	initialized      bool
 	config           *EngineConfig
-	logger           *log.Logger
+	log              *log.Logger
 	metrics          *EngineMetrics
 	mutex            sync.RWMutex
 	icebergAvailable bool // Track if iceberg extension is available
@@ -138,7 +138,7 @@ func NewEngineWithConfig(cat catalog.CatalogInterface, config *EngineConfig) (*E
 		allocator: memory.NewGoAllocator(),
 		config:    config,
 		metrics:   &EngineMetrics{},
-		logger:    log.Default(),
+		log:       log.Default(),
 	}
 
 	// Initialize the engine with optimizations
@@ -166,13 +166,13 @@ func (e *Engine) initialize() error {
 	// Memory limit optimization
 	_, err := e.db.Exec("SET memory_limit = ?", fmt.Sprintf("%dMB", e.config.MaxMemoryMB))
 	if err != nil {
-		e.logger.Printf("Warning: Failed to set memory limit: %v", err)
+		e.log.Printf("Warning: Failed to set memory limit: %v", err)
 	}
 
 	// Apply core optimizations
 	for _, opt := range coreOptimizations {
 		if _, err := e.db.Exec(opt); err != nil {
-			e.logger.Printf("Warning: Failed to apply optimization '%s': %v", opt, err)
+			e.log.Printf("Warning: Failed to apply optimization '%s': %v", opt, err)
 		}
 	}
 
@@ -186,7 +186,7 @@ func (e *Engine) initialize() error {
 		return fmt.Errorf("failed to attach Iceberg catalog: %w", err)
 	}
 
-	e.logger.Printf("DuckDB engine initialized successfully with catalog: %s", e.catalog.Name())
+	e.log.Printf("DuckDB engine initialized successfully with catalog: %s", e.catalog.Name())
 	e.initialized = true
 	return nil
 }
@@ -203,7 +203,7 @@ func (e *Engine) initializeExtensions() error {
 	for _, ext := range requiredExtensions {
 		// Try to install extension
 		if _, err := e.db.Exec(fmt.Sprintf("INSTALL %s", ext)); err != nil {
-			e.logger.Printf("Info: Extension %s already installed or installation failed: %v", ext, err)
+			e.log.Printf("Info: Extension %s already installed or installation failed: %v", ext, err)
 		}
 
 		// Try to load extension - this must succeed for required extensions
@@ -211,27 +211,27 @@ func (e *Engine) initializeExtensions() error {
 			return fmt.Errorf("failed to load required %s extension: %w", ext, err)
 		}
 
-		e.logger.Printf("Info: %s extension loaded successfully", ext)
+		e.log.Printf("Info: %s extension loaded successfully", ext)
 	}
 
 	// Install and load optional extensions
 	for _, ext := range optionalExtensions {
 		// Try to install extension
 		if _, err := e.db.Exec(fmt.Sprintf("INSTALL %s", ext)); err != nil {
-			e.logger.Printf("Info: Extension %s already installed or installation failed: %v", ext, err)
+			e.log.Printf("Info: Extension %s already installed or installation failed: %v", ext, err)
 		}
 
 		// Try to load extension - failure is acceptable for optional extensions
 		if _, err := e.db.Exec(fmt.Sprintf("LOAD %s", ext)); err != nil {
-			e.logger.Printf("Warning: Optional %s extension not available on this platform: %v", ext, err)
-			e.logger.Printf("Info: Icebox will continue without native Iceberg support - some features may be limited")
+			e.log.Printf("Warning: Optional %s extension not available on this platform: %v", ext, err)
+			e.log.Printf("Info: Icebox will continue without native Iceberg support - some features may be limited")
 			if ext == "iceberg" {
 				e.icebergAvailable = false
 			}
 			continue
 		}
 
-		e.logger.Printf("Info: %s extension loaded successfully", ext)
+		e.log.Printf("Info: %s extension loaded successfully", ext)
 		if ext == "iceberg" {
 			e.icebergAvailable = true
 		}
@@ -249,7 +249,7 @@ func (e *Engine) attachIcebergCatalog() error {
 	case interface{ GetJSONConfig() interface{} }: // JSON catalog
 		// For JSON catalogs, we'll use file-based access
 		// This is a simplified approach. Might want to expose the JSON catalog as a REST endpoint
-		e.logger.Printf("Info: JSON catalog detected - using direct file access")
+		e.log.Printf("Info: JSON catalog detected - using direct file access")
 		return nil // JSON catalogs don't need ATTACH - we'll handle them differently
 
 	case interface{ GetRESTConfig() interface{} }: // REST catalog
@@ -263,15 +263,15 @@ func (e *Engine) attachIcebergCatalog() error {
 		if _, err := e.db.Exec(attachSQL); err != nil {
 			return fmt.Errorf("failed to attach REST catalog: %w", err)
 		}
-		e.logger.Printf("Info: Attached REST catalog as '%s'", catalogName)
+		e.log.Printf("Info: Attached REST catalog as '%s'", catalogName)
 
 	case interface{ GetSQLiteConfig() interface{} }: // SQLite catalog
 		// For SQLite catalogs, we'll use file-based access to the underlying data
-		e.logger.Printf("Info: SQLite catalog detected - using direct file access")
+		e.log.Printf("Info: SQLite catalog detected - using direct file access")
 		return nil // SQLite catalogs don't need ATTACH - we'll handle them differently
 
 	default:
-		e.logger.Printf("Info: Unknown catalog type - using direct file access")
+		e.log.Printf("Info: Unknown catalog type - using direct file access")
 		return nil
 	}
 
@@ -357,7 +357,7 @@ func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 
 	// Log query if enabled
 	if e.config.EnableQueryLog {
-		e.logger.Printf("Executing query [%s]: %s", queryID, query)
+		e.log.Printf("Executing query [%s]: %s", queryID, query)
 	}
 
 	start := time.Now()
@@ -398,7 +398,7 @@ func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 	for rows.Next() {
 		// Memory management: limit result size for very large queries
 		if rowCount > 100000 { // 100k row limit
-			e.logger.Printf("Warning: Query [%s] result truncated at 100,000 rows", queryID)
+			e.log.Printf("Warning: Query [%s] result truncated at 100,000 rows", queryID)
 			break
 		}
 
@@ -432,7 +432,7 @@ func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 
 	// Log completion if enabled
 	if e.config.EnableQueryLog {
-		e.logger.Printf("Query [%s] completed in %v, returned %d rows", queryID, duration, rowCount)
+		e.log.Printf("Query [%s] completed in %v, returned %d rows", queryID, duration, rowCount)
 	}
 
 	return &QueryResult{
@@ -464,7 +464,7 @@ func (e *Engine) RegisterTable(ctx context.Context, identifier table.Identifier,
 
 	// Check if Iceberg extension is available
 	if !e.icebergAvailable {
-		e.logger.Printf("Warning: Iceberg extension not available - creating placeholder table for %s", tableName)
+		e.log.Printf("Warning: Iceberg extension not available - creating placeholder table for %s", tableName)
 
 		// Create a placeholder table that explains the limitation
 		createPlaceholderSQL := fmt.Sprintf(`
@@ -485,7 +485,7 @@ func (e *Engine) RegisterTable(ctx context.Context, identifier table.Identifier,
 				e.quoteName(simpleTableName), e.quoteName(tableName))
 
 			if _, err := e.db.Exec(aliasSQL); err != nil {
-				e.logger.Printf("Warning: Could not create alias %s for placeholder table %s: %v", simpleTableName, tableName, err)
+				e.log.Printf("Warning: Could not create alias %s for placeholder table %s: %v", simpleTableName, tableName, err)
 			}
 		}
 
@@ -495,7 +495,7 @@ func (e *Engine) RegisterTable(ctx context.Context, identifier table.Identifier,
 		e.metrics.mu.Unlock()
 
 		duration := time.Since(start)
-		e.logger.Printf("Created placeholder for table %s in %v (Iceberg extension unavailable)", tableName, duration)
+		e.log.Printf("Created placeholder for table %s in %v (Iceberg extension unavailable)", tableName, duration)
 		return nil
 	}
 
@@ -532,9 +532,9 @@ func (e *Engine) RegisterTable(ctx context.Context, identifier table.Identifier,
 			e.quoteName(simpleTableName), e.quoteName(tableName))
 
 		if _, err := e.db.Exec(aliasSQL); err != nil {
-			e.logger.Printf("Warning: Could not create alias %s for table %s: %v", simpleTableName, tableName, err)
+			e.log.Printf("Warning: Could not create alias %s for table %s: %v", simpleTableName, tableName, err)
 		} else {
-			e.logger.Printf("Info: Created alias '%s' -> '%s'", simpleTableName, tableName)
+			e.log.Printf("Info: Created alias '%s' -> '%s'", simpleTableName, tableName)
 		}
 	}
 
@@ -544,7 +544,7 @@ func (e *Engine) RegisterTable(ctx context.Context, identifier table.Identifier,
 	e.metrics.mu.Unlock()
 
 	duration := time.Since(start)
-	e.logger.Printf("Registered table %s in %v using DuckDB v1.3.0 native Iceberg support", tableName, duration)
+	e.log.Printf("Registered table %s in %v using DuckDB v1.3.0 native Iceberg support", tableName, duration)
 
 	return nil
 }
@@ -588,7 +588,7 @@ func (e *Engine) DescribeTable(ctx context.Context, tableName string) (*QueryRes
 // ClearTableCache clears any cached table information (no-op for this implementation)
 func (e *Engine) ClearTableCache() {
 	// Tables are registered as views in DuckDB directly
-	e.logger.Printf("Info: ClearTableCache called - no cache to clear in this implementation")
+	e.log.Printf("Info: ClearTableCache called - no cache to clear in this implementation")
 }
 
 // preprocessQuery preprocesses SQL queries to handle Iceberg table references
@@ -606,10 +606,37 @@ func (e *Engine) preprocessQuery(ctx context.Context, query string) (string, err
 		keyword := parts[0]
 		tablePath := parts[1]
 
-		// Replace dots with underscores in the table reference
+		// Replace dots with underscores in table references
 		tableName := strings.ReplaceAll(tablePath, ".", "_")
+		return fmt.Sprintf("%s %s", keyword, tableName)
+	})
 
-		return keyword + " " + tableName
+	// Create aliases for table references to support both notations
+	if strings.Contains(processedQuery, "_") {
+		for _, table := range tablePattern.FindAllString(query, -1) {
+			parts := strings.SplitN(table, " ", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			tablePath := parts[1]
+			dotParts := strings.Split(tablePath, ".")
+			if len(dotParts) == 2 {
+				aliasStmt := fmt.Sprintf("CREATE ALIAS IF NOT EXISTS %s FOR %s_%s;", dotParts[1], dotParts[0], dotParts[1])
+				if _, err := e.db.Exec(aliasStmt); err != nil {
+					e.log.Printf("Failed to create alias: %v", err)
+				}
+			}
+		}
+	}
+
+	// Replace column references to use underscore notation
+	columnPattern := regexp.MustCompile(`([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*)`)
+	processedQuery = columnPattern.ReplaceAllStringFunc(processedQuery, func(match string) string {
+		parts := strings.Split(match, ".")
+		if len(parts) == 3 {
+			return fmt.Sprintf("%s_%s.%s", parts[0], parts[1], parts[2])
+		}
+		return match
 	})
 
 	return processedQuery, nil
@@ -722,7 +749,7 @@ func (e *Engine) checkInjectionPatterns(query, queryID string) error {
 	for _, pattern := range injectionPatterns {
 		matched, err := regexp.MatchString(pattern.pattern, query)
 		if err != nil {
-			e.logger.Printf("Warning: regex error checking pattern %s: %v", pattern.pattern, err)
+			e.log.Printf("Warning: regex error checking pattern %s: %v", pattern.pattern, err)
 			continue
 		}
 		if matched {
@@ -744,13 +771,15 @@ func (e *Engine) executeSecureQuery(ctx context.Context, query, queryID string) 
 		// Check for syntax error related to table references
 		if strings.Contains(strings.ToLower(err.Error()), "syntax error") &&
 			strings.Contains(query, ".") {
+			// Try to provide a helpful error message
+			processedQuery := strings.ReplaceAll(query, ".", "_")
 			return nil, fmt.Errorf("syntax error in query [%s]: DuckDB requires table names to use underscores instead of dots. "+
 				"Use '%s' instead of '%s' or just the table name '%s'. "+
 				"Original error: %w",
 				queryID,
-				strings.ReplaceAll(query, ".", "_"),
+				processedQuery,
 				query,
-				strings.Split(query, ".")[1],
+				strings.Split(strings.Split(query, ".")[1], " ")[0],
 				err)
 		}
 		return nil, err
