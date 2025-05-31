@@ -492,11 +492,72 @@ func TestEngineQueryPreprocessing(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Test query preprocessing (currently just returns the query as-is)
-	originalQuery := "SELECT * FROM test_table"
-	processedQuery, err := engine.preprocessQuery(ctx, originalQuery)
+	// Create and register a test table
+	namespace := table.Identifier{"analytics"}
+	err = catalog.CreateNamespace(ctx, namespace, map[string]string{})
 	require.NoError(t, err)
-	assert.Equal(t, originalQuery, processedQuery)
+
+	schema := iceberg.NewSchema(1,
+		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
+		iceberg.NestedField{ID: 2, Name: "name", Type: iceberg.PrimitiveTypes.String, Required: false},
+	)
+
+	tableIdent := table.Identifier{"analytics", "users"}
+	icebergTable, err := catalog.CreateTable(ctx, tableIdent, schema)
+	require.NoError(t, err)
+
+	err = engine.RegisterTable(ctx, tableIdent, icebergTable)
+	require.NoError(t, err)
+
+	testCases := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "Simple table reference",
+			input:    "SELECT * FROM analytics.users",
+			expected: "SELECT * FROM analytics_users",
+		},
+		{
+			name:     "Multiple table references",
+			input:    "SELECT * FROM analytics.users JOIN analytics.products",
+			expected: "SELECT * FROM analytics_users JOIN analytics_products",
+		},
+		{
+			name:     "Column references",
+			input:    "SELECT analytics.users.id FROM analytics.users",
+			expected: "SELECT analytics_users.id FROM analytics_users",
+		},
+		{
+			name:     "Mixed notation",
+			input:    "SELECT u.id FROM analytics.users u JOIN analytics_products p ON u.id = p.user_id",
+			expected: "SELECT u.id FROM analytics_users u JOIN analytics_products p ON u.id = p.user_id",
+		},
+		{
+			name:     "WHERE clause",
+			input:    "SELECT * FROM analytics.users WHERE analytics.users.id > 0",
+			expected: "SELECT * FROM analytics_users WHERE analytics_users.id > 0",
+		},
+		{
+			name:     "Preserve column references",
+			input:    "SELECT u.id, u.name FROM analytics.users u",
+			expected: "SELECT u.id, u.name FROM analytics_users u",
+		},
+		{
+			name:     "No table references",
+			input:    "SELECT 1 as test",
+			expected: "SELECT 1 as test",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			processedQuery, err := engine.preprocessQuery(ctx, tc.input)
+			require.NoError(t, err)
+			assert.Equal(t, tc.expected, processedQuery)
+		})
+	}
 }
 
 // TestEnginePerformanceMetrics tests performance metrics tracking
