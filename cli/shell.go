@@ -10,7 +10,9 @@ import (
 
 	"github.com/TFMV/icebox/catalog/sqlite"
 	"github.com/TFMV/icebox/config"
+	"github.com/TFMV/icebox/display"
 	"github.com/TFMV/icebox/engine/duckdb"
+	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 )
 
@@ -51,6 +53,8 @@ type shellState struct {
 	buffer       []string
 	config       *config.Config
 	sessionStart time.Time
+	display      display.Display
+	logger       *zerolog.Logger
 }
 
 func init() {
@@ -62,22 +66,38 @@ func init() {
 }
 
 func runShell(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	d := getDisplayFromContext(ctx)
+	logger := getLoggerFromContext(ctx)
+
+	if logger != nil {
+		logger.Info().Str("cmd", "shell").Msg("Starting interactive SQL shell")
+	}
+
 	// Find the Icebox configuration
 	configPath, cfg, err := config.FindConfig()
 	if err != nil {
-		return fmt.Errorf("❌ Failed to find Icebox configuration\n"+
-			"💡 Try running 'icebox init' first to create a new project: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "shell").Err(err).Msg("Failed to find Icebox configuration")
+		}
+		d.Error("Failed to find Icebox configuration: %v", err)
+		d.Info("Try running 'icebox init' first to create a new project")
+		return err
 	}
 
 	if cmd.Flag("verbose").Value.String() == "true" {
-		fmt.Printf("Using configuration: %s\n", configPath)
+		d.Info("Using configuration: %s", configPath)
 	}
 
 	// Create catalog
 	catalog, err := sqlite.NewCatalog(cfg)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create catalog: %w\n"+
-			"💡 Your catalog may be corrupted. Try backing up and running 'icebox init' again", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "shell").Err(err).Msg("Failed to create catalog")
+		}
+		d.Error("Failed to create catalog: %v", err)
+		d.Info("Your catalog may be corrupted. Try backing up and running 'icebox init' again")
+		return err
 	}
 	defer catalog.Close()
 
@@ -89,8 +109,12 @@ func runShell(cmd *cobra.Command, args []string) error {
 
 	engine, err := duckdb.NewEngineWithConfig(catalog, engineConfig)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create SQL engine: %w\n"+
-			"💡 This might be a DuckDB installation issue", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "shell").Err(err).Msg("Failed to create SQL engine")
+		}
+		d.Error("Failed to create SQL engine: %v", err)
+		d.Info("This might be a DuckDB installation issue")
+		return err
 	}
 	defer engine.Close()
 
@@ -104,6 +128,8 @@ func runShell(cmd *cobra.Command, args []string) error {
 		buffer:       make([]string, 0),
 		config:       cfg,
 		sessionStart: time.Now(),
+		display:      d,
+		logger:       logger,
 	}
 
 	// Welcome message with ASCII art
@@ -113,7 +139,7 @@ func runShell(cmd *cobra.Command, args []string) error {
 	fmt.Println("Type \\help for help, \\quit to exit")
 
 	// Auto-register tables
-	if err := autoRegisterTables(cmd.Context(), engine, catalog); err != nil {
+	if err := autoRegisterTables(ctx, engine, catalog); err != nil {
 		fmt.Printf("⚠️  Warning: Failed to auto-register some tables: %v\n", err)
 	}
 
@@ -162,7 +188,10 @@ func runShellLoop(state *shellState) error {
 				state.multiLine = false
 
 				if err := executeShellCommand(state, query); err != nil {
-					fmt.Printf("❌ Error: %v\n", err)
+					if state.logger != nil {
+						state.logger.Error().Str("cmd", "shell").Str("query", query).Err(err).Msg("Query execution failed")
+					}
+					state.display.Error("Error: %v", err)
 				}
 			}
 			continue
@@ -171,7 +200,10 @@ func runShellLoop(state *shellState) error {
 		// Handle special commands
 		if strings.HasPrefix(line, "\\") {
 			if err := handleSpecialCommand(state, line); err != nil {
-				fmt.Printf("❌ Error: %v\n", err)
+				if state.logger != nil {
+					state.logger.Error().Str("cmd", "shell").Str("command", line).Err(err).Msg("Special command failed")
+				}
+				state.display.Error("Error: %v", err)
 			}
 			continue
 		}
@@ -186,7 +218,10 @@ func runShellLoop(state *shellState) error {
 			state.multiLine = false
 
 			if err := executeShellCommand(state, query); err != nil {
-				fmt.Printf("❌ Error: %v\n", err)
+				if state.logger != nil {
+					state.logger.Error().Str("cmd", "shell").Str("query", query).Err(err).Msg("Query execution failed")
+				}
+				state.display.Error("Error: %v", err)
 			}
 		} else {
 			// Enter multi-line mode
@@ -207,6 +242,10 @@ func executeShellCommand(state *shellState, query string) error {
 	// Add to history
 	state.history = append(state.history, query)
 
+	if state.logger != nil {
+		state.logger.Info().Str("cmd", "shell").Str("query", query).Msg("Executing SQL query")
+	}
+
 	// Execute query
 	start := time.Now()
 	result, err := state.engine.ExecuteQuery(context.Background(), query)
@@ -214,6 +253,10 @@ func executeShellCommand(state *shellState, query string) error {
 		return err
 	}
 	duration := time.Since(start)
+
+	if state.logger != nil {
+		state.logger.Info().Str("cmd", "shell").Str("query", query).Dur("duration", duration).Int64("rows", result.RowCount).Msg("Query executed successfully")
+	}
 
 	// Display results
 	if state.showTiming {
@@ -275,8 +318,11 @@ func handleSpecialCommand(state *shellState, command string) error {
 
 	case "\\timing":
 		state.showTiming = !state.showTiming
-		fmt.Printf("Query timing is now %s\n",
-			map[bool]string{true: "ON", false: "OFF"}[state.showTiming])
+		status := map[bool]string{true: "ON", false: "OFF"}[state.showTiming]
+		fmt.Printf("Query timing is now %s\n", status)
+		if state.logger != nil {
+			state.logger.Info().Str("cmd", "shell").Str("operation", "toggle-timing").Bool("timing_enabled", state.showTiming).Msg("Toggled query timing")
+		}
 
 	case "\\clear", "\\c":
 		// Clear screen (ANSI escape sequence)
@@ -289,6 +335,11 @@ func handleSpecialCommand(state *shellState, command string) error {
 		// Show session summary before exit
 		sessionDuration := time.Since(state.sessionStart)
 		metrics := state.engine.GetMetrics()
+
+		if state.logger != nil {
+			state.logger.Info().Str("cmd", "shell").Str("operation", "exit").Dur("session_duration", sessionDuration).Int("commands_executed", len(state.history)).Int64("queries_executed", metrics.QueriesExecuted).Msg("Exiting shell session")
+		}
+
 		fmt.Printf("📊 Session Summary:\n")
 		fmt.Printf("  Duration: %v\n", sessionDuration)
 		fmt.Printf("  Commands executed: %d\n", len(state.history))
@@ -338,6 +389,9 @@ Tips:
 func showTables(state *shellState) error {
 	tables, err := state.engine.ListTables(context.Background())
 	if err != nil {
+		if state.logger != nil {
+			state.logger.Error().Str("cmd", "shell").Str("operation", "list-tables").Err(err).Msg("Failed to list tables")
+		}
 		return fmt.Errorf("failed to list tables: %w", err)
 	}
 
@@ -351,6 +405,10 @@ func showTables(state *shellState) error {
 		fmt.Printf("  %d. %s\n", i+1, table)
 	}
 
+	if state.logger != nil {
+		state.logger.Info().Str("cmd", "shell").Str("operation", "list-tables").Int("table_count", len(tables)).Msg("Listed tables")
+	}
+
 	return nil
 }
 
@@ -358,7 +416,14 @@ func showTables(state *shellState) error {
 func showTableSchema(state *shellState, tableName string) error {
 	result, err := state.engine.DescribeTable(context.Background(), tableName)
 	if err != nil {
+		if state.logger != nil {
+			state.logger.Error().Str("cmd", "shell").Str("operation", "describe-table").Str("table", tableName).Err(err).Msg("Failed to describe table")
+		}
 		return fmt.Errorf("failed to describe table %s: %w", tableName, err)
+	}
+
+	if state.logger != nil {
+		state.logger.Info().Str("cmd", "shell").Str("operation", "describe-table").Str("table", tableName).Msg("Described table schema")
 	}
 
 	fmt.Printf("📋 Schema for table '%s':\n", tableName)
@@ -420,6 +485,9 @@ func handleCacheCommand(state *shellState, args []string) error {
 	case "clear":
 		state.engine.ClearTableCache()
 		fmt.Println("✅ Table cache cleared")
+		if state.logger != nil {
+			state.logger.Info().Str("cmd", "shell").Str("operation", "cache-clear").Msg("Cleared table cache")
+		}
 	case "status":
 		// Same as no args
 		return handleCacheCommand(state, []string{})

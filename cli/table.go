@@ -10,9 +10,11 @@ import (
 
 	"github.com/TFMV/icebox/catalog"
 	"github.com/TFMV/icebox/config"
+	"github.com/TFMV/icebox/display"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/table"
+	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 )
 
@@ -199,28 +201,45 @@ func init() {
 }
 
 func runTableList(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	d := getDisplayFromContext(ctx)
+	logger := getLoggerFromContext(ctx)
+
+	if logger != nil {
+		logger.Info().Str("cmd", "table-list").Str("namespace", tableListOpts.namespace).Bool("all_namespaces", tableListOpts.allNamespaces).Msg("Starting table list operation")
+	}
+
 	// Find the Icebox configuration
 	configPath, cfg, err := config.FindConfig()
 	if err != nil {
-		return fmt.Errorf("❌ Failed to find Icebox configuration\n"+
-			"💡 Try running 'icebox init' first to create a new project: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-list").Err(err).Msg("Failed to find Icebox configuration")
+		}
+		d.Error("Failed to find Icebox configuration")
+		d.Info("Try running 'icebox init' first to create a new project")
+		return err
 	}
 
-	if cmd.Flag("verbose").Value.String() == "true" {
-		fmt.Printf("Using configuration: %s\n", configPath)
+	if cmd.Flag("verbose") != nil && cmd.Flag("verbose").Value.String() == "true" {
+		d.Info("Using configuration: %s", configPath)
 	}
 
 	// Create catalog
 	cat, err := catalog.NewCatalog(cfg)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create catalog: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-list").Err(err).Msg("Failed to create catalog")
+		}
+		d.Error("Failed to create catalog: %v", err)
+		return err
 	}
 	defer cat.Close()
 
-	ctx := cmd.Context()
-
 	if tableListOpts.allNamespaces {
-		return listTablesAllNamespaces(ctx, cat)
+		if logger != nil {
+			logger.Info().Str("cmd", "table-list").Msg("Listing tables from all namespaces")
+		}
+		return listTablesAllNamespaces(ctx, cat, d, logger)
 	}
 
 	// Parse namespace
@@ -229,25 +248,46 @@ func runTableList(cmd *cobra.Command, args []string) error {
 	// Check if namespace exists
 	exists, err := cat.CheckNamespaceExists(ctx, namespace)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to check namespace existence: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-list").Str("namespace", tableListOpts.namespace).Err(err).Msg("Failed to check namespace existence")
+		}
+		d.Error("Failed to check namespace existence: %v", err)
+		return err
 	}
 	if !exists {
-		return fmt.Errorf("❌ Namespace '%s' does not exist\n"+
-			"💡 Use 'icebox catalog list' to see available namespaces", tableListOpts.namespace)
+		if logger != nil {
+			logger.Warn().Str("cmd", "table-list").Str("namespace", tableListOpts.namespace).Msg("Namespace does not exist")
+		}
+		d.Error("Namespace '%s' does not exist", tableListOpts.namespace)
+		d.Info("Use 'icebox catalog list' to see available namespaces")
+		d.Info("Or create it with: icebox catalog create %s", tableListOpts.namespace)
+		return fmt.Errorf("namespace '%s' does not exist", tableListOpts.namespace)
 	}
 
 	// List tables in the namespace
 	var tables []table.Identifier
 	for identifier, err := range cat.ListTables(ctx, namespace) {
 		if err != nil {
-			return fmt.Errorf("❌ Failed to list tables: %w", err)
+			if logger != nil {
+				logger.Error().Str("cmd", "table-list").Str("namespace", tableListOpts.namespace).Err(err).Msg("Failed to list tables")
+			}
+			d.Error("Failed to list tables: %v", err)
+			return err
 		}
 		tables = append(tables, identifier)
 	}
 
+	if logger != nil {
+		logger.Info().Str("cmd", "table-list").Str("namespace", tableListOpts.namespace).Int("table_count", len(tables)).Msg("Successfully listed tables")
+	}
+
 	// Display results
-	if err := displayTableList(tables, namespace); err != nil {
-		return fmt.Errorf("❌ Failed to display table list: %w", err)
+	if err := displayTableListWithDisplay(tables, namespace, d); err != nil {
+		if logger != nil {
+			logger.Error().Str("cmd", "table-list").Err(err).Msg("Failed to display table list")
+		}
+		d.Error("Failed to display table list: %v", err)
+		return err
 	}
 
 	return nil
@@ -255,36 +295,67 @@ func runTableList(cmd *cobra.Command, args []string) error {
 
 func runTableDescribe(cmd *cobra.Command, args []string) error {
 	tableName := args[0]
+	ctx := cmd.Context()
+	d := getDisplayFromContext(ctx)
+	logger := getLoggerFromContext(ctx)
+
+	if logger != nil {
+		logger.Info().Str("cmd", "table-describe").Str("table", tableName).Msg("Starting table describe operation")
+	}
 
 	// Find the Icebox configuration
 	_, cfg, err := config.FindConfig()
 	if err != nil {
-		return fmt.Errorf("❌ Failed to find Icebox configuration: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-describe").Err(err).Msg("Failed to find Icebox configuration")
+		}
+		d.Error("Failed to find Icebox configuration: %v", err)
+		return err
 	}
 
 	// Create catalog
 	cat, err := catalog.NewCatalog(cfg)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create catalog: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-describe").Err(err).Msg("Failed to create catalog")
+		}
+		d.Error("Failed to create catalog: %v", err)
+		return err
 	}
 	defer cat.Close()
 
 	// Parse table identifier
 	tableIdent, _, err := parseTableIdentifier(tableName, "")
 	if err != nil {
-		return fmt.Errorf("❌ Failed to parse table identifier: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-describe").Str("table", tableName).Err(err).Msg("Failed to parse table identifier")
+		}
+		d.Error("Failed to parse table identifier: %v", err)
+		return err
 	}
 
 	// Load the table
-	icebergTable, err := cat.LoadTable(cmd.Context(), tableIdent, nil)
+	icebergTable, err := cat.LoadTable(ctx, tableIdent, nil)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to load table '%s': %w\n"+
-			"💡 Use 'icebox table list' to see available tables", tableName, err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-describe").Str("table", tableName).Err(err).Msg("Failed to load table")
+		}
+		d.Error("Failed to load table '%s': %v", tableName, err)
+		d.Info("Use 'icebox table list' to see available tables")
+		return err
+	}
+
+	if logger != nil {
+		logger.Info().Str("cmd", "table-describe").Str("table", tableName).Msg("Successfully loaded table")
 	}
 
 	// Display table description
-	if err := displayTableDescription(icebergTable, tableDescribeOpts); err != nil {
-		return fmt.Errorf("❌ Failed to display table description: %w", err)
+	if err := displayTableDescriptionWithDisplay(icebergTable, tableDescribeOpts, d); err != nil {
+		if logger != nil {
+			logger.Error().Str("cmd", "table-describe").Str("table", tableName).Err(err).Msg("Failed to display table description")
+		}
+		d.Error("Failed to display table description: %v", err)
+		return err
 	}
 
 	return nil
@@ -292,35 +363,66 @@ func runTableDescribe(cmd *cobra.Command, args []string) error {
 
 func runTableHistory(cmd *cobra.Command, args []string) error {
 	tableName := args[0]
+	ctx := cmd.Context()
+	d := getDisplayFromContext(ctx)
+	logger := getLoggerFromContext(ctx)
+
+	if logger != nil {
+		logger.Info().Str("cmd", "table-history").Str("table", tableName).Msg("Starting table history operation")
+	}
 
 	// Find the Icebox configuration
 	_, cfg, err := config.FindConfig()
 	if err != nil {
-		return fmt.Errorf("❌ Failed to find Icebox configuration: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-history").Err(err).Msg("Failed to find Icebox configuration")
+		}
+		d.Error("Failed to find Icebox configuration: %v", err)
+		return err
 	}
 
 	// Create catalog
 	cat, err := catalog.NewCatalog(cfg)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create catalog: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-history").Err(err).Msg("Failed to create catalog")
+		}
+		d.Error("Failed to create catalog: %v", err)
+		return err
 	}
 	defer cat.Close()
 
 	// Parse table identifier
 	tableIdent, _, err := parseTableIdentifier(tableName, "")
 	if err != nil {
-		return fmt.Errorf("❌ Failed to parse table identifier: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-history").Str("table", tableName).Err(err).Msg("Failed to parse table identifier")
+		}
+		d.Error("Failed to parse table identifier: %v", err)
+		return err
 	}
 
 	// Load the table
-	icebergTable, err := cat.LoadTable(cmd.Context(), tableIdent, nil)
+	icebergTable, err := cat.LoadTable(ctx, tableIdent, nil)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to load table '%s': %w", tableName, err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-history").Str("table", tableName).Err(err).Msg("Failed to load table")
+		}
+		d.Error("Failed to load table '%s': %v", tableName, err)
+		return err
+	}
+
+	if logger != nil {
+		logger.Info().Str("cmd", "table-history").Str("table", tableName).Msg("Successfully loaded table")
 	}
 
 	// Display table history
-	if err := displayTableHistoryDetailed(icebergTable, tableHistoryOpts); err != nil {
-		return fmt.Errorf("❌ Failed to display table history: %w", err)
+	if err := displayTableHistoryDetailedWithDisplay(icebergTable, tableHistoryOpts, d); err != nil {
+		if logger != nil {
+			logger.Error().Str("cmd", "table-history").Str("table", tableName).Err(err).Msg("Failed to display table history")
+		}
+		d.Error("Failed to display table history: %v", err)
+		return err
 	}
 
 	return nil
@@ -328,54 +430,96 @@ func runTableHistory(cmd *cobra.Command, args []string) error {
 
 func runTableCreate(cmd *cobra.Command, args []string) error {
 	tableName := args[0]
+	ctx := cmd.Context()
+	d := getDisplayFromContext(ctx)
+	logger := getLoggerFromContext(ctx)
+
+	if logger != nil {
+		logger.Info().Str("cmd", "table-create").Str("table", tableName).Msg("Starting table create operation")
+	}
 
 	// Find the Icebox configuration
 	_, cfg, err := config.FindConfig()
 	if err != nil {
-		return fmt.Errorf("❌ Failed to find Icebox configuration: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-create").Err(err).Msg("Failed to find Icebox configuration")
+		}
+		d.Error("Failed to find Icebox configuration: %v", err)
+		return err
 	}
 
 	// Create catalog
 	cat, err := catalog.NewCatalog(cfg)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create catalog: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-create").Err(err).Msg("Failed to create catalog")
+		}
+		d.Error("Failed to create catalog: %v", err)
+		return err
 	}
 	defer cat.Close()
 
 	// Parse table identifier
 	tableIdent, namespaceIdent, err := parseTableIdentifier(tableName, "")
 	if err != nil {
-		return fmt.Errorf("❌ Failed to parse table identifier: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-create").Str("table", tableName).Err(err).Msg("Failed to parse table identifier")
+		}
+		d.Error("Failed to parse table identifier: %v", err)
+		return err
 	}
 
 	// Ensure namespace exists
-	exists, err := cat.CheckNamespaceExists(cmd.Context(), namespaceIdent)
+	exists, err := cat.CheckNamespaceExists(ctx, namespaceIdent)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to check namespace existence: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-create").Interface("namespace", namespaceIdent).Err(err).Msg("Failed to check namespace existence")
+		}
+		d.Error("Failed to check namespace existence: %v", err)
+		return err
 	}
 	if !exists {
-		if err := cat.CreateNamespace(cmd.Context(), namespaceIdent, iceberg.Properties{}); err != nil {
-			return fmt.Errorf("❌ Failed to create namespace: %w", err)
+		if err := cat.CreateNamespace(ctx, namespaceIdent, iceberg.Properties{}); err != nil {
+			if logger != nil {
+				logger.Error().Str("cmd", "table-create").Interface("namespace", namespaceIdent).Err(err).Msg("Failed to create namespace")
+			}
+			d.Error("Failed to create namespace: %v", err)
+			return err
 		}
-		fmt.Printf("✅ Created namespace: %v\n", namespaceIdent)
+		if logger != nil {
+			logger.Info().Str("cmd", "table-create").Interface("namespace", namespaceIdent).Msg("Created namespace")
+		}
+		d.Success("Created namespace: %v", namespaceIdent)
 	}
 
 	// Get schema
 	schema, err := getTableSchema(tableCreateOpts)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to get table schema: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-create").Err(err).Msg("Failed to get table schema")
+		}
+		d.Error("Failed to get table schema: %v", err)
+		return err
 	}
 
 	// Create partition specification
 	partitionSpec, err := createPartitionSpec(schema, tableCreateOpts.partitionBy)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create partition specification: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-create").Err(err).Msg("Failed to create partition specification")
+		}
+		d.Error("Failed to create partition specification: %v", err)
+		return err
 	}
 
 	// Create sort order
 	sortOrder, err := createSortOrder(schema, tableCreateOpts.sortBy)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create sort order: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-create").Err(err).Msg("Failed to create sort order")
+		}
+		d.Error("Failed to create sort order: %v", err)
+		return err
 	}
 
 	// Prepare table properties
@@ -390,34 +534,42 @@ func runTableCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create the table with comprehensive options
-	createdTable, err := createTableWithOptions(cmd.Context(), cat, tableIdent, schema, partitionSpec, sortOrder, properties)
+	createdTable, err := createTableWithOptions(ctx, cat, tableIdent, schema, partitionSpec, sortOrder, properties)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create table: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-create").Str("table", tableName).Err(err).Msg("Failed to create table")
+		}
+		d.Error("Failed to create table: %v", err)
+		return err
+	}
+
+	if logger != nil {
+		logger.Info().Str("cmd", "table-create").Str("table", tableName).Interface("table_id", tableIdent).Msg("Successfully created table")
 	}
 
 	// Display success message
-	fmt.Printf("✅ Successfully created table!\n\n")
-	fmt.Printf("📊 Table Details:\n")
-	fmt.Printf("   Name: %v\n", tableIdent)
-	fmt.Printf("   Location: %s\n", createdTable.Location())
-	fmt.Printf("   Schema ID: %d\n", createdTable.Schema().ID)
-	fmt.Printf("   Columns: %d\n", len(createdTable.Schema().Fields()))
+	d.Success("Successfully created table!")
+	d.Info("Table Details:")
+	d.Info("   Name: %v", tableIdent)
+	d.Info("   Location: %s", createdTable.Location())
+	d.Info("   Schema ID: %d", createdTable.Schema().ID)
+	d.Info("   Columns: %d", len(createdTable.Schema().Fields()))
 
 	// Show partition info if partitioned
 	if len(tableCreateOpts.partitionBy) > 0 {
-		fmt.Printf("   Partitioned by: %s\n", strings.Join(tableCreateOpts.partitionBy, ", "))
+		d.Info("   Partitioned by: %s", strings.Join(tableCreateOpts.partitionBy, ", "))
 	}
 
 	// Show sort info if sorted
 	if len(tableCreateOpts.sortBy) > 0 {
-		fmt.Printf("   Sorted by: %s\n", strings.Join(tableCreateOpts.sortBy, ", "))
+		d.Info("   Sorted by: %s", strings.Join(tableCreateOpts.sortBy, ", "))
 	}
 
 	// Show properties if any
 	if len(properties) > 0 {
-		fmt.Printf("   Properties:\n")
+		d.Info("   Properties:")
 		for key, value := range properties {
-			fmt.Printf("     %s: %s\n", key, value)
+			d.Info("     %s: %s", key, value)
 		}
 	}
 
@@ -426,89 +578,163 @@ func runTableCreate(cmd *cobra.Command, args []string) error {
 
 func runTableDrop(cmd *cobra.Command, args []string) error {
 	tableName := args[0]
+	ctx := cmd.Context()
+	d := getDisplayFromContext(ctx)
+	logger := getLoggerFromContext(ctx)
+
+	if logger != nil {
+		logger.Info().Str("cmd", "table-drop").Str("table", tableName).Msg("Starting table drop operation")
+	}
 
 	// Find the Icebox configuration
 	_, cfg, err := config.FindConfig()
 	if err != nil {
-		return fmt.Errorf("❌ Failed to find Icebox configuration: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-drop").Err(err).Msg("Failed to find Icebox configuration")
+		}
+		d.Error("Failed to find Icebox configuration: %v", err)
+		return err
 	}
 
 	// Create catalog
 	cat, err := catalog.NewCatalog(cfg)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create catalog: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-drop").Err(err).Msg("Failed to create catalog")
+		}
+		d.Error("Failed to create catalog: %v", err)
+		return err
 	}
 	defer cat.Close()
 
 	// Parse table identifier
 	tableIdent, _, err := parseTableIdentifier(tableName, "")
 	if err != nil {
-		return fmt.Errorf("❌ Failed to parse table identifier: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-drop").Str("table", tableName).Err(err).Msg("Failed to parse table identifier")
+		}
+		d.Error("Failed to parse table identifier: %v", err)
+		return err
 	}
 
 	// Drop the table
-	if err := cat.DropTable(cmd.Context(), tableIdent); err != nil {
-		return fmt.Errorf("❌ Failed to drop table: %w", err)
+	if err := cat.DropTable(ctx, tableIdent); err != nil {
+		if logger != nil {
+			logger.Error().Str("cmd", "table-drop").Str("table", tableName).Err(err).Msg("Failed to drop table")
+		}
+		d.Error("Failed to drop table: %v", err)
+		return err
 	}
 
-	fmt.Printf("✅ Successfully dropped table!\n")
+	if logger != nil {
+		logger.Info().Str("cmd", "table-drop").Str("table", tableName).Interface("table_id", tableIdent).Msg("Successfully dropped table")
+	}
+
+	d.Success("Successfully dropped table!")
 	return nil
 }
 
 // Helper functions for table commands
 
-func listTablesAllNamespaces(ctx context.Context, cat catalog.CatalogInterface) error {
+func listTablesAllNamespaces(ctx context.Context, cat catalog.CatalogInterface, d display.Display, logger *zerolog.Logger) error {
 	// Get all namespaces
 	namespaces, err := cat.ListNamespaces(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to list namespaces: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "table-list").Err(err).Msg("Failed to list namespaces")
+		}
+		d.Error("Failed to list namespaces: %v", err)
+		return err
 	}
 
 	var allTables []table.Identifier
 	for _, namespace := range namespaces {
 		for identifier, err := range cat.ListTables(ctx, namespace) {
 			if err != nil {
-				return fmt.Errorf("failed to list tables in namespace %v: %w", namespace, err)
+				if logger != nil {
+					logger.Error().Str("cmd", "table-list").Interface("namespace", namespace).Err(err).Msg("Failed to list tables in namespace")
+				}
+				d.Error("Failed to list tables in namespace %v: %v", namespace, err)
+				return err
 			}
 			allTables = append(allTables, identifier)
 		}
 	}
 
-	return displayTableList(allTables, nil)
+	if logger != nil {
+		logger.Info().Str("cmd", "table-list").Int("namespace_count", len(namespaces)).Int("total_tables", len(allTables)).Msg("Successfully listed tables from all namespaces")
+	}
+
+	return displayTableListWithDisplay(allTables, nil, d)
 }
 
-func displayTableList(tables []table.Identifier, namespace table.Identifier) error {
+func displayTableListWithDisplay(tables []table.Identifier, namespace table.Identifier, d display.Display) error {
 	if len(tables) == 0 {
 		if namespace != nil {
-			fmt.Printf("📭 No tables found in namespace '%s'\n", strings.Join(namespace, "."))
+			d.Info("No tables found in namespace '%s'", strings.Join(namespace, "."))
 		} else {
-			fmt.Println("📭 No tables found")
+			d.Info("No tables found")
 		}
 		return nil
 	}
 
 	switch tableListOpts.format {
 	case "table":
-		return displayTableListTable(tables, namespace)
+		return displayTableListTableWithDisplay(tables, namespace, d)
 	case "csv":
-		return displayTableListCSV(tables)
+		return displayTableListCSVWithDisplay(tables, d)
 	case "json":
-		return displayTableListJSON(tables)
+		return displayTableListJSONWithDisplay(tables, d)
 	default:
+		d.Error("Unsupported format: %s", tableListOpts.format)
 		return fmt.Errorf("unsupported format: %s", tableListOpts.format)
 	}
 }
 
-func displayTableListTable(tables []table.Identifier, namespace table.Identifier) error {
+// Legacy function for backward compatibility
+func displayTableList(tables []table.Identifier, namespace table.Identifier) error {
+	d := display.New()
+	return displayTableListWithDisplay(tables, namespace, d)
+}
+
+func displayTableListTableWithDisplay(tables []table.Identifier, namespace table.Identifier, d display.Display) error {
+	// Prepare table data
+	headers := []string{"Namespace", "Table"}
+	var rows [][]interface{}
+
+	for _, tableIdent := range tables {
+		namespace := "default"
+		tableName := strings.Join(tableIdent, ".")
+		if len(tableIdent) > 1 {
+			namespace = strings.Join(tableIdent[:len(tableIdent)-1], ".")
+			tableName = tableIdent[len(tableIdent)-1]
+		}
+		rows = append(rows, []interface{}{namespace, tableName})
+	}
+
+	tableData := display.TableData{
+		Headers: headers,
+		Rows:    rows,
+	}
+
+	title := fmt.Sprintf("All Tables (%d tables)", len(tables))
 	if namespace != nil {
-		fmt.Printf("📊 Tables in namespace '%s' (%d tables):\n", strings.Join(namespace, "."), len(tables))
-	} else {
-		fmt.Printf("📊 All Tables (%d tables):\n", len(tables))
+		title = fmt.Sprintf("Tables in namespace '%s' (%d tables)", strings.Join(namespace, "."), len(tables))
 	}
 
-	fmt.Println("┌────────────────────────────────┬──────────────────────────────────┐")
-	fmt.Println("│           Namespace            │             Table                │")
-	fmt.Println("├────────────────────────────────┼──────────────────────────────────┤")
+	return d.Table(tableData).WithTitle(title).Render()
+}
+
+// Legacy function for backward compatibility
+func displayTableListTable(tables []table.Identifier, namespace table.Identifier) error {
+	d := display.New()
+	return displayTableListTableWithDisplay(tables, namespace, d)
+}
+
+func displayTableListCSVWithDisplay(tables []table.Identifier, d display.Display) error {
+	// Prepare table data
+	headers := []string{"namespace", "table"}
+	var rows [][]interface{}
 
 	for _, tableIdent := range tables {
 		namespace := "default"
@@ -517,16 +743,28 @@ func displayTableListTable(tables []table.Identifier, namespace table.Identifier
 			namespace = strings.Join(tableIdent[:len(tableIdent)-1], ".")
 			tableName = tableIdent[len(tableIdent)-1]
 		}
-
-		fmt.Printf("│ %-30s │ %-32s │\n", truncateString(namespace, 30), truncateString(tableName, 32))
+		rows = append(rows, []interface{}{namespace, tableName})
 	}
 
-	fmt.Println("└────────────────────────────────┴──────────────────────────────────┘")
-	return nil
+	tableData := display.TableData{
+		Headers: headers,
+		Rows:    rows,
+	}
+
+	return d.Table(tableData).WithFormat(display.FormatCSV).Render()
 }
 
+// Legacy function for backward compatibility
 func displayTableListCSV(tables []table.Identifier) error {
-	fmt.Println("namespace,table")
+	d := display.New()
+	return displayTableListCSVWithDisplay(tables, d)
+}
+
+func displayTableListJSONWithDisplay(tables []table.Identifier, d display.Display) error {
+	// Prepare table data
+	headers := []string{"namespace", "table"}
+	var rows [][]interface{}
+
 	for _, tableIdent := range tables {
 		namespace := "default"
 		tableName := strings.Join(tableIdent, ".")
@@ -534,63 +772,64 @@ func displayTableListCSV(tables []table.Identifier) error {
 			namespace = strings.Join(tableIdent[:len(tableIdent)-1], ".")
 			tableName = tableIdent[len(tableIdent)-1]
 		}
-		fmt.Printf("%s,%s\n", namespace, tableName)
+		rows = append(rows, []interface{}{namespace, tableName})
 	}
-	return nil
+
+	tableData := display.TableData{
+		Headers: headers,
+		Rows:    rows,
+	}
+
+	return d.Table(tableData).WithFormat(display.FormatJSON).Render()
 }
 
+// Legacy function for backward compatibility
 func displayTableListJSON(tables []table.Identifier) error {
-	fmt.Println("[")
-	for i, tableIdent := range tables {
-		namespace := "default"
-		tableName := strings.Join(tableIdent, ".")
-		if len(tableIdent) > 1 {
-			namespace = strings.Join(tableIdent[:len(tableIdent)-1], ".")
-			tableName = tableIdent[len(tableIdent)-1]
-		}
-
-		fmt.Printf(`  {"namespace": "%s", "table": "%s"}`, namespace, tableName)
-		if i < len(tables)-1 {
-			fmt.Print(",")
-		}
-		fmt.Println()
-	}
-	fmt.Println("]")
-	return nil
+	d := display.New()
+	return displayTableListJSONWithDisplay(tables, d)
 }
 
-func displayTableDescription(tbl *table.Table, opts *tableDescribeOptions) error {
-	fmt.Printf("📊 Table: %v\n", tbl.Identifier())
-	fmt.Printf("📍 Location: %s\n", tbl.Location())
-	fmt.Printf("🔗 Format Version: %d\n", tbl.Metadata().Version())
-	fmt.Println()
+func displayTableDescriptionWithDisplay(tbl *table.Table, opts *tableDescribeOptions, d display.Display) error {
+	d.Info("Table: %v", tbl.Identifier())
+	d.Info("Location: %s", tbl.Location())
+	d.Info("Format Version: %d", tbl.Metadata().Version())
 
 	// Schema information
 	schema := tbl.Schema()
-	fmt.Printf("📋 Schema (ID: %d):\n", schema.ID)
-	fmt.Println("┌────┬─────────────────────────────┬──────────────────────┬──────────┐")
-	fmt.Println("│ #  │           Name              │        Type          │ Required │")
-	fmt.Println("├────┼─────────────────────────────┼──────────────────────┼──────────┤")
+	d.Info("Schema (ID: %d):", schema.ID)
+
+	// Prepare schema table data
+	headers := []string{"#", "Name", "Type", "Required"}
+	var rows [][]interface{}
 
 	for _, field := range schema.Fields() {
 		required := "Yes"
 		if !field.Required {
 			required = "No"
 		}
-		fmt.Printf("│%-3d │ %-27s │ %-20s │ %-8s │\n",
+		rows = append(rows, []interface{}{
 			field.ID,
-			truncateString(field.Name, 27),
-			truncateString(field.Type.String(), 20),
-			required)
+			field.Name,
+			field.Type.String(),
+			required,
+		})
 	}
-	fmt.Println("└────┴─────────────────────────────┴──────────────────────┴──────────┘")
+
+	tableData := display.TableData{
+		Headers: headers,
+		Rows:    rows,
+	}
+
+	if err := d.Table(tableData).Render(); err != nil {
+		return err
+	}
 
 	// Current snapshot information
 	if currentSnapshot := tbl.CurrentSnapshot(); currentSnapshot != nil {
-		fmt.Printf("\n📸 Current Snapshot: %d\n", currentSnapshot.SnapshotID)
-		fmt.Printf("⏰ Timestamp: %s\n", time.UnixMilli(currentSnapshot.TimestampMs).Format("2006-01-02 15:04:05"))
+		d.Info("Current Snapshot: %d", currentSnapshot.SnapshotID)
+		d.Info("Timestamp: %s", time.UnixMilli(currentSnapshot.TimestampMs).Format("2006-01-02 15:04:05"))
 		if currentSnapshot.Summary != nil {
-			fmt.Printf("🔄 Operation: %s\n", currentSnapshot.Summary.Operation)
+			d.Info("Operation: %s", currentSnapshot.Summary.Operation)
 		}
 	}
 
@@ -602,17 +841,17 @@ func displayTableDescription(tbl *table.Table, opts *tableDescribeOptions) error
 		break // Just check if there are any fields
 	}
 	if hasPartitionFields {
-		fmt.Printf("\n🗂️  Partition Spec (ID: %d):\n", spec.ID())
+		d.Info("Partition Spec (ID: %d):", spec.ID())
 		for field := range spec.Fields() {
-			fmt.Printf("   - %s\n", field.String())
+			d.Info("   - %s", field.String())
 		}
 	}
 
 	// Sort order
 	if sortOrder := tbl.SortOrder(); len(sortOrder.Fields) > 0 {
-		fmt.Printf("\n🔄 Sort Order (ID: %d):\n", sortOrder.OrderID)
+		d.Info("Sort Order (ID: %d):", sortOrder.OrderID)
 		for _, field := range sortOrder.Fields {
-			fmt.Printf("   - %s\n", field.String())
+			d.Info("   - %s", field.String())
 		}
 	}
 
@@ -620,9 +859,9 @@ func displayTableDescription(tbl *table.Table, opts *tableDescribeOptions) error
 	if opts.showProperties {
 		props := tbl.Properties()
 		if len(props) > 0 {
-			fmt.Printf("\n⚙️  Properties:\n")
+			d.Info("Properties:")
 			for key, value := range props {
-				fmt.Printf("   %s: %s\n", key, value)
+				d.Info("   %s: %s", key, value)
 			}
 		}
 	}
@@ -630,10 +869,25 @@ func displayTableDescription(tbl *table.Table, opts *tableDescribeOptions) error
 	return nil
 }
 
-func displayTableHistoryDetailed(tbl *table.Table, opts *tableHistoryOptions) error {
+// Legacy function for backward compatibility
+func displayTableDescription(tbl *table.Table, opts *tableDescribeOptions) error {
+	d := display.New()
+	return displayTableDescriptionWithDisplay(tbl, opts, d)
+}
+
+func displayTableHistoryDetailedWithDisplay(tbl *table.Table, opts *tableHistoryOptions, d display.Display) error {
+	// Validate format first
+	switch opts.format {
+	case "table", "json":
+		// Valid formats, continue
+	default:
+		d.Error("Unsupported format: %s", opts.format)
+		return fmt.Errorf("unsupported format: %s", opts.format)
+	}
+
 	snapshots := tbl.Metadata().Snapshots()
 	if len(snapshots) == 0 {
-		fmt.Println("📭 No snapshots found in table history")
+		d.Info("No snapshots found in table history")
 		return nil
 	}
 
@@ -645,25 +899,33 @@ func displayTableHistoryDetailed(tbl *table.Table, opts *tableHistoryOptions) er
 		} else {
 			displaySnapshots = snapshots[len(snapshots)-opts.maxSnapshots:]
 		}
-		fmt.Printf("📚 Table History (showing %d of %d snapshots):\n", len(displaySnapshots), len(snapshots))
+		d.Info("Table History (showing %d of %d snapshots):", len(displaySnapshots), len(snapshots))
 	} else {
-		fmt.Printf("📚 Table History (%d snapshots):\n", len(displaySnapshots))
+		d.Info("Table History (%d snapshots):", len(displaySnapshots))
 	}
 
 	switch opts.format {
 	case "table":
-		return displayTableHistoryTable(tbl, displaySnapshots, opts.reverse)
+		return displayTableHistoryTableWithDisplay(tbl, displaySnapshots, opts.reverse, d)
 	case "json":
-		return displayTableHistoryJSON(displaySnapshots, opts.reverse)
+		return displayTableHistoryJSONWithDisplay(displaySnapshots, opts.reverse, d)
 	default:
+		// This should never be reached due to validation above
+		d.Error("Unsupported format: %s", opts.format)
 		return fmt.Errorf("unsupported format: %s", opts.format)
 	}
 }
 
-func displayTableHistoryTable(tbl *table.Table, snapshots []table.Snapshot, reverse bool) error {
-	fmt.Println("┌────────────────────┬─────────────────────────┬─────────────────────┬──────────────┬─────────────┐")
-	fmt.Println("│    Snapshot ID     │       Timestamp         │      Operation      │  Parent ID   │   Records   │")
-	fmt.Println("├────────────────────┼─────────────────────────┼─────────────────────┼──────────────┼─────────────┤")
+// Legacy function for backward compatibility
+func displayTableHistoryDetailed(tbl *table.Table, opts *tableHistoryOptions) error {
+	d := display.New()
+	return displayTableHistoryDetailedWithDisplay(tbl, opts, d)
+}
+
+func displayTableHistoryTableWithDisplay(tbl *table.Table, snapshots []table.Snapshot, reverse bool, d display.Display) error {
+	// Prepare table data
+	headers := []string{"Snapshot ID", "Timestamp", "Operation", "Parent ID", "Records"}
+	var rows [][]interface{}
 
 	// Display order
 	displayOrder := snapshots
@@ -695,33 +957,39 @@ func displayTableHistoryTable(tbl *table.Table, snapshots []table.Snapshot, reve
 			}
 		}
 
-		// Truncate long IDs for better display
-		snapshotIDStr := fmt.Sprintf("%d", snapshot.SnapshotID)
-		if len(snapshotIDStr) > 18 {
-			snapshotIDStr = snapshotIDStr[:15] + "..."
-		}
-
-		if len(parentID) > 12 && parentID != "none" {
-			parentID = parentID[:9] + "..."
-		}
-
 		// Mark current snapshot
-		marker := " "
+		snapshotIDStr := fmt.Sprintf("%d", snapshot.SnapshotID)
 		if tbl.CurrentSnapshot() != nil && snapshot.SnapshotID == tbl.CurrentSnapshot().SnapshotID {
-			marker = "*"
+			snapshotIDStr = "*" + snapshotIDStr
 		}
 
-		fmt.Printf("│%s%-18s │ %-23s │ %-19s │ %-12s │ %-11s │\n",
-			marker, snapshotIDStr, timestamp, operation, parentID, records)
+		rows = append(rows, []interface{}{
+			snapshotIDStr,
+			timestamp,
+			operation,
+			parentID,
+			records,
+		})
 	}
 
-	fmt.Println("└────────────────────┴─────────────────────────┴─────────────────────┴──────────────┴─────────────┘")
-	fmt.Println("* = current snapshot")
+	tableData := display.TableData{
+		Headers: headers,
+		Rows:    rows,
+	}
 
+	if err := d.Table(tableData).Render(); err != nil {
+		return err
+	}
+
+	d.Info("* = current snapshot")
 	return nil
 }
 
-func displayTableHistoryJSON(snapshots []table.Snapshot, reverse bool) error {
+func displayTableHistoryJSONWithDisplay(snapshots []table.Snapshot, reverse bool, d display.Display) error {
+	// Prepare table data for JSON output
+	headers := []string{"snapshot_id", "timestamp", "operation", "parent_snapshot_id"}
+	var rows [][]interface{}
+
 	// Display order
 	displayOrder := snapshots
 	if !reverse {
@@ -732,8 +1000,7 @@ func displayTableHistoryJSON(snapshots []table.Snapshot, reverse bool) error {
 		}
 	}
 
-	fmt.Println("[")
-	for i, snapshot := range displayOrder {
+	for _, snapshot := range displayOrder {
 		timestamp := time.UnixMilli(snapshot.TimestampMs).Format(time.RFC3339)
 
 		operation := "unknown"
@@ -741,26 +1008,25 @@ func displayTableHistoryJSON(snapshots []table.Snapshot, reverse bool) error {
 			operation = string(snapshot.Summary.Operation)
 		}
 
-		parentID := "null"
+		var parentID interface{} = nil
 		if snapshot.ParentSnapshotID != nil {
-			parentID = fmt.Sprintf("%d", *snapshot.ParentSnapshotID)
+			parentID = *snapshot.ParentSnapshotID
 		}
 
-		fmt.Printf(`  {`)
-		fmt.Printf(`"snapshot_id": %d, `, snapshot.SnapshotID)
-		fmt.Printf(`"timestamp": "%s", `, timestamp)
-		fmt.Printf(`"operation": "%s", `, operation)
-		fmt.Printf(`"parent_snapshot_id": %s`, parentID)
-		fmt.Print(`}`)
-
-		if i < len(displayOrder)-1 {
-			fmt.Print(",")
-		}
-		fmt.Println()
+		rows = append(rows, []interface{}{
+			snapshot.SnapshotID,
+			timestamp,
+			operation,
+			parentID,
+		})
 	}
-	fmt.Println("]")
 
-	return nil
+	tableData := display.TableData{
+		Headers: headers,
+		Rows:    rows,
+	}
+
+	return d.Table(tableData).WithFormat(display.FormatJSON).Render()
 }
 
 func getTableSchema(opts *tableCreateOptions) (*iceberg.Schema, error) {
@@ -934,17 +1200,7 @@ func createTableWithOptions(ctx context.Context, cat catalog.CatalogInterface,
 		return nil, err
 	}
 
-	// Log what was applied
-	if partitionSpec != nil && !partitionSpec.IsUnpartitioned() {
-		var fieldCount int
-		for range partitionSpec.Fields() {
-			fieldCount++
-		}
-		fmt.Printf("✅ Applied partition specification with %d field(s)\n", fieldCount)
-	}
-	if sortOrder != nil && len(sortOrder.Fields) > 0 {
-		fmt.Printf("✅ Applied sort order with %d field(s)\n", len(sortOrder.Fields))
-	}
+	// Note: Logging of applied specifications is now handled in the calling function
 
 	return createdTable, nil
 }

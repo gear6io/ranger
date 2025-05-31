@@ -593,12 +593,26 @@ func (e *Engine) ClearTableCache() {
 
 // preprocessQuery preprocesses SQL queries to handle Iceberg table references
 func (e *Engine) preprocessQuery(ctx context.Context, query string) (string, error) {
-	// For now, return the query as-is
-	// In the future, this could:
-	// 1. Parse table references and auto-register Iceberg tables
-	// 2. Rewrite queries to use the attached catalog
-	// 3. Handle time travel queries
-	return query, nil
+	// Convert dot notation to underscore notation for table references
+	// This regex matches table references like 'default.sales' but ignores qualified column references like 'table.column'
+	tablePattern := regexp.MustCompile(`(FROM|JOIN|UPDATE|INTO|TABLE)\s+([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*)`)
+
+	processedQuery := tablePattern.ReplaceAllStringFunc(query, func(match string) string {
+		parts := strings.SplitN(match, " ", 2)
+		if len(parts) != 2 {
+			return match
+		}
+
+		keyword := parts[0]
+		tablePath := parts[1]
+
+		// Replace dots with underscores in the table reference
+		tableName := strings.ReplaceAll(tablePath, ".", "_")
+
+		return keyword + " " + tableName
+	})
+
+	return processedQuery, nil
 }
 
 // incrementErrorCount safely increments the error counter
@@ -725,7 +739,21 @@ func (e *Engine) checkInjectionPatterns(query, queryID string) error {
 
 // executeSecureQuery executes a query with additional security measures
 func (e *Engine) executeSecureQuery(ctx context.Context, query, queryID string) (*sql.Rows, error) {
-	// For DuckDB, we use QueryContext which provides some protection
-	// In the future, this could be enhanced with prepared statements for parameterized queries
-	return e.db.QueryContext(ctx, query)
+	rows, err := e.db.QueryContext(ctx, query)
+	if err != nil {
+		// Check for syntax error related to table references
+		if strings.Contains(strings.ToLower(err.Error()), "syntax error") &&
+			strings.Contains(query, ".") {
+			return nil, fmt.Errorf("syntax error in query [%s]: DuckDB requires table names to use underscores instead of dots. "+
+				"Use '%s' instead of '%s' or just the table name '%s'. "+
+				"Original error: %w",
+				queryID,
+				strings.ReplaceAll(query, ".", "_"),
+				query,
+				strings.Split(query, ".")[1],
+				err)
+		}
+		return nil, err
+	}
+	return rows, nil
 }

@@ -3,6 +3,7 @@ package cli
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	"github.com/TFMV/icebox/config"
+	"github.com/TFMV/icebox/display"
+	"github.com/rs/zerolog"
 )
 
 func TestShouldSkip(t *testing.T) {
@@ -212,7 +215,12 @@ func TestPackAndUnpackIntegration(t *testing.T) {
 	packOpts.compress = true
 	packOpts.output = archivePath
 
-	if err := createArchive(projectDir, archivePath, cfg); err != nil {
+	// Create test context and display
+	ctx := context.Background()
+	d := display.New()
+	logger := zerolog.Nop() // No-op logger for tests
+
+	if err := createArchive(ctx, projectDir, archivePath, cfg, d, &logger); err != nil {
 		t.Fatalf("Failed to create archive: %v", err)
 	}
 
@@ -231,7 +239,7 @@ func TestPackAndUnpackIntegration(t *testing.T) {
 	unpackOpts.overwrite = true
 	unpackOpts.skipData = false
 
-	if err := extractArchive(archivePath, extractDir); err != nil {
+	if err := extractArchive(ctx, archivePath, extractDir, d, &logger); err != nil {
 		t.Fatalf("Failed to extract archive: %v", err)
 	}
 
@@ -325,7 +333,12 @@ func TestArchiveReading(t *testing.T) {
 	unpackOpts.verify = false
 	unpackOpts.overwrite = true
 
-	if err := extractArchive(archivePath, extractDir); err != nil {
+	// Create test context and display
+	ctx := context.Background()
+	d := display.New()
+	logger := zerolog.Nop() // No-op logger for tests
+
+	if err := extractArchive(ctx, archivePath, extractDir, d, &logger); err != nil {
 		t.Fatalf("Failed to extract archive: %v", err)
 	}
 

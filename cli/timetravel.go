@@ -76,49 +76,80 @@ func init() {
 
 func runTimeTravel(cmd *cobra.Command, args []string) error {
 	tableName := args[0]
+	ctx := cmd.Context()
+	d := getDisplayFromContext(ctx)
+	logger := getLoggerFromContext(ctx)
+
+	if logger != nil {
+		logger.Info().Str("cmd", "time-travel").Str("table", tableName).Str("as_of", timeTravelOpts.asOf).Msg("Starting time-travel operation")
+	}
 
 	// Validate as-of parameter
 	if timeTravelOpts.asOf == "" {
-		return fmt.Errorf("❌ The --as-of flag is required\n" +
-			"💡 Specify a timestamp (2025-01-01T10:00:00Z) or snapshot ID (1234567890123456789)")
+		if logger != nil {
+			logger.Error().Str("cmd", "time-travel").Msg("Missing required --as-of flag")
+		}
+		d.Error("The --as-of flag is required")
+		d.Info("Specify a timestamp (2025-01-01T10:00:00Z) or snapshot ID (1234567890123456789)")
+		return fmt.Errorf("the --as-of flag is required")
 	}
 
 	// Find the Icebox configuration
 	configPath, cfg, err := config.FindConfig()
 	if err != nil {
-		return fmt.Errorf("❌ Failed to find Icebox configuration\n"+
-			"💡 Try running 'icebox init' first to create a new project: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "time-travel").Err(err).Msg("Failed to find Icebox configuration")
+		}
+		d.Error("Failed to find Icebox configuration: %v", err)
+		d.Info("Try running 'icebox init' first to create a new project")
+		return err
 	}
 
 	if cmd.Flag("verbose").Value.String() == "true" {
-		fmt.Printf("Using configuration: %s\n", configPath)
+		d.Info("Using configuration: %s", configPath)
 	}
 
 	// Create catalog using factory pattern
 	cat, err := catalog.NewCatalog(cfg)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create catalog: %w\n"+
-			"💡 Your catalog may be corrupted. Try backing up and running 'icebox init' again", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "time-travel").Err(err).Msg("Failed to create catalog")
+		}
+		d.Error("Failed to create catalog: %v", err)
+		d.Info("Your catalog may be corrupted. Try backing up and running 'icebox init' again")
+		return err
 	}
 	defer cat.Close()
 
 	// Parse table identifier using existing function
 	tableIdent, _, err := parseTableIdentifier(tableName, "")
 	if err != nil {
-		return fmt.Errorf("❌ Failed to parse table identifier: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "time-travel").Str("table", tableName).Err(err).Msg("Failed to parse table identifier")
+		}
+		d.Error("Failed to parse table identifier: %v", err)
+		return err
 	}
 
 	// Load the table
-	icebergTable, err := cat.LoadTable(cmd.Context(), tableIdent, nil)
+	icebergTable, err := cat.LoadTable(ctx, tableIdent, nil)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to load table '%s': %w\n"+
-			"💡 Use 'icebox sql \"SHOW TABLES\"' to see available tables", tableName, err)
+		if logger != nil {
+			logger.Error().Str("cmd", "time-travel").Str("table", tableName).Err(err).Msg("Failed to load table")
+		}
+		d.Error("Failed to load table '%s': %v", tableName, err)
+		d.Info("Use 'icebox sql \"SHOW TABLES\"' to see available tables")
+		return err
 	}
 
 	// Show table history if requested
 	if timeTravelOpts.showHistory {
 		if err := showTableHistory(icebergTable); err != nil {
-			return fmt.Errorf("❌ Failed to show table history: %w", err)
+			if logger != nil {
+				logger.Error().Str("cmd", "time-travel").Str("table", tableName).Err(err).Msg("Failed to show table history")
+			}
+			d.Error("Failed to show table history: %v", err)
+			return err
 		}
 		fmt.Println() // Add spacing before continuing
 	}
@@ -126,13 +157,21 @@ func runTimeTravel(cmd *cobra.Command, args []string) error {
 	// Resolve the snapshot
 	snapshotID, resolvedTime, err := resolveSnapshot(icebergTable, timeTravelOpts.asOf)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to resolve snapshot: %w\n"+
-			"💡 Use --show-history to see available snapshots", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "time-travel").Str("table", tableName).Str("as_of", timeTravelOpts.asOf).Err(err).Msg("Failed to resolve snapshot")
+		}
+		d.Error("Failed to resolve snapshot: %v", err)
+		d.Info("Use --show-history to see available snapshots")
+		return err
+	}
+
+	if logger != nil {
+		logger.Info().Str("cmd", "time-travel").Str("table", tableName).Int64("snapshot_id", snapshotID).Time("resolved_time", resolvedTime).Msg("Resolved snapshot for time-travel")
 	}
 
 	// Display time-travel information
-	fmt.Printf("🕒 Time-traveling to: %s\n", resolvedTime.Format(time.RFC3339))
-	fmt.Printf("📸 Using snapshot: %d\n", snapshotID)
+	d.Info("Time-traveling to: %s", resolvedTime.Format(time.RFC3339))
+	d.Info("Using snapshot: %d", snapshotID)
 
 	// Create SQL engine - need to assert to concrete type for now
 	var engine *duckdb.Engine
@@ -140,24 +179,40 @@ func runTimeTravel(cmd *cobra.Command, args []string) error {
 	case *sqlite.Catalog:
 		engine, err = duckdb.NewEngine(catalogImpl)
 		if err != nil {
-			return fmt.Errorf("❌ Failed to create SQL engine: %w\n"+
-				"💡 This might be a DuckDB installation issue", err)
+			if logger != nil {
+				logger.Error().Str("cmd", "time-travel").Err(err).Msg("Failed to create SQL engine")
+			}
+			d.Error("Failed to create SQL engine: %v", err)
+			d.Info("This might be a DuckDB installation issue")
+			return err
 		}
 	default:
-		return fmt.Errorf("❌ Time-travel is currently only supported with SQLite catalogs")
+		if logger != nil {
+			logger.Error().Str("cmd", "time-travel").Msg("Time-travel only supported with SQLite catalogs")
+		}
+		d.Error("Time-travel is currently only supported with SQLite catalogs")
+		return fmt.Errorf("time-travel is currently only supported with SQLite catalogs")
 	}
 	defer engine.Close()
 
 	// Create a new table with the specific snapshot for querying
 	snapshotTable, err := createSnapshotTable(icebergTable, snapshotID)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to create snapshot table: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "time-travel").Int64("snapshot_id", snapshotID).Err(err).Msg("Failed to create snapshot table")
+		}
+		d.Error("Failed to create snapshot table: %v", err)
+		return err
 	}
 
 	// Register the snapshot table with a unique name
 	snapshotTableIdent := append(tableIdent, fmt.Sprintf("snapshot_%d", snapshotID))
-	if err := engine.RegisterTable(cmd.Context(), snapshotTableIdent, snapshotTable); err != nil {
-		return fmt.Errorf("❌ Failed to register table at snapshot: %w", err)
+	if err := engine.RegisterTable(ctx, snapshotTableIdent, snapshotTable); err != nil {
+		if logger != nil {
+			logger.Error().Str("cmd", "time-travel").Interface("snapshot_table_ident", snapshotTableIdent).Err(err).Msg("Failed to register table at snapshot")
+		}
+		d.Error("Failed to register table at snapshot: %v", err)
+		return err
 	}
 
 	// Determine the query to execute
@@ -166,7 +221,7 @@ func runTimeTravel(cmd *cobra.Command, args []string) error {
 		// Default query - show a sample of data
 		tablePath := strings.Join(tableIdent, ".")
 		query = fmt.Sprintf("SELECT * FROM %s LIMIT 10", tablePath)
-		fmt.Printf("🔍 Default query: %s\n", query)
+		d.Info("Default query: %s", query)
 	}
 
 	// Replace original table name with snapshot table name in query
@@ -174,26 +229,42 @@ func runTimeTravel(cmd *cobra.Command, args []string) error {
 	snapshotTablePath := strings.Join(snapshotTableIdent, ".")
 	query = strings.ReplaceAll(query, originalTablePath, snapshotTablePath)
 
+	if logger != nil {
+		logger.Info().Str("cmd", "time-travel").Str("query", query).Int64("snapshot_id", snapshotID).Msg("Executing time-travel query")
+	}
+
 	// Execute the query
 	start := time.Now()
-	result, err := engine.ExecuteQuery(cmd.Context(), query)
+	result, err := engine.ExecuteQuery(ctx, query)
 	if err != nil {
+		if logger != nil {
+			logger.Error().Str("cmd", "time-travel").Str("query", query).Int64("snapshot_id", snapshotID).Err(err).Msg("Time-travel query failed")
+		}
 		// Enhanced error handling
 		if strings.Contains(err.Error(), "timeout") {
-			return fmt.Errorf("❌ Query timed out: %w\n"+
-				"💡 Try simplifying your query", err)
+			d.Error("Query timed out: %v", err)
+			d.Info("Try simplifying your query")
+		} else if strings.Contains(err.Error(), "table") && strings.Contains(err.Error(), "not found") {
+			d.Error("Table not found in time-travel query: %v", err)
+			d.Info("The table might not have existed at the specified time")
+		} else {
+			d.Error("Time-travel query failed: %v", err)
 		}
-		if strings.Contains(err.Error(), "table") && strings.Contains(err.Error(), "not found") {
-			return fmt.Errorf("❌ Table not found in time-travel query: %w\n"+
-				"💡 The table might not have existed at the specified time", err)
-		}
-		return fmt.Errorf("❌ Time-travel query failed: %w", err)
+		return err
 	}
 	duration := time.Since(start)
 
+	if logger != nil {
+		logger.Info().Str("cmd", "time-travel").Str("query", query).Int64("snapshot_id", snapshotID).Dur("duration", duration).Int64("rows", result.RowCount).Msg("Time-travel query executed successfully")
+	}
+
 	// Display results using the same formatting as the SQL command
 	if err := displayTimeTravelResults(result, duration, snapshotID, resolvedTime); err != nil {
-		return fmt.Errorf("❌ Failed to display results: %w", err)
+		if logger != nil {
+			logger.Error().Str("cmd", "time-travel").Err(err).Msg("Failed to display results")
+		}
+		d.Error("Failed to display results: %v", err)
+		return err
 	}
 
 	return nil
