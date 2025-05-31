@@ -23,8 +23,15 @@ var sqlCmd = &cobra.Command{
 The SQL engine automatically discovers and registers all tables from your
 Icebox catalog, making them available for querying.
 
+Table Naming:
+  Tables can be referenced in two ways:
+  1. Using just the table name: SELECT * FROM sales
+  2. Using namespace_table format: SELECT * FROM default_sales
+  Note: The dot notation (default.sales) is not supported by DuckDB.
+
 Examples:
   icebox sql "SELECT COUNT(*) FROM sales"
+  icebox sql "SELECT COUNT(*) FROM default_sales"
   icebox sql "SELECT region, SUM(amount) FROM sales GROUP BY region"
   icebox sql "SHOW TABLES"
   icebox sql "DESCRIBE sales"`,
