@@ -2,6 +2,7 @@ package native
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 )
@@ -106,6 +107,20 @@ func (w *PacketWriter) WriteUvarint(v uint64) error {
 	buf := make([]byte, binary.MaxVarintLen64)
 	n := binary.PutUvarint(buf, v)
 	return w.WriteBytes(buf[:n])
+}
+
+// WriteUint32 writes a 32-bit unsigned integer
+func (w *PacketWriter) WriteUint32(v uint32) error {
+	buf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(buf, v)
+	return w.WriteBytes(buf)
+}
+
+// WriteFloat64 writes a 64-bit float
+func (w *PacketWriter) WriteFloat64(v float64) error {
+	// For now, we'll write the float as a string representation
+	// This is a simplified approach - in a real implementation, you'd want proper binary encoding
+	return w.WriteString(fmt.Sprintf("%f", v))
 }
 
 // WriteString writes a string

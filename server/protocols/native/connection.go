@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -288,26 +289,29 @@ func (h *ConnectionHandler) sendPong() error {
 	return h.writer.Flush()
 }
 
-// sendQueryResponse sends query response
+// sendQueryResponse sends query response with mock data based on query content
 func (h *ConnectionHandler) sendQueryResponse(query string) error {
+	// Parse query to determine appropriate mock response
+	mockResponse := h.generateMockResponse(query)
+
 	// Send data packet type
 	if err := h.writer.WriteByte(ServerData); err != nil {
 		return err
 	}
 
 	// Send column count
-	if err := h.writer.WriteUvarint(1); err != nil {
+	if err := h.writer.WriteUvarint(uint64(len(mockResponse.columns))); err != nil {
 		return err
 	}
 
-	// Send column name
-	if err := h.writer.WriteString("result"); err != nil {
-		return err
-	}
-
-	// Send column type
-	if err := h.writer.WriteString("UInt8"); err != nil {
-		return err
+	// Send column names and types
+	for _, col := range mockResponse.columns {
+		if err := h.writer.WriteString(col.name); err != nil {
+			return err
+		}
+		if err := h.writer.WriteString(col.dataType); err != nil {
+			return err
+		}
 	}
 
 	// Send data block
@@ -316,13 +320,17 @@ func (h *ConnectionHandler) sendQueryResponse(query string) error {
 	}
 
 	// Send row count
-	if err := h.writer.WriteUvarint(1); err != nil {
+	if err := h.writer.WriteUvarint(uint64(len(mockResponse.rows))); err != nil {
 		return err
 	}
 
-	// Send data (UInt8 value 1)
-	if err := h.writer.WriteByte(1); err != nil {
-		return err
+	// Send data row by row
+	for _, row := range mockResponse.rows {
+		for i, col := range mockResponse.columns {
+			if err := h.writeColumnValue(col.dataType, row[i]); err != nil {
+				return err
+			}
+		}
 	}
 
 	// Send end of stream
@@ -331,6 +339,128 @@ func (h *ConnectionHandler) sendQueryResponse(query string) error {
 	}
 
 	return h.writer.Flush()
+}
+
+// MockColumn represents a column in mock response
+type MockColumn struct {
+	name     string
+	dataType string
+}
+
+// MockRow represents a row of data
+type MockRow []interface{}
+
+// MockResponse represents a complete mock response
+type MockResponse struct {
+	columns []MockColumn
+	rows    []MockRow
+}
+
+// generateMockResponse generates appropriate mock response based on query
+func (h *ConnectionHandler) generateMockResponse(query string) MockResponse {
+	// Convert query to lowercase for easier matching
+	queryLower := strings.ToLower(query)
+
+	switch {
+	case strings.Contains(queryLower, "select 1"):
+		return MockResponse{
+			columns: []MockColumn{{name: "1", dataType: "UInt8"}},
+			rows:    []MockRow{{uint8(1)}},
+		}
+	case strings.Contains(queryLower, "select 42"):
+		return MockResponse{
+			columns: []MockColumn{{name: "42", dataType: "UInt8"}},
+			rows:    []MockRow{{uint8(42)}},
+		}
+	case strings.Contains(queryLower, "select 'hello'"):
+		return MockResponse{
+			columns: []MockColumn{{name: "'hello'", dataType: "String"}},
+			rows:    []MockRow{{"hello"}},
+		}
+	case strings.Contains(queryLower, "select now()"):
+		return MockResponse{
+			columns: []MockColumn{{name: "now()", dataType: "DateTime"}},
+			rows:    []MockRow{{time.Now()}},
+		}
+	case strings.Contains(queryLower, "select count(*)"):
+		return MockResponse{
+			columns: []MockColumn{{name: "count()", dataType: "UInt64"}},
+			rows:    []MockRow{{uint64(100)}},
+		}
+	case strings.Contains(queryLower, "select * from users"):
+		return MockResponse{
+			columns: []MockColumn{
+				{name: "id", dataType: "UInt32"},
+				{name: "name", dataType: "String"},
+				{name: "email", dataType: "String"},
+				{name: "created_at", dataType: "DateTime"},
+			},
+			rows: []MockRow{
+				{uint32(1), "Alice", "alice@example.com", time.Now().Add(-24 * time.Hour)},
+				{uint32(2), "Bob", "bob@example.com", time.Now().Add(-12 * time.Hour)},
+				{uint32(3), "Charlie", "charlie@example.com", time.Now()},
+			},
+		}
+	case strings.Contains(queryLower, "select * from orders"):
+		return MockResponse{
+			columns: []MockColumn{
+				{name: "order_id", dataType: "UInt64"},
+				{name: "customer_id", dataType: "UInt32"},
+				{name: "amount", dataType: "Float64"},
+				{name: "status", dataType: "String"},
+			},
+			rows: []MockRow{
+				{uint64(1001), uint32(1), 99.99, "completed"},
+				{uint64(1002), uint32(2), 149.50, "pending"},
+				{uint64(1003), uint32(1), 75.25, "shipped"},
+			},
+		}
+	default:
+		// Default response for unknown queries
+		return MockResponse{
+			columns: []MockColumn{{name: "result", dataType: "String"}},
+			rows:    []MockRow{{fmt.Sprintf("Mock response for: %s", query)}},
+		}
+	}
+}
+
+// writeColumnValue writes a value for a specific column type
+func (h *ConnectionHandler) writeColumnValue(dataType string, value interface{}) error {
+	switch dataType {
+	case "UInt8":
+		if v, ok := value.(uint8); ok {
+			return h.writer.WriteByte(v)
+		}
+		return h.writer.WriteByte(0)
+	case "UInt32":
+		if v, ok := value.(uint32); ok {
+			return h.writer.WriteUint32(v)
+		}
+		return h.writer.WriteUint32(0)
+	case "UInt64":
+		if v, ok := value.(uint64); ok {
+			return h.writer.WriteUvarint(v)
+		}
+		return h.writer.WriteUvarint(0)
+	case "Float64":
+		if v, ok := value.(float64); ok {
+			return h.writer.WriteFloat64(v)
+		}
+		return h.writer.WriteFloat64(0.0)
+	case "String":
+		if v, ok := value.(string); ok {
+			return h.writer.WriteString(v)
+		}
+		return h.writer.WriteString("")
+	case "DateTime":
+		if v, ok := value.(time.Time); ok {
+			return h.writer.WriteUint32(uint32(v.Unix()))
+		}
+		return h.writer.WriteUint32(uint32(time.Now().Unix()))
+	default:
+		// Default to string representation
+		return h.writer.WriteString(fmt.Sprintf("%v", value))
+	}
 }
 
 // sendDataResponse sends data response
