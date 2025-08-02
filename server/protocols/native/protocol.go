@@ -2,11 +2,12 @@ package native
 
 // Client packet types
 const (
-	ClientHello  byte = 0
-	ClientQuery  byte = 1
-	ClientData   byte = 2
-	ClientCancel byte = 3
-	ClientPing   byte = 4
+	ClientHello    byte = 0
+	ClientQuery    byte = 1
+	ClientData     byte = 2
+	ClientCancel   byte = 3
+	ClientPing     byte = 4
+	ClientAddendum byte = 110 // Addendum packet type for quota key and other extensions
 )
 
 // Server packet types
