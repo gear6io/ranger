@@ -16,10 +16,11 @@ func main() {
 	logger := setupLogger()
 
 	// Load server configuration
-	cfg, err := config.Load()
+	cfg, err := config.LoadConfig("icebox-server.yml")
 	if err != nil {
-		logger.Fatal().Err(err).Msg("Failed to load server configuration")
-		os.Exit(1)
+		// Try default config if file not found
+		cfg = config.LoadDefaultConfig()
+		logger.Info().Msg("Using default configuration")
 	}
 
 	// Create server instance
@@ -47,6 +48,14 @@ func main() {
 	if err := srv.Start(ctx); err != nil {
 		logger.Fatal().Err(err).Msg("Server failed")
 		os.Exit(1)
+	}
+
+	// Wait for shutdown signal
+	<-ctx.Done()
+
+	// Graceful shutdown
+	if err := srv.Shutdown(); err != nil {
+		logger.Error().Err(err).Msg("Error during shutdown")
 	}
 
 	logger.Info().Msg("Server stopped gracefully")
