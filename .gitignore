@@ -8,6 +8,10 @@
 *.so
 *.dylib
 icebox
+icebox-client
+icebox-server
+native_client
+clickhouse_example
 
 # Test binary, built with `go test -c`
 *.test
