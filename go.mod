@@ -5,7 +5,7 @@ go 1.24.2
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.35.0
 	github.com/apache/arrow-go/v18 v18.4.0
-	github.com/apache/iceberg-go v0.3.0-rc0
+	github.com/apache/iceberg-go v0.3.0
 	github.com/gofiber/fiber/v2 v2.52.8
 	github.com/google/uuid v1.6.0
 	github.com/hamba/avro/v2 v2.29.0
