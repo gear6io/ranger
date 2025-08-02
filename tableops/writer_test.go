@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/TFMV/icebox/catalog"
-	"github.com/TFMV/icebox/config"
+	"github.com/TFMV/icebox/deprecated/catalog"
+	"github.com/TFMV/icebox/deprecated/config"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"

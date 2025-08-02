@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/TFMV/icebox/catalog"
-	"github.com/TFMV/icebox/config"
+	"github.com/TFMV/icebox/deprecated/catalog"
+	"github.com/TFMV/icebox/deprecated/config"
 	"github.com/TFMV/icebox/importer"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"

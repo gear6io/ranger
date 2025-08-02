@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TFMV/icebox/config"
+	"github.com/TFMV/icebox/deprecated/config"
 	"github.com/apache/iceberg-go/table"
 )
 

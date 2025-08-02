@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	jsoncatalog "github.com/TFMV/icebox/catalog/json"
-	"github.com/TFMV/icebox/config"
+	jsoncatalog "github.com/TFMV/icebox/deprecated/catalog/json"
+	"github.com/TFMV/icebox/deprecated/config"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

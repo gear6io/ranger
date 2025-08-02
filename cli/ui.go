@@ -11,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/TFMV/icebox/catalog"
-	"github.com/TFMV/icebox/catalog/sqlite"
-	"github.com/TFMV/icebox/config"
-	"github.com/TFMV/icebox/engine/duckdb"
+	"github.com/TFMV/icebox/deprecated/catalog"
+	"github.com/TFMV/icebox/deprecated/catalog/sqlite"
+	"github.com/TFMV/icebox/deprecated/config"
+	"github.com/TFMV/icebox/deprecated/engine/duckdb"
 	"github.com/spf13/cobra"
 )
 

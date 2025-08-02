@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/TFMV/icebox/catalog/sqlite"
-	"github.com/TFMV/icebox/config"
-	"github.com/TFMV/icebox/engine/duckdb"
+	"github.com/TFMV/icebox/deprecated/catalog/sqlite"
+	"github.com/TFMV/icebox/deprecated/config"
+	"github.com/TFMV/icebox/deprecated/engine/duckdb"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
 	"github.com/stretchr/testify/assert"

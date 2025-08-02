@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/TFMV/icebox/config"
+	"github.com/TFMV/icebox/deprecated/config"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/iceberg-go/table"
 	"github.com/stretchr/testify/assert"

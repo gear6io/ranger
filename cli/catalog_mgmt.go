@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/TFMV/icebox/catalog"
-	"github.com/TFMV/icebox/config"
-	"github.com/TFMV/icebox/display"
+	"github.com/TFMV/icebox/deprecated/catalog"
+	"github.com/TFMV/icebox/deprecated/config"
+	"github.com/TFMV/icebox/deprecated/display"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
 	"github.com/spf13/cobra"

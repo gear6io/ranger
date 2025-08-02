@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TFMV/icebox/catalog"
-	"github.com/TFMV/icebox/config"
-	"github.com/TFMV/icebox/display"
+	"github.com/TFMV/icebox/deprecated/catalog"
+	"github.com/TFMV/icebox/deprecated/config"
+	"github.com/TFMV/icebox/deprecated/display"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/table"

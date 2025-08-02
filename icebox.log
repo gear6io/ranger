@@ -1,0 +1,30 @@
+{"level":"info","app":"icebox","cmd":"main","time":1753792587,"message":"Starting Icebox CLI"}
+{"level":"info","app":"icebox","cmd":"main","time":1753792587,"message":"Icebox CLI completed successfully"}
+{"level":"info","app":"icebox","cmd":"main","time":1753792638,"message":"Starting Icebox CLI"}
+{"level":"error","app":"icebox","cmd":"main","error":"data file does not exist: data.parquet","time":1753792638,"message":"CLI execution failed"}
+{"level":"info","app":"icebox","cmd":"main","time":1753792763,"message":"Starting Icebox CLI"}
+{"level":"error","app":"icebox","cmd":"main","error":"no .icebox.yml found in current directory or parents","time":1753792763,"message":"CLI execution failed"}
+{"level":"info","app":"icebox","cmd":"main","time":1754073152,"message":"Starting Icebox CLI"}
+{"level":"error","app":"icebox","cmd":"main","error":"unknown command \"sql\" for \"icebox\"","time":1754073152,"message":"CLI execution failed"}
+{"level":"info","app":"icebox","cmd":"main","time":1754073363,"message":"Starting Icebox CLI"}
+{"level":"info","app":"icebox","cmd":"main","time":1754073363,"message":"Icebox CLI completed successfully"}
+{"level":"info","app":"icebox","cmd":"main","time":1754073511,"message":"Starting Icebox CLI"}
+{"level":"error","app":"icebox","cmd":"main","error":"no .icebox.yml found in current directory or parents","time":1754073511,"message":"CLI execution failed"}
+{"level":"info","app":"icebox","cmd":"main","time":1754116938,"message":"Starting Icebox CLI"}
+{"level":"info","app":"icebox","cmd":"main","time":1754116938,"message":"Icebox CLI completed successfully"}
+{"level":"info","app":"icebox","cmd":"main","time":1754116944,"message":"Starting Icebox CLI"}
+{"level":"error","app":"icebox","cmd":"main","error":"❌ Failed to find Icebox configuration\n💡 Try running 'icebox init' first to create a new project: no .icebox.yml found in current directory or parents","time":1754116944,"message":"CLI execution failed"}
+{"level":"info","app":"icebox","cmd":"main","time":1754116960,"message":"Starting Icebox CLI"}
+{"level":"error","app":"icebox","cmd":"main","error":"❌ Failed to find Icebox configuration\n💡 Try running 'icebox init' first to create a new project: no .icebox.yml found in current directory or parents","time":1754116960,"message":"CLI execution failed"}
+{"level":"info","app":"icebox","cmd":"main","time":1754117394,"message":"Starting Icebox CLI"}
+{"level":"info","app":"icebox","cmd":"main","time":1754117394,"message":"Icebox CLI completed successfully"}
+{"level":"info","app":"icebox","cmd":"main","time":1754118929,"message":"Starting Icebox CLI"}
+{"level":"info","app":"icebox","cmd":"main","time":1754118929,"message":"Icebox CLI completed successfully"}
+{"level":"info","app":"icebox","cmd":"main","time":1754118935,"message":"Starting Icebox CLI"}
+{"level":"info","app":"icebox","cmd":"main","time":1754118935,"message":"Icebox CLI completed successfully"}
+{"level":"info","app":"icebox","cmd":"main","time":1754124078,"message":"Starting Icebox CLI"}
+{"level":"info","app":"icebox","cmd":"main","time":1754124078,"message":"Icebox CLI completed successfully"}
+{"level":"info","app":"icebox","cmd":"main","time":1754124084,"message":"Starting Icebox CLI"}
+{"level":"info","app":"icebox","cmd":"main","time":1754124084,"message":"Icebox CLI completed successfully"}
+{"level":"info","app":"icebox","cmd":"main","time":1754124922,"message":"Starting Icebox CLI (DEPRECATED)"}
+{"level":"info","app":"icebox","cmd":"main","time":1754124922,"message":"Icebox CLI completed successfully"}

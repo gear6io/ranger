@@ -7,9 +7,27 @@ import (
 	"path/filepath"
 
 	"github.com/TFMV/icebox/cli"
-	"github.com/TFMV/icebox/display"
+	"github.com/TFMV/icebox/deprecated/display"
 	"github.com/rs/zerolog"
 )
+
+// DEPRECATED: This is the old monolithic CLI entry point
+//
+// ⚠️  WARNING: This CLI is deprecated and will be removed in a future release
+//
+// 🚀 NEW ARCHITECTURE:
+//   - Server: ./icebox-server (or go run cmd/icebox-server/main.go)
+//   - Client: ./icebox-client (or go run cmd/icebox-client/main.go)
+//
+// 📖 Migration Guide: See MIGRATION.md for detailed instructions
+// 🔗 New Commands:
+//   - Old: ./icebox serve     → New: ./icebox-server
+//   - Old: ./icebox sql       → New: ./icebox-client query
+//   - Old: ./icebox shell     → New: ./icebox-client shell
+//   - Old: ./icebox import    → New: ./icebox-client import
+//
+// 💡 For backward compatibility, this CLI will continue to work but will show
+//    deprecation warnings. Please migrate to the new architecture.
 
 // Context key types to avoid collisions
 type contextKey string
@@ -19,6 +37,9 @@ const (
 )
 
 func main() {
+	// Show deprecation warning
+	showDeprecationWarning()
+
 	// Initialize logger
 	logger := setupLogger()
 
@@ -31,7 +52,7 @@ func main() {
 	ctx = context.WithValue(ctx, loggerKey, logger)
 
 	// Log application start
-	logger.Info().Str("cmd", "main").Msg("Starting Icebox CLI")
+	logger.Info().Str("cmd", "main").Msg("Starting Icebox CLI (DEPRECATED)")
 
 	// Execute CLI with context
 	if err := cli.ExecuteWithContext(ctx); err != nil {
@@ -40,6 +61,23 @@ func main() {
 	}
 
 	logger.Info().Str("cmd", "main").Msg("Icebox CLI completed successfully")
+}
+
+func showDeprecationWarning() {
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "⚠️  DEPRECATION WARNING ⚠️\n")
+	fmt.Fprintf(os.Stderr, "========================\n")
+	fmt.Fprintf(os.Stderr, "This CLI is deprecated and will be removed in a future release.\n")
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "🚀 NEW ARCHITECTURE:\n")
+	fmt.Fprintf(os.Stderr, "   Server: ./icebox-server (or go run cmd/icebox-server/main.go)\n")
+	fmt.Fprintf(os.Stderr, "   Client: ./icebox-client (or go run cmd/icebox-client/main.go)\n")
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "📖 Migration Guide: See MIGRATION.md for detailed instructions\n")
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "💡 For backward compatibility, this CLI will continue to work.\n")
+	fmt.Fprintf(os.Stderr, "   Please migrate to the new architecture.\n")
+	fmt.Fprintf(os.Stderr, "\n")
 }
 
 // setupLogger initializes zerolog with file output

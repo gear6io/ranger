@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  icebox-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    ports:
+      - "8080:8080"
+      - "5432:5432"
+    volumes:
+      - ./data:/root/data
+      - ./icebox-server.yml:/root/icebox-server.yml
+    environment:
+      - ICEBOX_ENV=production
+    restart: unless-stopped
+
+  icebox-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    depends_on:
+      - icebox-server
+    volumes:
+      - ./icebox-client.yml:/root/icebox-client.yml
+    command: ["./icebox-client", "shell"]

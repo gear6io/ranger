@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/TFMV/icebox/catalog"
-	"github.com/TFMV/icebox/config"
-	"github.com/TFMV/icebox/fs/local"
+	"github.com/TFMV/icebox/deprecated/catalog"
+	"github.com/TFMV/icebox/deprecated/config"
+	"github.com/TFMV/icebox/deprecated/fs/local"
 	"github.com/TFMV/icebox/tableops"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/memory"

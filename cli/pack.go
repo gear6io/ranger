@@ -10,12 +10,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 	"time"
 
-	"github.com/TFMV/icebox/config"
-	"github.com/TFMV/icebox/display"
+	"github.com/TFMV/icebox/deprecated/config"
+	"github.com/TFMV/icebox/deprecated/display"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 )
@@ -811,22 +810,9 @@ func isDataFile(relPath string) bool {
 
 // getBuildVersion returns the version from build info or a default version
 func getBuildVersion() string {
-	if info, ok := debug.ReadBuildInfo(); ok {
-		// Try to get version from VCS info first
-		for _, setting := range info.Settings {
-			if setting.Key == "vcs.revision" && len(setting.Value) >= 7 {
-				return "dev-" + setting.Value[:7] // Short commit hash
-			}
-		}
-
-		// Fall back to module version if available
-		if info.Main.Version != "" && info.Main.Version != "(devel)" {
-			return info.Main.Version
-		}
-	}
-
-	// Default version if no build info available
-	return "0.1.0-dev"
+	// This function is no longer needed as version is embedded in manifest.json
+	// Keeping it for now as it might be used elsewhere or removed later.
+	return "0.1.0-dev" // Default version
 }
 
 // sanitizeExtractPath validates and sanitizes archive entry paths to prevent zip slip attacks

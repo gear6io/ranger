@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TFMV/icebox/catalog"
-	"github.com/TFMV/icebox/fs/local"
+	"github.com/TFMV/icebox/deprecated/catalog"
+	"github.com/TFMV/icebox/deprecated/fs/local"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"

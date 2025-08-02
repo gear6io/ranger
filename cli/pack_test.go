@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TFMV/icebox/config"
-	"github.com/TFMV/icebox/display"
+	"github.com/TFMV/icebox/deprecated/config"
+	"github.com/TFMV/icebox/deprecated/display"
 	"github.com/rs/zerolog"
 )
 

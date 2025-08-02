@@ -3,7 +3,7 @@ package importer
 import (
 	"testing"
 
-	"github.com/TFMV/icebox/config"
+	"github.com/TFMV/icebox/deprecated/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

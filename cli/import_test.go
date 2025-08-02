@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/TFMV/icebox/catalog/sqlite"
-	"github.com/TFMV/icebox/config"
+	"github.com/TFMV/icebox/deprecated/catalog/sqlite"
+	"github.com/TFMV/icebox/deprecated/config"
 	"github.com/apache/iceberg-go/table"
 	"github.com/stretchr/testify/require"
 )

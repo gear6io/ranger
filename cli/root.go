@@ -3,7 +3,7 @@ package cli
 import (
 	"context"
 
-	"github.com/TFMV/icebox/display"
+	"github.com/TFMV/icebox/deprecated/display"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 )
