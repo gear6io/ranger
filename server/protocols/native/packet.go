@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"net"
 )
 
@@ -32,6 +33,27 @@ func (r *PacketReader) ReadByte() (byte, error) {
 // ReadUvarint reads an unsigned variable-length integer
 func (r *PacketReader) ReadUvarint() (uint64, error) {
 	return binary.ReadUvarint(&netConnReader{r.conn})
+}
+
+// ReadUint32 reads a 32-bit unsigned integer
+func (r *PacketReader) ReadUint32() (uint32, error) {
+	buf := make([]byte, 4)
+	_, err := io.ReadFull(r.conn, buf)
+	if err != nil {
+		return 0, err
+	}
+	return binary.LittleEndian.Uint32(buf), nil
+}
+
+// ReadFloat64 reads a 64-bit float
+func (r *PacketReader) ReadFloat64() (float64, error) {
+	buf := make([]byte, 8)
+	_, err := io.ReadFull(r.conn, buf)
+	if err != nil {
+		return 0, err
+	}
+	bits := binary.LittleEndian.Uint64(buf)
+	return math.Float64frombits(bits), nil
 }
 
 // ReadString reads a string

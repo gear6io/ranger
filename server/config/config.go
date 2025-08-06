@@ -38,7 +38,13 @@ type NativeConfig struct {
 
 // LogConfig represents logging configuration
 type LogConfig struct {
-	Level string `yaml:"level"`
+	Level      string `yaml:"level"`
+	Format     string `yaml:"format"`      // "json" or "console"
+	FilePath   string `yaml:"file_path"`   // Path to log file
+	Console    bool   `yaml:"console"`     // Whether to log to console
+	MaxSize    int    `yaml:"max_size"`    // Max file size in MB
+	MaxBackups int    `yaml:"max_backups"` // Max number of backup files
+	MaxAge     int    `yaml:"max_age"`     // Max age in days
 }
 
 // LoadDefaultConfig returns a default configuration
@@ -60,7 +66,13 @@ func LoadDefaultConfig() *Config {
 			Port:    9000,
 		},
 		Log: LogConfig{
-			Level: "info",
+			Level:      "info",
+			Format:     "console",
+			FilePath:   "logs/icebox-server.log",
+			Console:    true,
+			MaxSize:    100, // 100MB
+			MaxBackups: 3,
+			MaxAge:     7, // 7 days
 		},
 	}
 }

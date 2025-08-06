@@ -186,12 +186,122 @@ func main() {
 
 1. **Data Packet**: Client sends `ClientData` with:
    - Table name
-   - Column metadata
-   - Data blocks
+   - Client info
+   - External table info
+   - Block info
+   - Column metadata (name and type)
+   - Row count
+   - Data rows
 
-2. **Processing**: Server processes the data insertion
+2. **Processing**: Server processes the data insertion:
+   - Validates table and column metadata
+   - Reads and processes data rows
+   - Writes data to storage system
 
-3. **Response**: Server sends progress and completion status
+3. **Response**: Server sends:
+   - Progress updates
+   - Completion status
+   - End of stream marker
+
+### Batch Insert Support
+
+The native protocol now supports batch insert operations from the ClickHouse-go SDK. This enables efficient bulk data insertion with the following features:
+
+- **Column Metadata**: Automatic parsing of column names and types
+- **Multiple Data Types**: Support for UInt8, UInt16, UInt32, UInt64, Int8, Int16, Int32, Int64, Float32, Float64, String, DateTime, Date
+- **Batch Processing**: Efficient handling of multiple rows in a single operation
+- **Progress Tracking**: Real-time progress updates during batch operations
+
+#### Batch Insert Example
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "time"
+
+    "github.com/ClickHouse/clickhouse-go/v2"
+    "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+)
+
+func main() {
+    // Connect to Icebox native server
+    conn, err := clickhouse.Open(&clickhouse.Options{
+        Addr: []string{"localhost:9000"},
+        Auth: clickhouse.Auth{
+            Database: "default",
+            Username: "default",
+            Password: "",
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer conn.Close()
+
+    // Create test table
+    if err := conn.Exec(context.Background(), `
+        CREATE TABLE IF NOT EXISTS users (
+            id UInt32,
+            name String,
+            email String,
+            created_at DateTime
+        ) ENGINE = Memory
+    `); err != nil {
+        log.Fatal(err)
+    }
+
+    // Prepare batch insert
+    batch, err := conn.PrepareBatch(context.Background(), 
+        "INSERT INTO users (id, name, email, created_at)")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Add rows to batch
+    now := time.Now()
+    for i := 1; i <= 1000; i++ {
+        if err := batch.Append(
+            uint32(i),
+            fmt.Sprintf("User %d", i),
+            fmt.Sprintf("user%d@example.com", i),
+            now.Add(time.Duration(i)*time.Second),
+        ); err != nil {
+            log.Fatal(err)
+        }
+    }
+
+    // Execute batch
+    if err := batch.Send(); err != nil {
+        log.Fatal(err)
+    }
+
+    fmt.Printf("Successfully inserted %d rows\n", batch.Rows())
+}
+```
+
+#### Supported Data Types
+
+The batch insert functionality supports the following ClickHouse data types:
+
+| ClickHouse Type | Go Type | Description |
+|----------------|---------|-------------|
+| UInt8 | uint8 | 8-bit unsigned integer |
+| UInt16 | uint16 | 16-bit unsigned integer |
+| UInt32 | uint32 | 32-bit unsigned integer |
+| UInt64 | uint64 | 64-bit unsigned integer |
+| Int8 | int8 | 8-bit signed integer |
+| Int16 | int16 | 16-bit signed integer |
+| Int32 | int32 | 32-bit signed integer |
+| Int64 | int64 | 64-bit signed integer |
+| Float32 | float32 | 32-bit floating point |
+| Float64 | float64 | 64-bit floating point |
+| String | string | Variable-length string |
+| DateTime | time.Time | Date and time |
+| Date | time.Time | Date only |
 
 ## Implementation Status
 
@@ -202,19 +312,23 @@ func main() {
 - Client hello handshake
 - Query packet handling (placeholder responses)
 - Ping/pong support
+- **Batch insert support with ClickHouse-go SDK**
+- **Column metadata parsing**
+- **Multiple data type support**
+- **Progress tracking for batch operations**
 
 ### 🔄 In Progress
 - Query execution integration with engine
-- Data insertion handling
+- Data insertion storage integration
 - Error handling and exceptions
 - Authentication system
 
 ### 📋 Planned
 - Compression support
 - Prepared statements
-- Batch operations
 - Connection pooling
 - SSL/TLS support
+- Advanced data type support (Arrays, Maps, etc.)
 
 ## Testing
 

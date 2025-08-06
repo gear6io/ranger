@@ -33,3 +33,4 @@ go-duckdb/
 art/
 gocheck_artifacts/
 my-lakehouse/
+logs/

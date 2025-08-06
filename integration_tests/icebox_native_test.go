@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // TestResult represents the result of a test
@@ -791,4 +792,169 @@ func readColumnValue(conn net.Conn, dataType string) (interface{}, error) {
 		// For unknown types, try to read as string
 		return readString(conn)
 	}
+}
+
+func TestNativeProtocolBatchInsert(t *testing.T) {
+	// Skip if server is not running
+	if !isServerRunning() {
+		t.Skip("Server is not running")
+	}
+
+	// Connect using clickhouse-go SDK
+	conn, err := clickhouse.Open(&clickhouse.Options{
+		Addr: []string{"localhost:9000"},
+		Auth: clickhouse.Auth{
+			Database: "default",
+			Username: "default",
+			Password: "",
+		},
+		Settings: clickhouse.Settings{
+			"max_execution_time": 60,
+		},
+		Debug: false, // Set to true for debugging
+	})
+	if err != nil {
+		t.Fatalf("Failed to connect to server: %v", err)
+	}
+	defer conn.Close()
+
+	// Test the connection
+	ctx := context.Background()
+	if err := conn.Ping(ctx); err != nil {
+		t.Fatalf("Failed to ping server: %v", err)
+	}
+
+	t.Log("Successfully connected to Icebox native server")
+
+	// Create a test table
+	if err := createTestTableForBatch(t, conn); err != nil {
+		t.Fatalf("Failed to create test table: %v", err)
+	}
+
+	// Perform batch insert
+	if err := performBatchInsertTest(t, conn); err != nil {
+		t.Fatalf("Failed to perform batch insert: %v", err)
+	}
+
+	t.Log("Batch insert test completed successfully")
+}
+
+func createTestTableForBatch(t *testing.T, conn driver.Conn) error {
+	ctx := context.Background()
+
+	// Create a simple test table
+	query := `
+		CREATE TABLE IF NOT EXISTS test_batch_users (
+			id UInt32,
+			name String,
+			email String,
+			created_at DateTime
+		) ENGINE = Memory
+	`
+
+	if err := conn.Exec(ctx, query); err != nil {
+		return fmt.Errorf("failed to create table: %w", err)
+	}
+
+	t.Log("Test table created successfully")
+	return nil
+}
+
+func performBatchInsertTest(t *testing.T, conn driver.Conn) error {
+	ctx := context.Background()
+
+	// Prepare batch insert
+	batch, err := conn.PrepareBatch(ctx, "INSERT INTO test_batch_users (id, name, email, created_at)")
+	if err != nil {
+		return fmt.Errorf("failed to prepare batch: %w", err)
+	}
+
+	// Add rows to the batch
+	now := time.Now()
+
+	// Row 1
+	if err := batch.Append(
+		uint32(1),
+		"Alice Johnson",
+		"alice@example.com",
+		now,
+	); err != nil {
+		return fmt.Errorf("failed to append row 1: %w", err)
+	}
+
+	// Row 2
+	if err := batch.Append(
+		uint32(2),
+		"Bob Smith",
+		"bob@example.com",
+		now.Add(time.Hour),
+	); err != nil {
+		return fmt.Errorf("failed to append row 2: %w", err)
+	}
+
+	// Row 3
+	if err := batch.Append(
+		uint32(3),
+		"Charlie Brown",
+		"charlie@example.com",
+		now.Add(2*time.Hour),
+	); err != nil {
+		return fmt.Errorf("failed to append row 3: %w", err)
+	}
+
+	// Execute the batch
+	if err := batch.Send(); err != nil {
+		return fmt.Errorf("failed to send batch: %w", err)
+	}
+
+	t.Logf("Successfully inserted %d rows", batch.Rows())
+
+	// Verify the insert by querying the data
+	if err := verifyBatchInsert(t, conn); err != nil {
+		return fmt.Errorf("failed to verify insert: %w", err)
+	}
+
+	return nil
+}
+
+func verifyBatchInsert(t *testing.T, conn driver.Conn) error {
+	ctx := context.Background()
+
+	// Query the inserted data
+	rows, err := conn.Query(ctx, "SELECT id, name, email, created_at FROM test_batch_users ORDER BY id")
+	if err != nil {
+		return fmt.Errorf("failed to query data: %w", err)
+	}
+	defer rows.Close()
+
+	t.Log("Verifying inserted data:")
+
+	rowCount := 0
+	for rows.Next() {
+		var (
+			id        uint32
+			name      string
+			email     string
+			createdAt time.Time
+		)
+
+		if err := rows.Scan(&id, &name, &email, &createdAt); err != nil {
+			return fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		t.Logf("Row %d: ID=%d, Name=%s, Email=%s, CreatedAt=%s",
+			rowCount+1, id, name, email, createdAt.Format("2006-01-02 15:04:05"))
+		rowCount++
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	if rowCount != 3 {
+		return fmt.Errorf("expected 3 rows, got %d", rowCount)
+	}
+
+	t.Logf("Successfully verified %d rows", rowCount)
+	return nil
 }

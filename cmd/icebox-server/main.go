@@ -2,24 +2,30 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/TFMV/icebox/server"
 	"github.com/TFMV/icebox/server/config"
-	"github.com/rs/zerolog"
 )
 
 func main() {
-	// Initialize logger
-	logger := setupLogger()
-
-	// Load server configuration
+	// Load server configuration first
 	cfg, err := config.LoadConfig("icebox-server.yml")
 	if err != nil {
 		// Try default config if file not found
 		cfg = config.LoadDefaultConfig()
+	}
+
+	// Initialize logger with configuration
+	logger, err := config.SetupLogger(cfg)
+	if err != nil {
+		panic(fmt.Sprintf("failed to setup logger: %v", err))
+	}
+
+	if err != nil {
 		logger.Info().Msg("Using default configuration")
 	}
 
@@ -59,15 +65,4 @@ func main() {
 	}
 
 	logger.Info().Msg("Server stopped gracefully")
-}
-
-func setupLogger() zerolog.Logger {
-	// Configure zerolog
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	logger := zerolog.New(os.Stdout).With().
-		Timestamp().
-		Str("component", "icebox-server").
-		Logger()
-
-	return logger
 }
