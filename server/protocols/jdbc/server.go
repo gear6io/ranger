@@ -7,26 +7,29 @@ import (
 	"sync"
 
 	"github.com/TFMV/icebox/server/config"
+	"github.com/TFMV/icebox/server/query"
 	"github.com/rs/zerolog"
 )
 
-// Server represents a JDBC server for icebox
+// Server represents the JDBC protocol server
 type Server struct {
-	logger zerolog.Logger
-	server net.Listener
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	queryEngine *query.Engine
+	logger      zerolog.Logger
+	server      net.Listener
+	ctx         context.Context
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
 }
 
-// NewServer creates a new JDBC server
-func NewServer(logger zerolog.Logger) (*Server, error) {
+// NewServer creates a new JDBC server instance
+func NewServer(queryEngine *query.Engine, logger zerolog.Logger) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Server{
-		logger: logger.With().Str("component", "jdbc-server").Logger(),
-		ctx:    ctx,
-		cancel: cancel,
+		queryEngine: queryEngine,
+		logger:      logger.With().Str("component", "jdbc-server").Logger(),
+		ctx:         ctx,
+		cancel:      cancel,
 	}, nil
 }
 

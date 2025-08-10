@@ -3,29 +3,41 @@ package http
 import (
 	"context"
 	"fmt"
-	"net"
+	"net/http"
+	"sync"
+	"time"
 
 	"github.com/TFMV/icebox/server/config"
+	"github.com/TFMV/icebox/server/query"
 	"github.com/rs/zerolog"
 )
 
-// Server represents an HTTP server for icebox
+// Server represents the HTTP protocol server
 type Server struct {
-	logger zerolog.Logger
-	server *net.Listener
+	queryEngine *query.Engine
+	logger      zerolog.Logger
+	server      *http.Server
+	ctx         context.Context
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
 }
 
-// NewServer creates a new HTTP server
-func NewServer(logger zerolog.Logger) (*Server, error) {
+// NewServer creates a new HTTP server instance
+func NewServer(queryEngine *query.Engine, logger zerolog.Logger) (*Server, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &Server{
-		logger: logger,
+		queryEngine: queryEngine,
+		logger:      logger.With().Str("component", "http-server").Logger(),
+		ctx:         ctx,
+		cancel:      cancel,
 	}, nil
 }
 
 // Start starts the HTTP server
 func (s *Server) Start(ctx context.Context) error {
 	if !config.HTTP_SERVER_ENABLED {
-		s.logger.Info().Msg("HTTP server disabled")
+		s.logger.Info().Msg("HTTP server is disabled")
 		return nil
 	}
 
@@ -34,17 +46,94 @@ func (s *Server) Start(ctx context.Context) error {
 	addr := fmt.Sprintf("%s:%d", config.DEFAULT_SERVER_ADDRESS, port)
 	s.logger.Info().Str("address", addr).Msg("Starting HTTP server")
 
-	// TODO: Implement actual HTTP server using Fiber
-	// For now, just log that we would start the server
-	s.logger.Info().Msg("HTTP server would start here (implementation pending)")
+	// Create HTTP server with query handling
+	mux := http.NewServeMux()
 
+	// Add query endpoint
+	mux.HandleFunc("/query", s.handleQuery)
+
+	// Add status endpoint
+	mux.HandleFunc("/status", s.handleStatus)
+
+	s.server = &http.Server{
+		Addr:    addr,
+		Handler: mux,
+	}
+
+	// Start server in goroutine
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			s.logger.Error().Err(err).Msg("HTTP server error")
+		}
+	}()
+
+	s.logger.Info().Msg("HTTP server started successfully")
 	return nil
+}
+
+// handleQuery handles SQL query requests
+func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse query from request body
+	queryStr := r.URL.Query().Get("q")
+	if queryStr == "" {
+		http.Error(w, "Missing query parameter 'q'", http.StatusBadRequest)
+		return
+	}
+
+	// Execute query using QueryEngine
+	result, err := s.queryEngine.ExecuteQuery(r.Context(), queryStr)
+	if err != nil {
+		s.logger.Error().Err(err).Str("query", queryStr).Msg("Query execution failed")
+		http.Error(w, fmt.Sprintf("Query execution failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Return result as JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	// Simple JSON response for now
+	response := fmt.Sprintf(`{"status":"success","rows":%d,"message":"%s"}`, result.RowCount, result.Message)
+	w.Write([]byte(response))
+}
+
+// handleStatus handles status requests
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	// Simple status response
+	response := fmt.Sprintf(`{"status":"running","server":"http"}`)
+	w.Write([]byte(response))
 }
 
 // Stop stops the HTTP server
 func (s *Server) Stop() error {
 	s.logger.Info().Msg("Stopping HTTP server")
-	// TODO: Implement actual server shutdown
+
+	s.cancel()
+
+	if s.server != nil {
+		// Create a context with timeout for graceful shutdown
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := s.server.Shutdown(shutdownCtx); err != nil {
+			s.logger.Error().Err(err).Msg("Error during HTTP server shutdown")
+		}
+	}
+
+	// Wait for all goroutines to finish
+	s.wg.Wait()
+
+	s.logger.Info().Msg("HTTP server stopped")
 	return nil
 }
 

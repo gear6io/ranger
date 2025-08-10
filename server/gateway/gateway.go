@@ -25,39 +25,46 @@ type Gateway struct {
 	wg           sync.WaitGroup
 	started      bool
 	mu           sync.RWMutex
+
+	// Connection management
+	maxConnections    int
+	activeConnections int32
+	connectionMutex   sync.RWMutex
 }
 
-// NewGateway creates a new Gateway instance
+// NewGateway creates a new gateway instance
 func NewGateway(queryEngine *query.Engine, logger zerolog.Logger) (*Gateway, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create all servers with the shared QueryEngine
-	httpServer, err := http.NewServer(logger)
+	httpServer, err := http.NewServer(queryEngine, logger)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create HTTP server: %w", err)
 	}
 
-	jdbcServer, err := jdbc.NewServer(logger)
+	jdbcServer, err := jdbc.NewServer(queryEngine, logger)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create JDBC server: %w", err)
 	}
 
-	nativeServer, err := native.NewServer(logger)
+	nativeServer, err := native.NewServer(queryEngine, logger)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create native server: %w", err)
 	}
 
 	return &Gateway{
-		queryEngine:  queryEngine,
-		httpServer:   httpServer,
-		jdbcServer:   jdbcServer,
-		nativeServer: nativeServer,
-		logger:       logger.With().Str("component", "gateway").Logger(),
-		ctx:          ctx,
-		cancel:       cancel,
+		queryEngine:       queryEngine,
+		httpServer:        httpServer,
+		jdbcServer:        jdbcServer,
+		nativeServer:      nativeServer,
+		logger:            logger.With().Str("component", "gateway").Logger(),
+		ctx:               ctx,
+		cancel:            cancel,
+		maxConnections:    1000, // Default max connections
+		activeConnections: 0,
 	}, nil
 }
 
@@ -180,24 +187,19 @@ func (g *Gateway) Stop() error {
 	return nil
 }
 
-// GetStatus returns the status of all servers
+// GetStatus returns the combined status of all servers
 func (g *Gateway) GetStatus() map[string]interface{} {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
 	status := map[string]interface{}{
 		"started": g.started,
-	}
-
-	// Add individual server statuses
-	if g.httpServer != nil {
-		status["http"] = g.httpServer.GetStatus()
-	}
-	if g.jdbcServer != nil {
-		status["jdbc"] = g.jdbcServer.GetStatus()
-	}
-	if g.nativeServer != nil {
-		status["native"] = g.nativeServer.GetStatus()
+		"servers": map[string]interface{}{
+			"http":   g.httpServer.GetStatus(),
+			"jdbc":   g.jdbcServer.GetStatus(),
+			"native": g.nativeServer.GetStatus(),
+		},
+		"connections": g.GetConnectionStats(),
 	}
 
 	return status
@@ -219,4 +221,43 @@ func (g *Gateway) isJDBCServerEnabled() bool {
 
 func (g *Gateway) isNativeServerEnabled() bool {
 	return config.NATIVE_SERVER_ENABLED
+}
+
+// Connection management methods
+func (g *Gateway) canAcceptConnection() bool {
+	g.connectionMutex.RLock()
+	defer g.connectionMutex.RUnlock()
+	return int(g.activeConnections) < g.maxConnections
+}
+
+func (g *Gateway) incrementConnection() bool {
+	g.connectionMutex.Lock()
+	defer g.connectionMutex.Unlock()
+
+	if int(g.activeConnections) >= g.maxConnections {
+		return false
+	}
+
+	g.activeConnections++
+	return true
+}
+
+func (g *Gateway) decrementConnection() {
+	g.connectionMutex.Lock()
+	defer g.connectionMutex.Unlock()
+
+	if g.activeConnections > 0 {
+		g.activeConnections--
+	}
+}
+
+func (g *Gateway) GetConnectionStats() map[string]interface{} {
+	g.connectionMutex.RLock()
+	defer g.connectionMutex.RUnlock()
+
+	return map[string]interface{}{
+		"active_connections": g.activeConnections,
+		"max_connections":    g.maxConnections,
+		"available":          g.maxConnections - int(g.activeConnections),
+	}
 }
