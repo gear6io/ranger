@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/TFMV/icebox/deprecated/config"
+	"github.com/TFMV/icebox/server/config"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
 )
@@ -22,8 +22,8 @@ func TestNewCatalog(t *testing.T) {
 	}
 	defer catalog.Close()
 
-	if catalog.name != cfg.Name {
-		t.Errorf("Expected catalog name %s, got %s", cfg.Name, catalog.name)
+	if catalog.name != "icebox-rest-catalog" {
+		t.Errorf("Expected catalog name 'icebox-rest-catalog', got %s", catalog.name)
 	}
 
 	if catalog.restCatalog == nil {
@@ -39,16 +39,52 @@ func TestNewCatalogWithInvalidConfig(t *testing.T) {
 	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
 
 	cfg := &config.Config{
-		Name: "test",
-		Catalog: config.CatalogConfig{
-			Type: "rest",
-			// No REST config provided
+		Storage: config.StorageConfig{
+			Catalog: config.CatalogConfig{
+				Type: "invalid",
+				// No URI provided
+			},
 		},
 	}
 
 	_, err := NewCatalog(cfg)
 	if err == nil {
-		t.Error("Expected error when REST config is missing")
+		t.Error("Expected error when catalog type is invalid")
+	}
+}
+
+func TestNewCatalogWithInvalidURI(t *testing.T) {
+	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
+
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Catalog: config.CatalogConfig{
+				Type: "rest",
+				URI:  "invalid-uri",
+			},
+		},
+	}
+
+	_, err := NewCatalog(cfg)
+	if err == nil {
+		t.Error("Expected error when URI is invalid")
+	}
+}
+
+func TestNewCatalogWithStoragePath(t *testing.T) {
+	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
+
+	cfg := createTestConfig(t)
+	cfg.Storage.Path = "/tmp/test-warehouse"
+
+	catalog, err := NewCatalog(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create catalog with storage path: %v", err)
+	}
+	defer catalog.Close()
+
+	if catalog.restCatalog == nil {
+		t.Error("Expected REST catalog to be initialized")
 	}
 }
 
@@ -56,12 +92,6 @@ func TestNewCatalogWithOAuthConfig(t *testing.T) {
 	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
 
 	cfg := createTestConfig(t)
-	cfg.Catalog.REST.OAuth = &config.OAuthConfig{
-		Token:      "test-token",
-		Credential: "test-credential",
-		AuthURL:    "https://auth.example.com/oauth",
-		Scope:      "test-scope",
-	}
 
 	catalog, err := NewCatalog(cfg)
 	if err != nil {
@@ -78,11 +108,6 @@ func TestNewCatalogWithSigV4Config(t *testing.T) {
 	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
 
 	cfg := createTestConfig(t)
-	cfg.Catalog.REST.SigV4 = &config.SigV4Config{
-		Enabled: true,
-		Region:  "us-east-1",
-		Service: "execute-api",
-	}
 
 	catalog, err := NewCatalog(cfg)
 	if err != nil {
@@ -99,9 +124,6 @@ func TestNewCatalogWithTLSConfig(t *testing.T) {
 	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
 
 	cfg := createTestConfig(t)
-	cfg.Catalog.REST.TLS = &config.TLSConfig{
-		SkipVerify: true,
-	}
 
 	catalog, err := NewCatalog(cfg)
 	if err != nil {
@@ -118,30 +140,6 @@ func TestNewCatalogWithAllConfigs(t *testing.T) {
 	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
 
 	cfg := createTestConfig(t)
-	cfg.Catalog.REST.OAuth = &config.OAuthConfig{
-		Token:      "test-token",
-		Credential: "test-credential",
-		AuthURL:    "https://auth.example.com/oauth",
-		Scope:      "test-scope",
-	}
-	cfg.Catalog.REST.SigV4 = &config.SigV4Config{
-		Enabled: true,
-		Region:  "us-east-1",
-		Service: "execute-api",
-	}
-	cfg.Catalog.REST.TLS = &config.TLSConfig{
-		SkipVerify: true,
-	}
-	cfg.Catalog.REST.WarehouseLocation = "s3://test-bucket/warehouse"
-	cfg.Catalog.REST.MetadataLocation = "s3://test-bucket/metadata"
-	cfg.Catalog.REST.Prefix = "v1/catalog"
-	cfg.Catalog.REST.AdditionalProps = map[string]string{
-		"custom-prop": "custom-value",
-	}
-	cfg.Catalog.REST.Credentials = map[string]string{
-		"username": "test-user",
-		"password": "test-pass",
-	}
 
 	catalog, err := NewCatalog(cfg)
 	if err != nil {
@@ -158,13 +156,15 @@ func TestNewCatalogWithInvalidAuthURL(t *testing.T) {
 	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
 
 	cfg := createTestConfig(t)
-	cfg.Catalog.REST.OAuth = &config.OAuthConfig{
-		AuthURL: "invalid-url",
-	}
 
-	_, err := NewCatalog(cfg)
-	if err == nil {
-		t.Error("Expected error when auth URL is invalid")
+	catalog, err := NewCatalog(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create catalog with invalid auth URL: %v", err)
+	}
+	defer catalog.Close()
+
+	if catalog.restCatalog == nil {
+		t.Error("Expected REST catalog to be initialized")
 	}
 }
 
@@ -187,8 +187,6 @@ func TestCatalogName(t *testing.T) {
 	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
 
 	cfg := createTestConfig(t)
-	expectedName := "test-rest-catalog"
-	cfg.Name = expectedName
 
 	catalog, err := NewCatalog(cfg)
 	if err != nil {
@@ -196,6 +194,7 @@ func TestCatalogName(t *testing.T) {
 	}
 	defer catalog.Close()
 
+	expectedName := "icebox-rest-catalog"
 	if catalog.Name() != expectedName {
 		t.Errorf("Expected catalog name %s, got %s", expectedName, catalog.Name())
 	}
@@ -254,17 +253,11 @@ func createTestConfig(t *testing.T) *config.Config {
 	}
 
 	cfg := &config.Config{
-		Name: "test-rest-catalog",
-		Catalog: config.CatalogConfig{
-			Type: "rest",
-			REST: &config.RESTConfig{
-				URI: "http://localhost:8181",
-			},
-		},
 		Storage: config.StorageConfig{
-			Type: "fs",
-			FileSystem: &config.FileSystemConfig{
-				RootPath: filepath.Join(tempDir, "data"),
+			Path: filepath.Join(tempDir, "data"),
+			Catalog: config.CatalogConfig{
+				Type: "rest",
+				URI:  "http://localhost:8181",
 			},
 		},
 	}

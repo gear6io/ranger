@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TFMV/icebox/deprecated/catalog"
+	"github.com/TFMV/icebox/server/catalog"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/apache/iceberg-go/table"

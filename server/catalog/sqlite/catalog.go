@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/TFMV/icebox/deprecated/config"
 	"github.com/TFMV/icebox/deprecated/fs/local"
+	"github.com/TFMV/icebox/server/config"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/catalog"
 	icebergio "github.com/apache/iceberg-go/io"
@@ -39,11 +39,17 @@ type Catalog struct {
 
 // NewCatalog creates a new SQLite-based catalog
 func NewCatalog(cfg *config.Config) (*Catalog, error) {
-	if cfg.Catalog.SQLite == nil {
-		return nil, fmt.Errorf("SQLite catalog configuration is required")
+	// Validate catalog type
+	catalogType := cfg.GetCatalogType()
+	if catalogType != "sqlite" {
+		return nil, fmt.Errorf("expected catalog type 'sqlite', got '%s'", catalogType)
 	}
 
-	dbPath := cfg.Catalog.SQLite.Path
+	// Use catalog URI as database path
+	dbPath := cfg.GetCatalogURI()
+	if dbPath == "" {
+		return nil, fmt.Errorf("catalog URI is required for SQLite catalog")
+	}
 
 	// Ensure the directory exists
 	if err := local.EnsureDir(filepath.Dir(dbPath)); err != nil {
@@ -56,18 +62,17 @@ func NewCatalog(cfg *config.Config) (*Catalog, error) {
 	}
 
 	// Determine warehouse location and create FileIO
-	warehouse := ""
+	warehouse := cfg.GetStoragePath()
 	var fileSystem FileSystemInterface
 	var fileIO icebergio.IO
 
-	if cfg.Storage.FileSystem != nil {
-		warehouse = cfg.Storage.FileSystem.RootPath
+	if warehouse != "" {
 		fileSystem = local.NewFileSystem(warehouse)
 		// Create a local FileIO implementation
 		fileIO = icebergio.LocalFS{}
 	}
 
-	return NewCatalogWithIO(cfg.Name, dbPath, db, fileSystem, fileIO, warehouse)
+	return NewCatalogWithIO("icebox-sqlite-catalog", dbPath, db, fileSystem, fileIO, warehouse)
 }
 
 // NewCatalogWithIO creates a new SQLite-based catalog with custom file IO

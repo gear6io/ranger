@@ -6,34 +6,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/TFMV/icebox/deprecated/config"
+	"github.com/TFMV/icebox/server/config"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/table"
 )
 
 func TestNewCatalog(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "icebox-sqlite-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	cfg := &config.Config{
-		Name: "test-catalog",
-		Catalog: config.CatalogConfig{
-			Type: "sqlite",
-			SQLite: &config.SQLiteConfig{
-				Path: filepath.Join(tempDir, "catalog.db"),
-			},
-		},
-		Storage: config.StorageConfig{
-			Type: "fs",
-			FileSystem: &config.FileSystemConfig{
-				RootPath: filepath.Join(tempDir, "data"),
-			},
-		},
-	}
+	cfg := createTestConfig(t)
 
 	catalog, err := NewCatalog(cfg)
 	if err != nil {
@@ -41,8 +21,8 @@ func TestNewCatalog(t *testing.T) {
 	}
 	defer catalog.Close()
 
-	if catalog.Name() != "test-catalog" {
-		t.Errorf("Expected catalog name 'test-catalog', got '%s'", catalog.Name())
+	if catalog.Name() != "icebox-sqlite-catalog" {
+		t.Errorf("Expected catalog name 'icebox-sqlite-catalog', got '%s'", catalog.Name())
 	}
 
 	if catalog.CatalogType() != icebergcatalog.SQL {
@@ -50,28 +30,34 @@ func TestNewCatalog(t *testing.T) {
 	}
 
 	// Verify database file was created
-	if _, err := os.Stat(cfg.Catalog.SQLite.Path); os.IsNotExist(err) {
+	dbPath := cfg.GetCatalogURI()
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		t.Error("Database file was not created")
 	}
 }
 
 func TestNewCatalogMissingConfig(t *testing.T) {
 	cfg := &config.Config{
-		Name: "test-catalog",
-		Catalog: config.CatalogConfig{
-			Type: "sqlite",
-			// SQLite config is nil
+		Storage: config.StorageConfig{
+			Catalog: config.CatalogConfig{
+				Type: "invalid",
+				// No URI provided
+			},
 		},
 	}
 
 	_, err := NewCatalog(cfg)
 	if err == nil {
-		t.Error("Expected error for missing SQLite configuration")
+		t.Error("Expected error for invalid catalog type")
 	}
 }
 
 func TestCreateAndCheckNamespace(t *testing.T) {
-	catalog := createTestCatalog(t)
+	cfg := createTestConfig(t)
+	catalog, err := NewCatalog(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create catalog: %v", err)
+	}
 	defer catalog.Close()
 
 	ctx := context.Background()
@@ -110,16 +96,20 @@ func TestCreateAndCheckNamespace(t *testing.T) {
 }
 
 func TestLoadNamespaceProperties(t *testing.T) {
-	catalog := createTestCatalog(t)
+	cfg := createTestConfig(t)
+	catalog, err := NewCatalog(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create catalog: %v", err)
+	}
 	defer catalog.Close()
 
 	ctx := context.Background()
 	namespace := table.Identifier{"test_namespace"}
 
 	// Try to load properties for non-existent namespace
-	_, err := catalog.LoadNamespaceProperties(ctx, namespace)
-	if err != icebergcatalog.ErrNoSuchNamespace {
-		t.Errorf("Expected ErrNoSuchNamespace, got: %v", err)
+	_, loadErr := catalog.LoadNamespaceProperties(ctx, namespace)
+	if loadErr != icebergcatalog.ErrNoSuchNamespace {
+		t.Errorf("Expected ErrNoSuchNamespace, got: %v", loadErr)
 	}
 
 	// Create namespace with properties
@@ -153,7 +143,11 @@ func TestLoadNamespaceProperties(t *testing.T) {
 }
 
 func TestListNamespaces(t *testing.T) {
-	catalog := createTestCatalog(t)
+	cfg := createTestConfig(t)
+	catalog, err := NewCatalog(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create catalog: %v", err)
+	}
 	defer catalog.Close()
 
 	ctx := context.Background()
@@ -192,14 +186,18 @@ func TestListNamespaces(t *testing.T) {
 }
 
 func TestDropNamespace(t *testing.T) {
-	catalog := createTestCatalog(t)
+	cfg := createTestConfig(t)
+	catalog, err := NewCatalog(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create catalog: %v", err)
+	}
 	defer catalog.Close()
 
 	ctx := context.Background()
 	namespace := table.Identifier{"test_namespace"}
 
 	// Try to drop non-existent namespace
-	err := catalog.DropNamespace(ctx, namespace)
+	err = catalog.DropNamespace(ctx, namespace)
 	if err != icebergcatalog.ErrNoSuchNamespace {
 		t.Errorf("Expected ErrNoSuchNamespace, got: %v", err)
 	}
@@ -227,7 +225,11 @@ func TestDropNamespace(t *testing.T) {
 }
 
 func TestCreateAndCheckTable(t *testing.T) {
-	catalog := createTestCatalog(t)
+	cfg := createTestConfig(t)
+	catalog, err := NewCatalog(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create catalog: %v", err)
+	}
 	defer catalog.Close()
 
 	ctx := context.Background()
@@ -235,7 +237,7 @@ func TestCreateAndCheckTable(t *testing.T) {
 	tableIdent := table.Identifier{"test_namespace", "test_table"}
 
 	// Create namespace first
-	err := catalog.CreateNamespace(ctx, namespace, iceberg.Properties{})
+	err = catalog.CreateNamespace(ctx, namespace, iceberg.Properties{})
 	if err != nil {
 		t.Fatalf("Failed to create namespace: %v", err)
 	}
@@ -281,7 +283,11 @@ func TestCreateAndCheckTable(t *testing.T) {
 }
 
 func TestCreateTableInNonExistentNamespace(t *testing.T) {
-	catalog := createTestCatalog(t)
+	cfg := createTestConfig(t)
+	catalog, err := NewCatalog(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create catalog: %v", err)
+	}
 	defer catalog.Close()
 
 	ctx := context.Background()
@@ -293,14 +299,18 @@ func TestCreateTableInNonExistentNamespace(t *testing.T) {
 		Type:     iceberg.PrimitiveTypes.Int64,
 		Required: true,
 	})
-	_, err := catalog.CreateTable(ctx, tableIdent, schema)
-	if err != icebergcatalog.ErrNoSuchNamespace {
-		t.Errorf("Expected ErrNoSuchNamespace, got: %v", err)
+	_, createErr := catalog.CreateTable(ctx, tableIdent, schema)
+	if createErr != icebergcatalog.ErrNoSuchNamespace {
+		t.Errorf("Expected ErrNoSuchNamespace, got: %v", createErr)
 	}
 }
 
 func TestLoadTable(t *testing.T) {
-	catalog := createTestCatalog(t)
+	cfg := createTestConfig(t)
+	catalog, err := NewCatalog(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create catalog: %v", err)
+	}
 	defer catalog.Close()
 
 	ctx := context.Background()
@@ -308,9 +318,9 @@ func TestLoadTable(t *testing.T) {
 	tableIdent := table.Identifier{"test_namespace", "test_table"}
 
 	// Try to load non-existent table
-	_, err := catalog.LoadTable(ctx, tableIdent, iceberg.Properties{})
-	if err != icebergcatalog.ErrNoSuchTable {
-		t.Errorf("Expected ErrNoSuchTable, got: %v", err)
+	_, loadErr := catalog.LoadTable(ctx, tableIdent, iceberg.Properties{})
+	if loadErr != icebergcatalog.ErrNoSuchTable {
+		t.Errorf("Expected ErrNoSuchTable, got: %v", loadErr)
 	}
 
 	// Create namespace and table
@@ -341,7 +351,11 @@ func TestLoadTable(t *testing.T) {
 }
 
 func TestDropTable(t *testing.T) {
-	catalog := createTestCatalog(t)
+	cfg := createTestConfig(t)
+	catalog, err := NewCatalog(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create catalog: %v", err)
+	}
 	defer catalog.Close()
 
 	ctx := context.Background()
@@ -349,9 +363,9 @@ func TestDropTable(t *testing.T) {
 	tableIdent := table.Identifier{"test_namespace", "test_table"}
 
 	// Try to drop non-existent table
-	err := catalog.DropTable(ctx, tableIdent)
-	if err != icebergcatalog.ErrNoSuchTable {
-		t.Errorf("Expected ErrNoSuchTable, got: %v", err)
+	dropErr := catalog.DropTable(ctx, tableIdent)
+	if dropErr != icebergcatalog.ErrNoSuchTable {
+		t.Errorf("Expected ErrNoSuchTable, got: %v", dropErr)
 	}
 
 	// Create namespace and table
@@ -388,14 +402,18 @@ func TestDropTable(t *testing.T) {
 }
 
 func TestListTables(t *testing.T) {
-	catalog := createTestCatalog(t)
+	cfg := createTestConfig(t)
+	catalog, err := NewCatalog(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create catalog: %v", err)
+	}
 	defer catalog.Close()
 
 	ctx := context.Background()
 	namespace := table.Identifier{"test_namespace"}
 
 	// Create namespace
-	err := catalog.CreateNamespace(ctx, namespace, iceberg.Properties{})
+	err = catalog.CreateNamespace(ctx, namespace, iceberg.Properties{})
 	if err != nil {
 		t.Fatalf("Failed to create namespace: %v", err)
 	}
@@ -446,7 +464,11 @@ func TestListTables(t *testing.T) {
 }
 
 func TestDropNamespaceWithTables(t *testing.T) {
-	catalog := createTestCatalog(t)
+	cfg := createTestConfig(t)
+	catalog, err := NewCatalog(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create catalog: %v", err)
+	}
 	defer catalog.Close()
 
 	ctx := context.Background()
@@ -454,7 +476,7 @@ func TestDropNamespaceWithTables(t *testing.T) {
 	tableIdent := table.Identifier{"test_namespace", "test_table"}
 
 	// Create namespace and table
-	err := catalog.CreateNamespace(ctx, namespace, iceberg.Properties{})
+	err = catalog.CreateNamespace(ctx, namespace, iceberg.Properties{})
 	if err != nil {
 		t.Fatalf("Failed to create namespace: %v", err)
 	}
@@ -526,39 +548,26 @@ func TestHelperFunctions(t *testing.T) {
 	}
 }
 
-// Helper function to create a test catalog
-func createTestCatalog(t *testing.T) *Catalog {
+// Helper function to create a test config
+func createTestConfig(t *testing.T) *config.Config {
 	tempDir, err := os.MkdirTemp("", "icebox-sqlite-test")
 	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
+		t.Fatalf("Failed to create temp dir for config: %v", err)
 	}
 
 	cfg := &config.Config{
-		Name: "test-catalog",
-		Catalog: config.CatalogConfig{
-			Type: "sqlite",
-			SQLite: &config.SQLiteConfig{
-				Path: filepath.Join(tempDir, "catalog.db"),
-			},
-		},
 		Storage: config.StorageConfig{
-			Type: "fs",
-			FileSystem: &config.FileSystemConfig{
-				RootPath: filepath.Join(tempDir, "data"),
+			Catalog: config.CatalogConfig{
+				Type: "sqlite",
+				URI:  filepath.Join(tempDir, "catalog.db"),
 			},
+			Path: filepath.Join(tempDir, "data"),
 		},
 	}
 
-	catalog, err := NewCatalog(cfg)
-	if err != nil {
-		t.Fatalf("Failed to create test catalog: %v", err)
-	}
-
-	// Set up cleanup
 	t.Cleanup(func() {
-		catalog.Close()
 		os.RemoveAll(tempDir)
 	})
 
-	return catalog
+	return cfg
 }

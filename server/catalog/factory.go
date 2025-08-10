@@ -3,10 +3,10 @@ package catalog
 import (
 	"fmt"
 
-	"github.com/TFMV/icebox/deprecated/catalog/json"
-	"github.com/TFMV/icebox/deprecated/catalog/rest"
-	"github.com/TFMV/icebox/deprecated/catalog/sqlite"
-	"github.com/TFMV/icebox/deprecated/config"
+	"github.com/TFMV/icebox/server/catalog/json"
+	"github.com/TFMV/icebox/server/catalog/rest"
+	"github.com/TFMV/icebox/server/catalog/sqlite"
+	"github.com/TFMV/icebox/server/config"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 )
 
@@ -19,7 +19,7 @@ type CatalogInterface interface {
 
 // NewCatalog creates a new catalog based on the configuration type
 func NewCatalog(cfg *config.Config) (CatalogInterface, error) {
-	switch cfg.Catalog.Type {
+	switch cfg.GetCatalogType() {
 	case "sqlite":
 		return sqlite.NewCatalog(cfg)
 	case "rest":
@@ -27,6 +27,6 @@ func NewCatalog(cfg *config.Config) (CatalogInterface, error) {
 	case "json":
 		return json.NewCatalog(cfg)
 	default:
-		return nil, fmt.Errorf("unsupported catalog type: %s", cfg.Catalog.Type)
+		return nil, fmt.Errorf("unsupported catalog type: %s", cfg.GetCatalogType())
 	}
 }

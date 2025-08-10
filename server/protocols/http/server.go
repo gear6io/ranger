@@ -11,15 +11,13 @@ import (
 
 // Server represents an HTTP server for icebox
 type Server struct {
-	config *config.HTTPConfig
 	logger zerolog.Logger
 	server *net.Listener
 }
 
 // NewServer creates a new HTTP server
-func NewServer(cfg *config.HTTPConfig, logger zerolog.Logger) (*Server, error) {
+func NewServer(logger zerolog.Logger) (*Server, error) {
 	return &Server{
-		config: cfg,
 		logger: logger,
 	}, nil
 }

@@ -12,7 +12,6 @@ import (
 
 // Server represents a JDBC server for icebox
 type Server struct {
-	config *config.JDBCConfig
 	logger zerolog.Logger
 	server net.Listener
 	ctx    context.Context
@@ -21,11 +20,10 @@ type Server struct {
 }
 
 // NewServer creates a new JDBC server
-func NewServer(cfg *config.JDBCConfig, logger zerolog.Logger) (*Server, error) {
+func NewServer(logger zerolog.Logger) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Server{
-		config: cfg,
 		logger: logger.With().Str("component", "jdbc-server").Logger(),
 		ctx:    ctx,
 		cancel: cancel,

@@ -9,7 +9,8 @@ import (
 
 // Config represents the server configuration
 type Config struct {
-	Log LogConfig `yaml:"log"`
+	Log     LogConfig     `yaml:"log"`
+	Storage StorageConfig `yaml:"storage"`
 }
 
 // LogConfig represents logging configuration
@@ -24,6 +25,18 @@ type LogConfig struct {
 	Cleanup    bool   `yaml:"cleanup"`     // Whether to cleanup log file on startup
 }
 
+// StorageConfig represents storage configuration
+type StorageConfig struct {
+	Catalog CatalogConfig `yaml:"catalog"`
+	Path    string        `yaml:"path"`
+}
+
+// CatalogConfig represents catalog configuration
+type CatalogConfig struct {
+	Type string `yaml:"type"`
+	URI  string `yaml:"uri"`
+}
+
 // LoadDefaultConfig returns a default configuration
 func LoadDefaultConfig() *Config {
 	return &Config{
@@ -36,6 +49,13 @@ func LoadDefaultConfig() *Config {
 			MaxBackups: 3,
 			MaxAge:     7,    // 7 days
 			Cleanup:    true, // Cleanup log file on startup by default
+		},
+		Storage: StorageConfig{
+			Catalog: CatalogConfig{
+				Type: "file",
+				URI:  "file:///var/lib/icebox/catalog",
+			},
+			Path: "data",
 		},
 	}
 }
@@ -129,4 +149,19 @@ func (c *Config) IsJDBCServerEnabled() bool {
 // IsNativeServerEnabled returns whether the native server is enabled
 func (c *Config) IsNativeServerEnabled() bool {
 	return NATIVE_SERVER_ENABLED
+}
+
+// GetStoragePath returns the storage path
+func (c *Config) GetStoragePath() string {
+	return c.Storage.Path
+}
+
+// GetCatalogType returns the catalog type
+func (c *Config) GetCatalogType() string {
+	return c.Storage.Catalog.Type
+}
+
+// GetCatalogURI returns the catalog URI
+func (c *Config) GetCatalogURI() string {
+	return c.Storage.Catalog.URI
 }

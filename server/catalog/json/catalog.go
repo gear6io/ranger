@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TFMV/icebox/deprecated/config"
+	"github.com/TFMV/icebox/server/config"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/catalog"
 	icebergio "github.com/apache/iceberg-go/io"
@@ -369,112 +369,65 @@ func loadIndexConfig() (*IndexConfig, error) {
 
 // NewCatalog creates a new JSON-based catalog with enterprise-grade features
 func NewCatalog(cfg *config.Config) (*Catalog, error) {
-	// Try to load from .icebox/index if configuration is minimal
-	if cfg.Catalog.JSON == nil {
-		index, err := loadIndexConfig()
-		if err != nil {
-			return nil, fmt.Errorf("failed to load index config: %w", err)
-		}
-		if index != nil {
-			// Use index configuration
-			if cfg.Name == "" && index.CatalogName != "" {
-				cfg.Name = index.CatalogName
-			}
-			if cfg.Catalog.JSON == nil {
-				cfg.Catalog.JSON = &config.JSONConfig{
-					URI: index.CatalogURI,
-				}
-				// Extract warehouse from properties if available
-				if warehouse, ok := index.Properties["warehouse"].(string); ok {
-					cfg.Catalog.JSON.Warehouse = warehouse
-				}
-			}
-		}
-	}
-
-	if cfg.Catalog.JSON == nil {
-		return nil, &ValidationError{
-			Field:   "catalog.json",
-			Message: "JSON catalog configuration is required",
-		}
-	}
-
-	if err := validateJSONConfig(cfg.Catalog.JSON); err != nil {
+	// Validate configuration using the validation function
+	if err := validateJSONConfig(cfg); err != nil {
 		return nil, err
 	}
 
-	uri := cfg.Catalog.JSON.URI
-	warehouse := cfg.Catalog.JSON.Warehouse
-
-	// If warehouse is not provided, infer it from URI
-	if warehouse == "" && uri != "" {
-		warehouse = filepath.Dir(uri)
+	// Create catalog with validated settings
+	catalog := &Catalog{
+		name:      "icebox-json-catalog",
+		uri:       cfg.GetCatalogURI(),
+		warehouse: cfg.GetStoragePath(),
+		fileIO:    icebergio.LocalFS{},
+		logger:    log.New(os.Stdout, "[JSON-CATALOG] ", log.LstdFlags),
+		cache:     newCatalogCache(5 * time.Minute), // 5 minute cache TTL
+		metrics:   &CatalogMetrics{},
 	}
 
-	// Support for alternative URI construction from warehouse
-	if uri == "" && warehouse != "" {
-		catalogName := cfg.Name
-		if catalogName == "" {
-			catalogName = DefaultCatalogName
-		}
-		uri = filepath.Join(warehouse, "catalog", fmt.Sprintf("catalog_%s.json", catalogName))
+	// Ensure catalog directory exists
+	if err := catalog.ensureCatalogExists(); err != nil {
+		return nil, fmt.Errorf("failed to ensure catalog exists: %w", err)
 	}
 
-	// Ensure warehouse directory exists with proper permissions
-	if warehouse != "" {
-		if err := os.MkdirAll(warehouse, 0755); err != nil {
-			return nil, fmt.Errorf("failed to create warehouse directory: %w", err)
-		}
-	}
-
-	// Create FileIO for metadata operations
-	fileIO := icebergio.LocalFS{}
-
-	// Initialize logger
-	logger := log.New(os.Stdout, fmt.Sprintf("[JSON-Catalog-%s] ", cfg.Name), log.LstdFlags|log.Lshortfile)
-
-	cat := &Catalog{
-		name:      cfg.Name,
-		uri:       uri,
-		warehouse: warehouse,
-		fileIO:    fileIO,
-		logger:    logger,
-		cache:     newCatalogCache(30 * time.Second), // 30 second cache TTL
-		metrics:   &CatalogMetrics{},                 // Initialize metrics
-	}
-
-	// Initialize catalog file if it doesn't exist
-	if err := cat.ensureCatalogExists(); err != nil {
-		return nil, fmt.Errorf("failed to initialize catalog: %w", err)
-	}
-
-	cat.logger.Printf("Initialized JSON catalog at %s with warehouse %s", uri, warehouse)
-	return cat, nil
+	return catalog, nil
 }
 
 // validateJSONConfig validates the JSON catalog configuration
-func validateJSONConfig(cfg *config.JSONConfig) error {
-	if cfg.URI == "" {
+func validateJSONConfig(cfg *config.Config) error {
+	// Validate catalog type
+	catalogType := cfg.GetCatalogType()
+	if catalogType != "json" {
 		return &ValidationError{
-			Field:   "uri",
-			Message: "catalog URI cannot be empty",
+			Field:   "catalog.type",
+			Message: fmt.Sprintf("expected catalog type 'json', got '%s'", catalogType),
+		}
+	}
+
+	// Validate catalog URI
+	catalogURI := cfg.GetCatalogURI()
+	if catalogURI == "" {
+		return &ValidationError{
+			Field:   "catalog.uri",
+			Message: "catalog URI is required",
 		}
 	}
 
 	// Validate URI is a valid file path
-	if !filepath.IsAbs(cfg.URI) && !strings.HasPrefix(cfg.URI, "./") && !strings.HasPrefix(cfg.URI, "../") {
+	if !filepath.IsAbs(catalogURI) && !strings.HasPrefix(catalogURI, "./") && !strings.HasPrefix(catalogURI, "../") {
 		return &ValidationError{
-			Field:   "uri",
+			Field:   "catalog.uri",
 			Message: "catalog URI must be an absolute path or relative path",
 		}
 	}
 
-	// Validate warehouse path if provided
-	if cfg.Warehouse != "" {
-		if !filepath.IsAbs(cfg.Warehouse) && !strings.HasPrefix(cfg.Warehouse, "./") && !strings.HasPrefix(cfg.Warehouse, "../") {
+	// Validate storage path if provided
+	storagePath := cfg.GetStoragePath()
+	if storagePath != "" {
+		if !filepath.IsAbs(storagePath) && !strings.HasPrefix(storagePath, "./") && !strings.HasPrefix(storagePath, "../") {
 			return &ValidationError{
-				Field:   "warehouse",
-				Message: "warehouse path must be an absolute path or relative path",
+				Field:   "storage.path",
+				Message: "storage path must be an absolute path or relative path",
 			}
 		}
 	}

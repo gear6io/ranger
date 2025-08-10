@@ -31,21 +31,21 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create HTTP server
-	httpServer, err := http.NewServer(&cfg.HTTP, logger)
+	httpServer, err := http.NewServer(logger)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create HTTP server: %w", err)
 	}
 
 	// Create JDBC server
-	jdbcServer, err := jdbc.NewServer(&cfg.JDBC, logger)
+	jdbcServer, err := jdbc.NewServer(logger)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create JDBC server: %w", err)
 	}
 
 	// Create native server
-	nativeServer, err := native.NewServer(&cfg.Native, logger)
+	nativeServer, err := native.NewServer(logger)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create native server: %w", err)

@@ -2,12 +2,11 @@ package rest
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"iter"
 	"net/url"
 
-	"github.com/TFMV/icebox/deprecated/config"
+	"github.com/TFMV/icebox/server/config"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 	icebergrest "github.com/apache/iceberg-go/catalog/rest"
@@ -25,106 +24,43 @@ type Catalog struct {
 
 // NewCatalog creates a new REST catalog wrapper
 func NewCatalog(cfg *config.Config) (*Catalog, error) {
-	if cfg.Catalog.REST == nil {
-		return nil, fmt.Errorf("REST catalog configuration is required")
+	// Validate catalog type
+	catalogType := cfg.GetCatalogType()
+	if catalogType != "rest" {
+		return nil, fmt.Errorf("expected catalog type 'rest', got '%s'", catalogType)
 	}
 
-	restConfig := cfg.Catalog.REST
+	// Get catalog URI
+	catalogURI := cfg.GetCatalogURI()
+	if catalogURI == "" {
+		return nil, fmt.Errorf("catalog URI is required for REST catalog")
+	}
+
+	// Parse the URI to get base URL
+	baseURL, err := url.Parse(catalogURI)
+	if err != nil {
+		return nil, fmt.Errorf("invalid catalog URI: %w", err)
+	}
 
 	// Build options for the iceberg-go REST catalog
 	var opts []icebergrest.Option
 
-	// Add OAuth configuration if present
-	if restConfig.OAuth != nil {
-		if restConfig.OAuth.Token != "" {
-			opts = append(opts, icebergrest.WithOAuthToken(restConfig.OAuth.Token))
-		}
-		if restConfig.OAuth.Credential != "" {
-			opts = append(opts, icebergrest.WithCredential(restConfig.OAuth.Credential))
-		}
-		if restConfig.OAuth.AuthURL != "" {
-			authURL, err := url.Parse(restConfig.OAuth.AuthURL)
-			if err != nil {
-				return nil, fmt.Errorf("invalid auth URL: %w", err)
-			}
-			opts = append(opts, icebergrest.WithAuthURI(authURL))
-		}
-		if restConfig.OAuth.Scope != "" {
-			opts = append(opts, icebergrest.WithScope(restConfig.OAuth.Scope))
-		}
+	// Add warehouse location if storage path is provided
+	storagePath := cfg.GetStoragePath()
+	if storagePath != "" {
+		opts = append(opts, icebergrest.WithWarehouseLocation(storagePath))
 	}
 
-	// Add SigV4 configuration if present
-	if restConfig.SigV4 != nil && restConfig.SigV4.Enabled {
-		if restConfig.SigV4.Region != "" && restConfig.SigV4.Service != "" {
-			opts = append(opts, icebergrest.WithSigV4RegionSvc(restConfig.SigV4.Region, restConfig.SigV4.Service))
-		} else {
-			opts = append(opts, icebergrest.WithSigV4())
-		}
-	}
-
-	// Add TLS configuration if present
-	if restConfig.TLS != nil {
-		tlsConfig := &tls.Config{
-			InsecureSkipVerify: restConfig.TLS.SkipVerify,
-		}
-		opts = append(opts, icebergrest.WithTLSConfig(tlsConfig))
-	}
-
-	// Add warehouse location if present
-	if restConfig.WarehouseLocation != "" {
-		opts = append(opts, icebergrest.WithWarehouseLocation(restConfig.WarehouseLocation))
-	}
-
-	// Add metadata location if present
-	if restConfig.MetadataLocation != "" {
-		opts = append(opts, icebergrest.WithMetadataLocation(restConfig.MetadataLocation))
-	}
-
-	// Add prefix if present
-	if restConfig.Prefix != "" {
-		opts = append(opts, icebergrest.WithPrefix(restConfig.Prefix))
-	}
-
-	// Add additional properties if present
-	if len(restConfig.AdditionalProps) > 0 {
-		props := make(iceberg.Properties)
-		for k, v := range restConfig.AdditionalProps {
-			props[k] = v
-		}
-		opts = append(opts, icebergrest.WithAdditionalProps(props))
-	}
-
-	// Add credentials as additional properties
-	if len(restConfig.Credentials) > 0 {
-		props := make(iceberg.Properties)
-		for k, v := range restConfig.Credentials {
-			props[k] = v
-		}
-		opts = append(opts, icebergrest.WithAdditionalProps(props))
-	}
-
-	// Create the underlying REST catalog
-	ctx := context.Background()
-	restCatalog, err := icebergrest.NewCatalog(ctx, cfg.Name, restConfig.URI, opts...)
+	// Create the REST catalog with required parameters
+	restCatalog, err := icebergrest.NewCatalog(context.Background(), "icebox-rest-catalog", baseURL.String(), opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create REST catalog: %w", err)
 	}
 
-	// Create appropriate FileIO based on storage configuration
-	var fileIO icebergio.IO
-	switch cfg.Storage.Type {
-	case "fs":
-		fileIO = icebergio.LocalFS{}
-	default:
-		// Use the default FileIO provided by iceberg-go
-		fileIO = icebergio.LocalFS{}
-	}
-
 	return &Catalog{
-		name:        cfg.Name,
+		name:        "icebox-rest-catalog",
 		restCatalog: restCatalog,
-		fileIO:      fileIO,
+		fileIO:      icebergio.LocalFS{},
 		config:      cfg,
 	}, nil
 }

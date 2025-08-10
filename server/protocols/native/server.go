@@ -12,7 +12,6 @@ import (
 
 // Server represents a native protocol server
 type Server struct {
-	config *config.NativeConfig
 	logger zerolog.Logger
 	server net.Listener
 	ctx    context.Context
@@ -21,11 +20,10 @@ type Server struct {
 }
 
 // NewServer creates a new native protocol server
-func NewServer(cfg *config.NativeConfig, logger zerolog.Logger) (*Server, error) {
+func NewServer(logger zerolog.Logger) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Server{
-		config: cfg,
 		logger: logger.With().Str("component", "native-server").Logger(),
 		ctx:    ctx,
 		cancel: cancel,
