@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/TFMV/icebox/server/catalog/json"
+	"github.com/TFMV/icebox/server/catalog"
 	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/query/duckdb"
 	"github.com/TFMV/icebox/server/query/parser"
@@ -27,27 +27,15 @@ type QueryResult struct {
 }
 
 // NewEngine creates a new shared query engine service
-func NewEngine(logger zerolog.Logger) (*Engine, error) {
-	// Create a simple config for the json catalog
-	cfg := &config.Config{
-		Log: config.LogConfig{Level: "info"},
-		Storage: config.StorageConfig{
-			Catalog: config.CatalogConfig{
-				Type: "json",
-				URI:  ".icebox/catalog.json",
-			},
-			Path: ".icebox/warehouse",
-		},
-	}
-
-	// Initialize json catalog
-	jsonCatalog, err := json.NewCatalog(cfg)
+func NewEngine(cfg *config.Config, logger zerolog.Logger) (*Engine, error) {
+	// Initialize catalog based on configuration
+	catalogInstance, err := catalog.NewCatalog(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create json catalog: %w", err)
+		return nil, fmt.Errorf("failed to create catalog: %w", err)
 	}
 
-	// Initialize DuckDB engine
-	duckdbEngine, err := duckdb.NewEngine(jsonCatalog)
+	// Initialize DuckDB engine with the catalog
+	duckdbEngine, err := duckdb.NewEngine(catalogInstance)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create DuckDB engine: %w", err)
 	}

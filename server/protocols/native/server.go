@@ -121,3 +121,12 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	s.logger.Debug().Str("client", clientAddr).Msg("Client disconnected")
 }
+
+// GetStatus returns server status
+func (s *Server) GetStatus() map[string]interface{} {
+	return map[string]interface{}{
+		"enabled": config.NATIVE_SERVER_ENABLED,
+		"address": config.DEFAULT_SERVER_ADDRESS,
+		"port":    config.NATIVE_SERVER_PORT,
+	}
+}
