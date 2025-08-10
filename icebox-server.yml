@@ -2,22 +2,16 @@
 version: "0.1.0"
 
 # HTTP Server Configuration
-http:
-  enabled: true
-  address: "0.0.0.0"
-  port: 8080
+# All settings are now fixed and non-configurable
+# Port: 2847, Address: 0.0.0.0, Enabled: true
 
 # JDBC Server Configuration
-jdbc:
-  enabled: true
-  address: "0.0.0.0"
-  port: 5432
+# All settings are now fixed and non-configurable
+# Port: 2848, Address: 0.0.0.0, Enabled: true
 
 # Native Protocol Server Configuration
-native:
-  enabled: true
-  address: "0.0.0.0"
-  port: 9000
+# All settings are now fixed and non-configurable
+# Port: 2849, Address: 0.0.0.0, Enabled: true
 
 # Logging Configuration
 log:

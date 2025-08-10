@@ -54,7 +54,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
 			Address: "localhost",
-			Port:    8080,
+			Port:    2847, // Fixed HTTP server port
 			Timeout: 30 * time.Second,
 		},
 		Auth: AuthConfig{

@@ -9,31 +9,7 @@ import (
 
 // Config represents the server configuration
 type Config struct {
-	HTTP   HTTPConfig   `yaml:"http"`
-	JDBC   JDBCConfig   `yaml:"jdbc"`
-	Native NativeConfig `yaml:"native"`
-	Log    LogConfig    `yaml:"log"`
-}
-
-// HTTPConfig represents HTTP server configuration
-type HTTPConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Address string `yaml:"address"`
-	Port    int    `yaml:"port"`
-}
-
-// JDBCConfig represents JDBC server configuration
-type JDBCConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Address string `yaml:"address"`
-	Port    int    `yaml:"port"`
-}
-
-// NativeConfig represents native protocol server configuration
-type NativeConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Address string `yaml:"address"`
-	Port    int    `yaml:"port"`
+	Log LogConfig `yaml:"log"`
 }
 
 // LogConfig represents logging configuration
@@ -51,21 +27,6 @@ type LogConfig struct {
 // LoadDefaultConfig returns a default configuration
 func LoadDefaultConfig() *Config {
 	return &Config{
-		HTTP: HTTPConfig{
-			Enabled: true,
-			Address: "0.0.0.0",
-			Port:    8080,
-		},
-		JDBC: JDBCConfig{
-			Enabled: true,
-			Address: "0.0.0.0",
-			Port:    5432,
-		},
-		Native: NativeConfig{
-			Enabled: true,
-			Address: "0.0.0.0",
-			Port:    9000,
-		},
 		Log: LogConfig{
 			Level:      "info",
 			Format:     "console",
@@ -73,7 +34,7 @@ func LoadDefaultConfig() *Config {
 			Console:    true,
 			MaxSize:    100, // 100MB
 			MaxBackups: 3,
-			MaxAge:     7, // 7 days
+			MaxAge:     7,    // 7 days
 			Cleanup:    true, // Cleanup log file on startup by default
 		},
 	}
@@ -110,23 +71,62 @@ func SaveConfig(config *Config, filename string) error {
 
 // Validate validates the configuration
 func (c *Config) Validate() error {
-	if c.HTTP.Enabled {
-		if c.HTTP.Port <= 0 || c.HTTP.Port > 65535 {
-			return fmt.Errorf("invalid HTTP port: %d", c.HTTP.Port)
-		}
-	}
-
-	if c.JDBC.Enabled {
-		if c.JDBC.Port <= 0 || c.JDBC.Port > 65535 {
-			return fmt.Errorf("invalid JDBC port: %d", c.JDBC.Port)
-		}
-	}
-
-	if c.Native.Enabled {
-		if c.Native.Port <= 0 || c.Native.Port > 65535 {
-			return fmt.Errorf("invalid native port: %d", c.Native.Port)
-		}
-	}
-
+	// Port validation is no longer needed since ports are fixed
+	// Address validation could be added here if needed
 	return nil
+}
+
+// GetHTTPPort returns the fixed HTTP server port
+func (c *Config) GetHTTPPort() int {
+	return HTTP_SERVER_PORT
+}
+
+// GetJDBCPort returns the fixed JDBC server port
+func (c *Config) GetJDBCPort() int {
+	return JDBC_SERVER_PORT
+}
+
+// GetNativePort returns the fixed native protocol server port
+func (c *Config) GetNativePort() int {
+	return NATIVE_SERVER_PORT
+}
+
+// GetMinIOPort returns the fixed MinIO server port
+func (c *Config) GetMinIOPort() int {
+	return MINIO_SERVER_PORT
+}
+
+// GetHealthCheckPort returns the health check port
+func (c *Config) GetHealthCheckPort() int {
+	return HEALTH_CHECK_PORT
+}
+
+// GetHTTPAddress returns the HTTP server address
+func (c *Config) GetHTTPAddress() string {
+	return DEFAULT_SERVER_ADDRESS
+}
+
+// GetJDBCAddress returns the JDBC server address
+func (c *Config) GetJDBCAddress() string {
+	return DEFAULT_SERVER_ADDRESS
+}
+
+// GetNativeAddress returns the native server address
+func (c *Config) GetNativeAddress() string {
+	return DEFAULT_SERVER_ADDRESS
+}
+
+// IsHTTPServerEnabled returns whether the HTTP server is enabled
+func (c *Config) IsHTTPServerEnabled() bool {
+	return HTTP_SERVER_ENABLED
+}
+
+// IsJDBCServerEnabled returns whether the JDBC server is enabled
+func (c *Config) IsJDBCServerEnabled() bool {
+	return JDBC_SERVER_ENABLED
+}
+
+// IsNativeServerEnabled returns whether the native server is enabled
+func (c *Config) IsNativeServerEnabled() bool {
+	return NATIVE_SERVER_ENABLED
 }

@@ -102,46 +102,34 @@ print_success "Server code migration completed"
 # Create configuration files
 print_status "Creating configuration files..."
 
-# Server config
+# Create icebox-server.yml
 cat > icebox-server.yml << 'EOF'
 version: "0.1.0"
 
-http:
-  enabled: true
-  address: "0.0.0.0"
-  port: 8080
-  read_timeout: 30s
-  write_timeout: 30s
-  cors:
-    enabled: true
-    allow_origins: ["*"]
+# HTTP Server Configuration
+# All settings are now fixed and non-configurable
+# Port: 2847, Address: 0.0.0.0, Enabled: true
 
-jdbc:
-  enabled: true
-  address: "0.0.0.0"
-  port: 5432
-  max_connections: 50
-  connection_timeout: 30s
-  query_timeout: 5m
+# JDBC Server Configuration
+# All settings are now fixed and non-configurable
+# Port: 2848, Address: 0.0.0.0, Enabled: true
 
-storage:
-  type: "filesystem"
-  filesystem:
-    root_path: "./data"
-  catalog:
-    type: "sqlite"
-    sqlite:
-      path: "./catalog.db"
-
-logging:
+# Logging Configuration
+log:
   level: "info"
-  format: "json"
+  format: "console"
+  file_path: "logs/icebox-server.log"
+  console: true
+  max_size: 100
+  max_backups: 3
+  max_age: 7
+  cleanup: true
 EOF
 
 # Client config
 cat > icebox-client.yml << 'EOF'
 server:
-  address: "localhost:8080"
+  address: "localhost:2847"
   timeout: 30s
 
 auth:

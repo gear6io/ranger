@@ -68,43 +68,44 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Server, error) {
 func (s *Server) Start(ctx context.Context) error {
 	s.logger.Info().Msg("Starting Icebox server...")
 
-	// Start HTTP server
-	if s.config.HTTP.Enabled {
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			if err := s.httpServer.Start(ctx); err != nil {
-				s.logger.Error().Err(err).Msg("HTTP server error")
-			}
-		}()
+	// Start HTTP server if enabled
+	if config.HTTP_SERVER_ENABLED {
+		s.logger.Info().Msg("Starting HTTP server")
+		if err := s.httpServer.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start HTTP server: %w", err)
+		}
+		s.logger.Info().Msg("HTTP server started")
 	}
 
-	// Start JDBC server
-	if s.config.JDBC.Enabled {
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			if err := s.jdbcServer.Start(ctx); err != nil {
-				s.logger.Error().Err(err).Msg("JDBC server error")
-			}
-		}()
+	// Start JDBC server if enabled
+	if config.JDBC_SERVER_ENABLED {
+		s.logger.Info().Msg("Starting JDBC server")
+		if err := s.jdbcServer.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start JDBC server: %w", err)
+		}
+		s.logger.Info().Msg("JDBC server started")
 	}
 
-	// Start native server
-	if s.config.Native.Enabled {
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			if err := s.nativeServer.Start(ctx); err != nil {
-				s.logger.Error().Err(err).Msg("Native server error")
-			}
-		}()
+	// Start native protocol server if enabled
+	if config.NATIVE_SERVER_ENABLED {
+		s.logger.Info().Msg("Starting native protocol server")
+		if err := s.nativeServer.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start native protocol server: %w", err)
+		}
+		s.logger.Info().Msg("Native protocol server started")
 	}
 
+	// Log all server statuses
 	s.logger.Info().
-		Bool("http_enabled", s.config.HTTP.Enabled).
-		Bool("jdbc_enabled", s.config.JDBC.Enabled).
-		Bool("native_enabled", s.config.Native.Enabled).
+		Bool("http_enabled", config.HTTP_SERVER_ENABLED).
+		Str("http_address", config.DEFAULT_SERVER_ADDRESS).
+		Int("http_port", s.config.GetHTTPPort()).
+		Bool("jdbc_enabled", config.JDBC_SERVER_ENABLED).
+		Str("jdbc_address", config.DEFAULT_SERVER_ADDRESS).
+		Int("jdbc_port", s.config.GetJDBCPort()).
+		Bool("native_enabled", config.NATIVE_SERVER_ENABLED).
+		Str("native_address", config.DEFAULT_SERVER_ADDRESS).
+		Int("native_port", s.config.GetNativePort()).
 		Msg("All servers started")
 
 	return nil
@@ -164,8 +165,8 @@ func (s *Server) GetStatus() map[string]interface{} {
 	return map[string]interface{}{
 		"uptime":         s.GetUptime().String(),
 		"start_time":     s.startTime,
-		"http_enabled":   s.config.HTTP.Enabled,
-		"jdbc_enabled":   s.config.JDBC.Enabled,
-		"native_enabled": s.config.Native.Enabled,
+		"http_enabled":   config.HTTP_SERVER_ENABLED,
+		"jdbc_enabled":   config.JDBC_SERVER_ENABLED,
+		"native_enabled": config.NATIVE_SERVER_ENABLED,
 	}
 }

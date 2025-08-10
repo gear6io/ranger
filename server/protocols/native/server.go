@@ -34,12 +34,14 @@ func NewServer(cfg *config.NativeConfig, logger zerolog.Logger) (*Server, error)
 
 // Start starts the native protocol server
 func (s *Server) Start(ctx context.Context) error {
-	if !s.config.Enabled {
+	if !config.NATIVE_SERVER_ENABLED {
 		s.logger.Info().Msg("Native server is disabled")
 		return nil
 	}
 
-	addr := fmt.Sprintf("%s:%d", s.config.Address, s.config.Port)
+	// Use fixed port and address from config constants
+	port := config.NATIVE_SERVER_PORT
+	addr := fmt.Sprintf("%s:%d", config.DEFAULT_SERVER_ADDRESS, port)
 	s.logger.Info().Str("address", addr).Msg("Starting native protocol server")
 
 	listener, err := net.Listen("tcp", addr)
