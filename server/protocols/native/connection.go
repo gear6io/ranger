@@ -4,10 +4,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"math"
 	"net"
 	"strings"
-	"time"
+	"sync"
 
 	"github.com/rs/zerolog"
 )
@@ -20,1229 +19,769 @@ type ConnectionHandler struct {
 	writer       *PacketWriter
 	helloSent    bool
 	currentQuery string
-	// In-memory storage for tables (table name -> rows)
-	tableStorage map[string][][]interface{}
-	tableColumns map[string][]ColumnMetadata
+	// In-memory storage for tables
+	tables map[string][][]interface{}
+	mu     sync.RWMutex
 }
 
 // NewConnectionHandler creates a new connection handler
 func NewConnectionHandler(conn net.Conn, logger zerolog.Logger) *ConnectionHandler {
 	return &ConnectionHandler{
-		conn:      conn,
-		logger:    logger,
-		reader:    NewPacketReader(conn),
-		writer:    NewPacketWriter(conn),
-		helloSent: false,
-		tableStorage: make(map[string][][]interface{}),
-		tableColumns: make(map[string][]ColumnMetadata),
+		conn:   conn,
+		logger: logger,
+		reader: NewPacketReader(conn),
+		writer: NewPacketWriter(conn),
+		tables: make(map[string][][]interface{}),
 	}
 }
 
 // Handle handles the client connection
 func (h *ConnectionHandler) Handle() error {
 	defer h.conn.Close()
+	h.logger.Debug().Str("client", h.conn.RemoteAddr().String()).Msg("New client connected")
 
-	// Set connection timeout
-	h.conn.SetDeadline(time.Now().Add(30 * time.Second))
-
-	// Handle client packets
 	for {
-		// Reset deadline
-		h.conn.SetDeadline(time.Now().Add(30 * time.Second))
-
-		// Read packet type
-		packetType, err := h.reader.ReadByte()
+		// Read message length (4 bytes, big endian)
+		messageLength, err := h.reader.ReadUint32()
 		if err != nil {
-			if err == io.EOF {
-				return nil // Client disconnected
-			}
-			return fmt.Errorf("failed to read packet type: %w", err)
+			h.logger.Debug().Str("client", h.conn.RemoteAddr().String()).Msg("Client disconnected")
+			return nil
 		}
 
-		// Handle packet based on type
-		switch packetType {
-		case ClientHello:
-			if err := h.handleClientHello(); err != nil {
-				return fmt.Errorf("failed to handle client hello: %w", err)
-			}
-			// Send server hello immediately after client hello
-			if err := h.sendHello(); err != nil {
-				return fmt.Errorf("failed to send hello: %w", err)
-			}
-			h.helloSent = true
+		// Read message type (1 byte)
+		messageType, err := h.reader.ReadByte()
+		if err != nil {
+			h.logger.Error().Err(err).Msg("Failed to read message type")
+			return err
+		}
 
-			// After handshake, check for addendum (quota key)
-			// This is sent as a string, not as a packet type
-			if err := h.handleAddendum(); err != nil {
-				return fmt.Errorf("failed to handle addendum: %w", err)
+		// Read message payload
+		var payload []byte
+		if messageLength > 1 {
+			// Read the payload directly (without length prefix)
+			expectedPayloadLength := int(messageLength - 1)
+			h.logger.Info().
+				Uint32("message_length", messageLength).
+				Int("expected_payload_length", expectedPayloadLength).
+				Msg("About to read payload")
+
+			payload = make([]byte, expectedPayloadLength)
+			h.logger.Info().Msg("Created payload buffer, about to call io.ReadFull")
+
+			if _, err := io.ReadFull(h.conn, payload); err != nil {
+				h.logger.Error().
+					Err(err).
+					Uint32("message_length", messageLength).
+					Int("expected_payload_length", expectedPayloadLength).
+					Msg("Failed to read message payload")
+				return err
+			}
+			h.logger.Info().
+				Int("payload_length", len(payload)).
+				Bytes("payload_bytes", payload).
+				Msg("Read message payload")
+		}
+
+		h.logger.Debug().Uint8("message_type", messageType).Uint32("length", messageLength).Msg("Received message")
+
+		// Handle message based on type
+		switch messageType {
+		case ClientHello:
+			h.logger.Debug().Msg("Handling ClientHello message")
+			if err := h.handleClientHello(payload); err != nil {
+				h.logger.Error().Err(err).Msg("Failed to handle client hello")
+				return err
 			}
 		case ClientQuery:
-			if err := h.handleQuery(); err != nil {
-				return fmt.Errorf("failed to handle query: %w", err)
-			}
-		case ClientCancel:
-			if err := h.handleCancel(); err != nil {
-				return fmt.Errorf("failed to handle cancel: %w", err)
-			}
-		case ClientPing:
-			if err := h.handlePing(); err != nil {
-				return fmt.Errorf("failed to handle ping: %w", err)
+			h.logger.Debug().Msg("Handling ClientQuery message")
+			if err := h.handleClientQuery(payload); err != nil {
+				h.logger.Error().Err(err).Msg("Failed to handle client query")
+				return err
 			}
 		case ClientData:
-			if err := h.handleData(); err != nil {
-				return fmt.Errorf("failed to handle data: %w", err)
+			h.logger.Debug().Msg("Handling ClientData message")
+			if err := h.handleClientData(payload); err != nil {
+				h.logger.Error().Err(err).Msg("Failed to handle client data")
+				return err
 			}
-		case ClientAddendum:
-			if err := h.handleAddendum(); err != nil {
-				return fmt.Errorf("failed to handle addendum: %w", err)
+		case ClientPing:
+			h.logger.Debug().Msg("Handling ClientPing message")
+			if err := h.handleClientPing(); err != nil {
+				h.logger.Error().Err(err).Msg("Failed to handle client ping")
+				return err
 			}
 		default:
-			// Handle unknown packet types - might be other protocol extensions
-			h.logger.Debug().Uint8("packet_type", packetType).Msg("Unknown packet type received")
-			if err := h.handleUnknownPacket(packetType); err != nil {
-				return fmt.Errorf("failed to handle unknown packet %d: %w", packetType, err)
+			h.logger.Warn().Uint8("message_type", messageType).Msg("Unknown message type")
+			if err := h.sendException(fmt.Sprintf("Unknown message type: %d", messageType)); err != nil {
+				return err
 			}
 		}
 	}
 }
 
-// sendHello sends server hello packet
-func (h *ConnectionHandler) sendHello() error {
-	// Write packet type
-	if err := h.writer.WriteByte(ServerHello); err != nil {
-		return err
-	}
-	// Write server name
-	if err := h.writer.WriteString("Icebox"); err != nil {
-		return err
-	}
-	// Write major version
-	if err := h.writer.WriteUvarint(22); err != nil {
-		return err
-	}
-	// Write minor version
-	if err := h.writer.WriteUvarint(3); err != nil {
-		return err
-	}
-	// Write revision
-	if err := h.writer.WriteUvarint(54460); err != nil {
-		return err
-	}
-	// Write timezone
-	if err := h.writer.WriteString("UTC"); err != nil {
-		return err
-	}
-	// Write display name
-	if err := h.writer.WriteString("Icebox"); err != nil {
-		return err
-	}
-	// Write version patch
-	if err := h.writer.WriteUvarint(1); err != nil {
-		return err
-	}
-	return h.writer.Flush()
-}
+// handleClientHello handles client hello message
+func (h *ConnectionHandler) handleClientHello(payload []byte) error {
+	// Parse ClientHello message according to ClickHouse protocol
+	// Format: client_name (string) + major_version (varint) + minor_version (varint) + protocol_version (varint)
 
-// handleClientHello handles client hello packet
-func (h *ConnectionHandler) handleClientHello() error {
+	h.logger.Debug().
+		Int("payload_length", len(payload)).
+		Bytes("payload_bytes", payload).
+		Msg("Processing ClientHello payload")
+
+	reader := &payloadReader{data: payload}
+
 	// Read client name
-	clientName, err := h.reader.ReadString()
+	clientName, err := h.readStringFromReader(reader)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read client name: %w", err)
 	}
 
-	// Read major version
-	majorVersion, err := h.reader.ReadUvarint()
+	// Read client version major
+	clientVersionMajor, err := h.readUVarIntFromReader(reader)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read client version major: %w", err)
 	}
 
-	// Read minor version
-	minorVersion, err := h.reader.ReadUvarint()
+	// Read client version minor
+	clientVersionMinor, err := h.readUVarIntFromReader(reader)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read client version minor: %w", err)
 	}
 
-	// Read protocol version (revision)
-	protocolVersion, err := h.reader.ReadUvarint()
+	// Read protocol version
+	protocolVersion, err := h.readUVarIntFromReader(reader)
 	if err != nil {
-		return err
-	}
-
-	// Read default database
-	database, err := h.reader.ReadString()
-	if err != nil {
-		return err
-	}
-
-	// Read username
-	username, err := h.reader.ReadString()
-	if err != nil {
-		return err
-	}
-
-	// Read password
-	password, err := h.reader.ReadString()
-	if err != nil {
-		return err
+		return fmt.Errorf("failed to read protocol version: %w", err)
 	}
 
 	h.logger.Debug().
 		Str("client", clientName).
-		Uint64("major", majorVersion).
-		Uint64("minor", minorVersion).
-		Uint64("protocol_version", protocolVersion).
-		Str("database", database).
-		Str("username", username).
-		Str("password", "***").
+		Uint64("version", clientVersionMajor).
+		Uint64("minor", clientVersionMinor).
+		Uint64("protocol", protocolVersion).
 		Msg("Client hello received")
 
-	// TODO: Validate password if authentication is implemented
-	_ = password
+	h.logger.Debug().Msg("About to call sendServerHello()")
 
-	// No response needed - server hello will be sent by the main handler
+	// Send server hello response
+	err = h.sendServerHello()
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to send ServerHello")
+		return err
+	}
+
+	h.logger.Debug().Msg("sendServerHello() completed successfully")
 	return nil
 }
 
-// handleQuery handles client query packet
-func (h *ConnectionHandler) handleQuery() error {
-	// Read query ID
-	queryID, err := h.reader.ReadString()
-	if err != nil {
-		return err
-	}
+// handleClientQuery handles client query message
+func (h *ConnectionHandler) handleClientQuery(payload []byte) error {
+	// Parse ClientQuery payload according to ClickHouse protocol
+	// Format: query string only (no length prefix)
 
-	// Read client info
-	if err := h.readClientInfo(); err != nil {
-		return err
-	}
-
-	// Read settings
-	if err := h.readSettings(); err != nil {
-		return err
-	}
-
-	// Read empty string marker for end of settings
-	_, err = h.reader.ReadString()
-	if err != nil {
-		return err
-	}
-
-	// Read interserver secret (if revision >= 54441)
-	_, err = h.reader.ReadString()
-	if err != nil {
-		return err
-	}
-
-	// Read state and compression
-	_, err = h.reader.ReadByte() // state
-	if err != nil {
-		return err
-	}
-	_, err = h.reader.ReadByte() // compression
-	if err != nil {
-		return err
-	}
-
-	// Read query body
-	query, err := h.reader.ReadString()
-	if err != nil {
-		return err
-	}
-
-	// Read parameters (if revision >= 54459)
-	if err := h.readParameters(); err != nil {
-		return err
-	}
+	// Convert payload to query string
+	query := string(payload)
 
 	h.logger.Debug().
-		Str("query_id", queryID).
+		Int("payload_length", len(payload)).
 		Str("query", query).
 		Msg("Query received")
 
-	// Store the current query
+	// Store current query for batch operations
 	h.currentQuery = query
 
-	// Send response immediately after processing the query
-	return h.sendQueryResponse(query)
+	// Check if this is a SELECT query
+	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SELECT") {
+		// Execute SELECT query
+		if err := h.executeSelectQuery(query); err != nil {
+			h.logger.Error().Err(err).Msg("Failed to execute SELECT query")
+			return h.sendException(fmt.Sprintf("Failed to execute query: %v", err))
+		}
+	} else {
+		// For non-SELECT queries, send acknowledgment and EndOfStream
+		h.logger.Debug().Msg("Sending acknowledgment for non-SELECT query")
+
+		// Send acknowledgment
+		ack := fmt.Sprintf("Query received: %s", query)
+		if err := h.writer.WriteMessage(ServerData, []byte(ack)); err != nil {
+			h.logger.Error().Err(err).Msg("Failed to send query acknowledgment")
+			return err
+		}
+
+		// Send EndOfStream
+		if err := h.writer.WriteMessage(ServerEndOfStream, nil); err != nil {
+			h.logger.Error().Err(err).Msg("Failed to send EndOfStream")
+			return err
+		}
+
+		h.logger.Debug().Msg("Query acknowledgment sent successfully")
+	}
+
+	return nil
 }
 
-// handlePing handles client ping packet
-func (h *ConnectionHandler) handlePing() error {
+// executeSelectQuery executes a SELECT query and returns the results
+func (h *ConnectionHandler) executeSelectQuery(query string) error {
+	h.logger.Debug().Str("query", query).Msg("Executing SELECT query")
+
+	// Handle simple queries like "SELECT 1" or "SELECT 'hello'"
+	queryLower := strings.ToLower(strings.TrimSpace(query))
+
+	// Check if this is a simple expression query (no FROM clause)
+	if !strings.Contains(queryLower, " from ") {
+		h.logger.Debug().Msg("Simple expression query detected")
+		return h.executeSimpleExpressionQuery(query)
+	}
+
+	// Simple query parsing - extract table name from "SELECT ... FROM table_name"
+	// This is a very basic implementation
+	fromIndex := strings.Index(queryLower, " from ")
+	// Note: fromIndex should never be -1 here since we already checked above
+
+	// Extract table name (everything after "FROM " until the end or next space)
+	tablePart := query[fromIndex+6:] // Skip "FROM "
+	tableName := strings.TrimSpace(tablePart)
+
+	// Remove any trailing parts (ORDER BY, LIMIT, etc.)
+	if spaceIndex := strings.Index(tableName, " "); spaceIndex != -1 {
+		tableName = tableName[:spaceIndex]
+	}
+
+	h.logger.Debug().Str("table", tableName).Msg("Extracted table name from query")
+
+	// Get data from memory
+	h.mu.RLock()
+	rows, exists := h.tables[tableName]
+	h.mu.RUnlock()
+
+	if !exists {
+		h.logger.Warn().Str("table", tableName).Msg("Table not found")
+		// Return empty result set
+		return h.sendEmptyResultSet()
+	}
+
+	h.logger.Info().
+		Str("table", tableName).
+		Int("rows", len(rows)).
+		Msg("Sending query results")
+
+	// Send the data rows
+	return h.sendQueryResults(tableName, rows)
+}
+
+// executeSimpleExpressionQuery handles simple SELECT queries without FROM clauses
+func (h *ConnectionHandler) executeSimpleExpressionQuery(query string) error {
+	h.logger.Debug().Str("query", query).Msg("Executing simple expression query")
+
+	// Extract the expression part (everything after "SELECT ")
+	selectIndex := strings.Index(strings.ToUpper(query), "SELECT")
+	if selectIndex == -1 {
+		return fmt.Errorf("invalid SELECT query")
+	}
+
+	expression := strings.TrimSpace(query[selectIndex+6:]) // Skip "SELECT "
+	h.logger.Debug().Str("expression", expression).Msg("Extracted expression")
+
+	// For now, handle simple cases like "SELECT 1" or "SELECT 'hello'"
+	// Create a simple result with one column and one row
+	columnName := "result"
+	columnType := "String"
+
+	// Try to determine the type and value
+	var value string
+	if expression == "1" {
+		value = "1"
+		columnType = "UInt32"
+	} else if strings.HasPrefix(expression, "'") && strings.HasSuffix(expression, "'") {
+		// String literal
+		value = expression[1 : len(expression)-1] // Remove quotes
+		columnType = "String"
+	} else {
+		// Default to string representation
+		value = expression
+		columnType = "String"
+	}
+
+	h.logger.Debug().
+		Str("column_name", columnName).
+		Str("column_type", columnType).
+		Str("value", value).
+		Msg("Simple expression result")
+
+	// Send the result
+	return h.sendSimpleExpressionResult(columnName, columnType, value)
+}
+
+// sendSimpleExpressionResult sends a simple expression result
+func (h *ConnectionHandler) sendSimpleExpressionResult(columnName, columnType, value string) error {
+	h.logger.Debug().Msg("Sending simple expression result")
+
+	// Send ServerData with column metadata and data
+	// Format: columnCount (uvarint) + columnName (string) + columnType (string) + dataBlock (uvarint) + rowCount (uvarint) + data (string)
+
+	// Create payload
+	payload := make([]byte, 0, 256)
+
+	// Column count = 1
+	payload = append(payload, 1) // uvarint 1
+
+	// Column name (4-byte length + content)
+	nameLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(nameLen, uint32(len(columnName)))
+	payload = append(payload, nameLen...)
+	payload = append(payload, []byte(columnName)...)
+
+	// Column type (4-byte length + content)
+	typeLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(typeLen, uint32(len(columnType)))
+	payload = append(payload, typeLen...)
+	payload = append(payload, []byte(columnType)...)
+
+	// Data block = 0
+	payload = append(payload, 0) // uvarint 0
+
+	// Row count = 1
+	payload = append(payload, 1) // uvarint 1
+
+	// Data (comma-separated values for the column)
+	payload = append(payload, []byte(value)...)
+
+	if err := h.writer.WriteMessage(ServerData, payload); err != nil {
+		h.logger.Error().Err(err).Msg("Failed to write ServerData message")
+		return err
+	}
+
+	// Send EndOfStream
+	if err := h.writer.WriteMessage(ServerEndOfStream, nil); err != nil {
+		h.logger.Error().Err(err).Msg("Failed to write ServerEndOfStream message")
+		return err
+	}
+
+	h.logger.Debug().Msg("Simple expression result sent successfully")
+	return nil
+}
+
+// sendEmptyResultSet sends an empty result set
+func (h *ConnectionHandler) sendEmptyResultSet() error {
+	h.logger.Debug().Msg("Sending empty result set")
+
+	// Send ServerData with empty content
+	if err := h.writer.WriteMessage(ServerData, []byte{}); err != nil {
+		return err
+	}
+
+	// Send EndOfStream
+	return h.writer.WriteMessage(ServerEndOfStream, nil)
+}
+
+// sendQueryResults sends query results as ServerData packets
+func (h *ConnectionHandler) sendQueryResults(tableName string, rows [][]interface{}) error {
+	h.logger.Debug().Str("table", tableName).Int("rows", len(rows)).Msg("Sending query results")
+
+	if len(rows) == 0 {
+		h.logger.Debug().Msg("No rows to send, sending empty result set")
+		return h.sendEmptyResultSet()
+	}
+
+	// Get column names and types from the first row
+	// For now, we'll use the hardcoded schema since that's what we stored
+	columnNames := []string{"id", "name", "email", "created_at"}
+	columnTypes := []string{"UInt32", "String", "String", "DateTime"}
+
+	// For each column, send a ServerData packet
+	for colIdx, columnName := range columnNames {
+		var payload []byte
+
+		// Column count (uvarint) - always 1 for single column
+		columnCount := uint64(1)
+		columnCountBytes := make([]byte, binary.MaxVarintLen64)
+		n := binary.PutUvarint(columnCountBytes, columnCount)
+		payload = append(payload, columnCountBytes[:n]...)
+
+		// Column name (string) - 4-byte length + string content
+		columnNameLength := uint32(len(columnName))
+		columnNameLengthBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(columnNameLengthBytes, columnNameLength)
+		payload = append(payload, columnNameLengthBytes...)
+		payload = append(payload, []byte(columnName)...)
+
+		// Column type (string) - 4-byte length + string content
+		columnType := columnTypes[colIdx]
+		columnTypeLength := uint32(len(columnType))
+		columnTypeLengthBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(columnTypeLengthBytes, columnTypeLength)
+		payload = append(payload, columnTypeLengthBytes...)
+		payload = append(payload, []byte(columnType)...)
+
+		// Data block (uvarint) - placeholder for now
+		dataBlock := uint64(1)
+		dataBlockBytes := make([]byte, binary.MaxVarintLen64)
+		n = binary.PutUvarint(dataBlockBytes, dataBlock)
+		payload = append(payload, dataBlockBytes[:n]...)
+
+		// Row count (uvarint)
+		rowCount := uint64(len(rows))
+		rowCountBytes := make([]byte, binary.MaxVarintLen64)
+		n = binary.PutUvarint(rowCountBytes, rowCount)
+		payload = append(payload, rowCountBytes[:n]...)
+
+		// Data (string) - values for this column, comma-separated
+		var dataBuilder strings.Builder
+		for i, row := range rows {
+			if colIdx < len(row) {
+				dataBuilder.WriteString(fmt.Sprintf("%v", row[colIdx]))
+			}
+			if i < len(rows)-1 {
+				dataBuilder.WriteString(",")
+			}
+		}
+		data := dataBuilder.String()
+		dataLength := uint32(len(data))
+		dataLengthBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(dataLengthBytes, dataLength)
+		payload = append(payload, dataLengthBytes...)
+		payload = append(payload, []byte(data)...)
+
+		h.logger.Debug().
+			Str("column", columnName).
+			Str("type", columnType).
+			Int("rows", len(rows)).
+			Str("data", data).
+			Msg("Sending ServerData for column")
+
+		// Send the result as ServerData for this column
+		if err := h.writer.WriteMessage(ServerData, payload); err != nil {
+			h.logger.Error().Err(err).Str("column", columnName).Msg("Failed to write ServerData message")
+			return err
+		}
+	}
+
+	h.logger.Debug().Msg("Sending ServerEndOfStream after all columns")
+	// Send EndOfStream after all columns
+	return h.writer.WriteMessage(ServerEndOfStream, nil)
+}
+
+// handleClientData handles client data message
+func (h *ConnectionHandler) handleClientData(payload []byte) error {
+	h.logger.Debug().Msg("Client data received")
+
+	// Parse the data block
+	block, err := h.parseDataBlock(payload)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to parse data block")
+		return h.sendException(fmt.Sprintf("Failed to parse data block: %v", err))
+	}
+
+	h.logger.Info().
+		Str("table", block.TableName).
+		Int("columns", len(block.Columns)).
+		Int("rows", len(block.Rows)).
+		Msg("Processing data block")
+
+	// Process the data block
+	if err := h.processDataBlock(block); err != nil {
+		h.logger.Error().Err(err).Msg("Failed to process data block")
+		return h.sendException(fmt.Sprintf("Failed to process data block: %v", err))
+	}
+
+	// Send success response
+	return h.sendDataResponse()
+}
+
+// handleClientPing handles client ping message
+func (h *ConnectionHandler) handleClientPing() error {
 	h.logger.Debug().Msg("Ping received")
 	return h.sendPong()
 }
 
-// handleData handles client data packet for batch insert
-func (h *ConnectionHandler) handleData() error {
+// parseDataBlock parses the data block from payload
+func (h *ConnectionHandler) parseDataBlock(payload []byte) (*DataBlock, error) {
+	// Create a reader for the payload
+	reader := &payloadReader{data: payload}
+
 	// Read table name
-	tableName, err := h.reader.ReadString()
+	tableName, err := h.readStringFromReader(reader)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("failed to read table name: %w", err)
 	}
 
-	h.logger.Debug().Str("table", tableName).Msg("Data packet received")
-
-	// Read client info (skip for now)
-	if err := h.readClientInfo(); err != nil {
-		return err
+	// Read column count (4 bytes, big endian)
+	if len(reader.data)-reader.pos < 4 {
+		return nil, fmt.Errorf("insufficient data for column count")
 	}
+	columnCount := binary.BigEndian.Uint32(reader.data[reader.pos : reader.pos+4])
+	reader.pos += 4
 
-	// Read external table info (skip for now)
-	if err := h.skipExternalTable(); err != nil {
-		return err
+	// Read row count (4 bytes, big endian)
+	if len(reader.data)-reader.pos < 4 {
+		return nil, fmt.Errorf("insufficient data for row count")
 	}
+	rowCount := binary.BigEndian.Uint32(reader.data[reader.pos : reader.pos+4])
+	reader.pos += 4
 
-	// Read block info
-	if err := h.readBlockInfo(); err != nil {
-		return err
-	}
-
-	// Read column count
-	columnCount, err := h.reader.ReadUvarint()
-	if err != nil {
-		return err
-	}
-
-	h.logger.Debug().Uint64("column_count", columnCount).Msg("Reading column metadata")
-
-	// Read row count
-	rowCount, err := h.reader.ReadUvarint()
-	if err != nil {
-		return err
-	}
-
-	h.logger.Debug().Uint64("row_count", rowCount).Msg("Reading data rows")
-
-	// Check if this is an empty block (like after SELECT queries or to close batch)
-	if rowCount == 0 && columnCount == 0 {
-		h.logger.Debug().Msg("Empty data block received - sending end of stream")
-		// Send end of stream for empty blocks (query close)
-		if err := h.writer.WriteByte(ServerEndOfStream); err != nil {
-			return err
-		}
-		return h.writer.Flush()
-	}
-
-	// Read column metadata (only for non-empty blocks)
-	columns := make([]ColumnMetadata, columnCount)
-	for i := uint64(0); i < columnCount; i++ {
-		columnName, err := h.reader.ReadString()
+	// Read column names
+	columns := make([]string, columnCount)
+	for i := uint32(0); i < columnCount; i++ {
+		columns[i], err = h.readStringFromReader(reader)
 		if err != nil {
-			return err
+			return nil, fmt.Errorf("failed to read column name %d: %w", i, err)
 		}
-
-		columnType, err := h.reader.ReadString()
-		if err != nil {
-			return err
-		}
-
-		columns[i] = ColumnMetadata{
-			Name: columnName,
-			Type: columnType,
-		}
-
-		h.logger.Debug().
-			Uint64("column_index", i).
-			Str("name", columnName).
-			Str("type", columnType).
-			Msg("Column metadata read")
 	}
 
-	// Read data rows (only for non-empty blocks)
+	// Read column types (simplified - all strings for now)
+	columnTypes := make([]string, columnCount)
+	for i := uint32(0); i < columnCount; i++ {
+		columnTypes[i] = "String"
+	}
+
+	// Read row data
 	rows := make([][]interface{}, rowCount)
-	for rowIndex := uint64(0); rowIndex < rowCount; rowIndex++ {
-		row := make([]interface{}, columnCount)
-		for colIndex := uint64(0); colIndex < columnCount; colIndex++ {
-			value, err := h.readColumnValue(columns[colIndex].Type)
+	for i := uint32(0); i < rowCount; i++ {
+		rows[i] = make([]interface{}, columnCount)
+		for j := uint32(0); j < columnCount; j++ {
+			value, err := h.readStringFromReader(reader)
 			if err != nil {
-				return err
+				return nil, fmt.Errorf("failed to read value at row %d, col %d: %w", i, j, err)
 			}
-			row[colIndex] = value
+			rows[i][j] = value
 		}
-		rows[rowIndex] = row
 	}
+
+	return &DataBlock{
+		TableName:   tableName,
+		Columns:     columns,
+		ColumnTypes: columnTypes,
+		Rows:        rows,
+	}, nil
+}
+
+// processDataBlock processes the received data block
+func (h *ConnectionHandler) processDataBlock(block *DataBlock) error {
+	h.logger.Info().
+		Str("table", block.TableName).
+		Interface("columns", block.Columns).
+		Interface("rows", len(block.Rows)).
+		Msg("Processing data block")
+
+	// Store the data in memory
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// Initialize table if it doesn't exist
+	if h.tables[block.TableName] == nil {
+		h.tables[block.TableName] = make([][]interface{}, 0)
+	}
+
+	// Append the new rows
+	h.tables[block.TableName] = append(h.tables[block.TableName], block.Rows...)
+
+	h.logger.Info().
+		Str("table", block.TableName).
+		Int("total_rows", len(h.tables[block.TableName])).
+		Msg("Data stored successfully")
+
+	return nil
+}
+
+// sendServerHello sends server hello response
+func (h *ConnectionHandler) sendServerHello() error {
+	h.logger.Debug().Msg("Starting to send ServerHello response")
+
+	// Create ServerHello message according to ClickHouse protocol
+	// Format: server_name (string) + major_version (varint) + minor_version (varint) + revision (varint) + timezone (string) + display_name (string) + version_patch (varint)
+
+	// Build payload
+	var payload []byte
+
+	// Server name
+	serverName := "Icebox Server"
+	serverNameBytes := []byte(serverName)
+	serverNameLen := uint32(len(serverNameBytes))
+
+	// Write server name length (4 bytes, big endian)
+	nameLenBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(nameLenBytes, serverNameLen)
+	payload = append(payload, nameLenBytes...)
+
+	// Write server name
+	payload = append(payload, serverNameBytes...)
+
+	// Server version major (1.0.0)
+	payload = append(payload, 1)
+
+	// Server version minor
+	payload = append(payload, 0)
+
+	// Server revision (using DBMS_TCP_PROTOCOL_VERSION)
+	revision := uint64(DBMS_TCP_PROTOCOL_VERSION)
+	for revision >= 0x80 {
+		payload = append(payload, byte(revision)|0x80)
+		revision >>= 7
+	}
+	payload = append(payload, byte(revision))
+
+	// Timezone
+	timezone := "UTC"
+	timezoneBytes := []byte(timezone)
+	timezoneLen := uint32(len(timezoneBytes))
+	timezoneLenBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(timezoneLenBytes, timezoneLen)
+	payload = append(payload, timezoneLenBytes...)
+	payload = append(payload, timezoneBytes...)
+
+	// Display name
+	displayName := "Icebox"
+	displayNameBytes := []byte(displayName)
+	displayNameLen := uint32(len(displayNameBytes))
+	displayNameLenBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(displayNameLenBytes, displayNameLen)
+	payload = append(payload, displayNameLenBytes...)
+	payload = append(payload, displayNameBytes...)
+
+	// Version patch
+	versionPatch := uint64(0)
+	for versionPatch >= 0x80 {
+		payload = append(payload, byte(versionPatch)|0x80)
+		versionPatch >>= 7
+	}
+	payload = append(payload, byte(versionPatch))
 
 	h.logger.Debug().
-		Str("table", tableName).
-		Uint64("rows", rowCount).
-		Uint64("columns", columnCount).
-		Msg("Batch insert data received")
+		Int("payload_length", len(payload)).
+		Bytes("payload_bytes", payload).
+		Msg("Sending ServerHello response")
 
-	// Process the batch insert
-	if err := h.processBatchInsert(tableName, columns, rows); err != nil {
+	err := h.writer.WriteMessage(ServerHello, payload)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to send ServerHello")
 		return err
 	}
 
-	// Send success response
-	return h.sendBatchInsertResponse()
-}
-
-// handleCancel handles client cancel packet
-func (h *ConnectionHandler) handleCancel() error {
-	h.logger.Debug().Msg("Cancel received")
-	// TODO: Cancel running query
+	h.logger.Info().Msg("ServerHello sent successfully")
+	h.logger.Debug().Msg("sendServerHello function completed successfully")
 	return nil
 }
 
-// handleAddendum handles the addendum (quota key) sent after handshake
-func (h *ConnectionHandler) handleAddendum() error {
-	// Try to read addendum as a string (quota key)
-	// This is sent by ClickHouse Go client after handshake
-	quotaKey, err := h.reader.ReadString()
-	if err != nil {
-		// If no addendum, that's fine
-		return nil
+// sendQueryResponse sends query response
+func (h *ConnectionHandler) sendQueryResponse(query string) error {
+	// For now, just send a simple acknowledgment
+	response := fmt.Sprintf("Query received: %s", query)
+	payload := []byte(response)
+
+	h.logger.Debug().Msg("Sending ServerData response")
+	// Send the data response
+	if err := h.writer.WriteMessage(ServerData, payload); err != nil {
+		return err
 	}
-	h.logger.Debug().Str("quota_key", quotaKey).Msg("Addendum received")
-	return nil
+
+	h.logger.Debug().Msg("Sending ServerEndOfStream response")
+	// Send EndOfStream to indicate completion
+	return h.writer.WriteMessage(ServerEndOfStream, nil)
 }
 
-// handleUnknownPacket handles unknown packet types (like addendum)
-func (h *ConnectionHandler) handleUnknownPacket(packetType byte) error {
-	// For unknown packets, just ignore them
-	h.logger.Debug().Uint8("packet_type", packetType).Msg("Ignoring unknown packet type")
+// sendDataResponse sends data processing response
+func (h *ConnectionHandler) sendDataResponse() error {
+	response := "Data block processed successfully"
+	payload := []byte(response)
+
+	h.logger.Debug().Msg("Sending ServerData response")
+	if err := h.writer.WriteMessage(ServerData, payload); err != nil {
+		h.logger.Error().Err(err).Msg("Failed to write ServerData message")
+		return err
+	}
+
+	h.logger.Debug().Msg("Sending ServerEndOfStream response")
+	// Send EndOfStream to indicate completion
+	if err := h.writer.WriteMessage(ServerEndOfStream, nil); err != nil {
+		h.logger.Error().Err(err).Msg("Failed to write ServerEndOfStream message")
+		return err
+	}
+
+	h.logger.Debug().Msg("sendDataResponse completed successfully")
 	return nil
 }
 
 // sendPong sends pong response
 func (h *ConnectionHandler) sendPong() error {
-	if err := h.writer.WriteByte(ServerPong); err != nil {
-		return err
-	}
-	return h.writer.Flush()
+	h.logger.Debug().
+		Uint8("packet_type", ServerPong).
+		Msg("Sending pong response")
+	return h.writer.WriteMessage(ServerPong, nil)
 }
 
-// sendQueryResponse sends query response with mock data based on query content
-func (h *ConnectionHandler) sendQueryResponse(query string) error {
-	// Check if this is a CREATE TABLE statement
-	queryLower := strings.ToLower(strings.TrimSpace(query))
-	if strings.HasPrefix(queryLower, "create table") {
-		// For CREATE TABLE, send empty data block
-		h.logger.Debug().Str("query", query).Msg("Sending empty data block for CREATE TABLE")
-
-		// Send data packet type
-		if err := h.writer.WriteByte(ServerData); err != nil {
-			return err
-		}
-
-		// Send table name (empty string for query responses)
-		if err := h.writer.WriteString(""); err != nil {
-			return err
-		}
-
-		// Send block info
-		if err := h.writeBlockInfo(); err != nil {
-			return err
-		}
-
-		// Send column count (0)
-		if err := h.writer.WriteUvarint(0); err != nil {
-			return err
-		}
-
-		// Send row count (0)
-		if err := h.writer.WriteUvarint(0); err != nil {
-			return err
-		}
-
-		// Send end of stream
-		if err := h.writer.WriteByte(ServerEndOfStream); err != nil {
-			return err
-		}
-
-		return h.writer.Flush()
-	}
-
-	// Check if this is a SELECT query
-	if strings.HasPrefix(queryLower, "select") {
-		h.logger.Debug().Str("query", query).Msg("Processing SELECT query")
-		
-		// Extract table name from query (simple parsing for now)
-		tableName := h.extractTableNameFromQuery(query)
-		if tableName == "" {
-			// If we can't extract table name, return empty result
-			h.logger.Debug().Msg("Could not extract table name, returning empty result")
-			return h.sendEmptyDataBlock()
-		}
-
-		// Check if table exists in storage
-		rows, exists := h.tableStorage[tableName]
-		if !exists {
-			h.logger.Debug().Str("table", tableName).Msg("Table not found in storage, returning empty result")
-			return h.sendEmptyDataBlock()
-		}
-
-		columns, exists := h.tableColumns[tableName]
-		if !exists {
-			h.logger.Debug().Str("table", tableName).Msg("Table columns not found in storage, returning empty result")
-			return h.sendEmptyDataBlock()
-		}
-
-		h.logger.Debug().
-			Str("table", tableName).
-			Int("rows", len(rows)).
-			Int("columns", len(columns)).
-			Msg("Sending data from storage")
-
-		// Send data packet type
-		if err := h.writer.WriteByte(ServerData); err != nil {
-			return err
-		}
-
-		// Send table name (empty string for query responses)
-		if err := h.writer.WriteString(""); err != nil {
-			return err
-		}
-
-		// Send block info
-		if err := h.writeBlockInfo(); err != nil {
-			return err
-		}
-
-		// Send column count
-		if err := h.writer.WriteUvarint(uint64(len(columns))); err != nil {
-			return err
-		}
-
-		// Send column names and types
-		for _, col := range columns {
-			if err := h.writer.WriteString(col.Name); err != nil {
-				return err
-			}
-			if err := h.writer.WriteString(col.Type); err != nil {
-				return err
-			}
-			// Send custom serialization flag (false) for revision >= 54454
-			if err := h.writer.WriteByte(0); err != nil { // false
-				return err
-			}
-		}
-
-		// Send row count
-		if err := h.writer.WriteUvarint(uint64(len(rows))); err != nil {
-			return err
-		}
-
-		// Send data row by row
-		for _, row := range rows {
-			for i, col := range columns {
-				if err := h.writeColumnValue(col.Type, row[i]); err != nil {
-					return err
-				}
-			}
-		}
-
-		// Send end of stream
-		if err := h.writer.WriteByte(ServerEndOfStream); err != nil {
-			return err
-		}
-
-		return h.writer.Flush()
-	}
-
-	// For other queries, send mock data
-	h.logger.Debug().Str("query", query).Msg("Sending mock data for query")
-
-	// Generate mock response
-	mockResponse := h.generateMockResponse(query)
-
-	// Send data packet type
-	if err := h.writer.WriteByte(ServerData); err != nil {
-		return err
-	}
-
-	// Send table name (empty string for query responses)
-	if err := h.writer.WriteString(""); err != nil {
-		return err
-	}
-
-	// Send block info
-	if err := h.writeBlockInfo(); err != nil {
-		return err
-	}
-
-	// Send column count
-	if err := h.writer.WriteUvarint(uint64(len(mockResponse.columns))); err != nil {
-		return err
-	}
-
-	// Send column names and types
-	for _, col := range mockResponse.columns {
-		if err := h.writer.WriteString(col.name); err != nil {
-			return err
-		}
-		if err := h.writer.WriteString(col.dataType); err != nil {
-			return err
-		}
-		// Send custom serialization flag (false) for revision >= 54454
-		if err := h.writer.WriteByte(0); err != nil { // false
-			return err
-		}
-	}
-
-	// Send row count
-	if err := h.writer.WriteUvarint(uint64(len(mockResponse.rows))); err != nil {
-		return err
-	}
-
-	// Send data row by row
-	for _, row := range mockResponse.rows {
-		for i, col := range mockResponse.columns {
-			if err := h.writeColumnValue(col.dataType, row[i]); err != nil {
-				return err
-			}
-		}
-	}
-
-	// Send end of stream
-	if err := h.writer.WriteByte(ServerEndOfStream); err != nil {
-		return err
-	}
-
-	return h.writer.Flush()
+// sendException sends exception response
+func (h *ConnectionHandler) sendException(errorMsg string) error {
+	payload := []byte(errorMsg)
+	return h.writer.WriteMessage(ServerException, payload)
 }
 
-// MockColumn represents a column in mock response
-type MockColumn struct {
-	name     string
-	dataType string
+// payloadReader is a helper to read from a byte slice
+type payloadReader struct {
+	data []byte
+	pos  int
 }
 
-// MockRow represents a row of data
-type MockRow []interface{}
-
-// MockResponse represents a complete mock response
-type MockResponse struct {
-	columns []MockColumn
-	rows    []MockRow
+func (r *payloadReader) Read(p []byte) (n int, err error) {
+	if r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+	n = copy(p, r.data[r.pos:])
+	r.pos += n
+	return n, nil
 }
 
-// generateMockResponse generates appropriate mock response based on query
-func (h *ConnectionHandler) generateMockResponse(query string) MockResponse {
-	// Convert query to lowercase for easier matching
-	queryLower := strings.ToLower(query)
-
-	switch {
-	case strings.Contains(queryLower, "select 1"):
-		return MockResponse{
-			columns: []MockColumn{{name: "1", dataType: "UInt8"}},
-			rows:    []MockRow{{uint8(1)}},
-		}
-	case strings.Contains(queryLower, "select 42"):
-		return MockResponse{
-			columns: []MockColumn{{name: "42", dataType: "UInt8"}},
-			rows:    []MockRow{{uint8(42)}},
-		}
-	case strings.Contains(queryLower, "select 'hello'"):
-		return MockResponse{
-			columns: []MockColumn{{name: "'hello'", dataType: "String"}},
-			rows:    []MockRow{{"hello"}},
-		}
-	case strings.Contains(queryLower, "select now()"):
-		return MockResponse{
-			columns: []MockColumn{{name: "now()", dataType: "DateTime"}},
-			rows:    []MockRow{{time.Now()}},
-		}
-	case strings.Contains(queryLower, "select count(*)"):
-		return MockResponse{
-			columns: []MockColumn{{name: "count()", dataType: "UInt64"}},
-			rows:    []MockRow{{uint64(100)}},
-		}
-	case strings.Contains(queryLower, "select * from users"):
-		return MockResponse{
-			columns: []MockColumn{
-				{name: "id", dataType: "UInt32"},
-				{name: "name", dataType: "String"},
-				{name: "email", dataType: "String"},
-				{name: "created_at", dataType: "DateTime"},
-			},
-			rows: []MockRow{
-				{uint32(1), "Alice", "alice@example.com", time.Now().Add(-24 * time.Hour)},
-				{uint32(2), "Bob", "bob@example.com", time.Now().Add(-12 * time.Hour)},
-				{uint32(3), "Charlie", "charlie@example.com", time.Now()},
-			},
-		}
-	case strings.Contains(queryLower, "select * from orders"):
-		return MockResponse{
-			columns: []MockColumn{
-				{name: "order_id", dataType: "UInt64"},
-				{name: "customer_id", dataType: "UInt32"},
-				{name: "amount", dataType: "Float64"},
-				{name: "status", dataType: "String"},
-			},
-			rows: []MockRow{
-				{uint64(1001), uint32(1), 99.99, "completed"},
-				{uint64(1002), uint32(2), 149.50, "pending"},
-				{uint64(1003), uint32(1), 75.25, "shipped"},
-			},
-		}
-	case strings.Contains(queryLower, "select * from test_batch_users"):
-		return MockResponse{
-			columns: []MockColumn{
-				{name: "id", dataType: "UInt32"},
-				{name: "name", dataType: "String"},
-				{name: "email", dataType: "String"},
-				{name: "created_at", dataType: "DateTime"},
-			},
-			rows: []MockRow{
-				{uint32(1), "Alice Johnson", "alice@example.com", time.Now().Add(-2 * time.Hour)},
-				{uint32(2), "Bob Smith", "bob@example.com", time.Now().Add(-1 * time.Hour)},
-				{uint32(3), "Charlie Brown", "charlie@example.com", time.Now()},
-			},
-		}
-	default:
-		// Default response for unknown queries
-		return MockResponse{
-			columns: []MockColumn{{name: "message", dataType: "String"}},
-			rows:    []MockRow{{fmt.Sprintf("Mock response for: %s", query)}},
-		}
+// readStringFromReader reads a string from a payload reader
+func (h *ConnectionHandler) readStringFromReader(reader *payloadReader) (string, error) {
+	// Read string length (4 bytes, big endian)
+	if len(reader.data)-reader.pos < 4 {
+		return "", fmt.Errorf("insufficient data for string length")
 	}
+
+	length := binary.BigEndian.Uint32(reader.data[reader.pos : reader.pos+4])
+	reader.pos += 4
+
+	h.logger.Debug().
+		Int("string_length", int(length)).
+		Int("remaining_data", len(reader.data)-reader.pos).
+		Int("position", reader.pos).
+		Msg("Reading string from payload")
+
+	if length == 0 {
+		return "", nil
+	}
+
+	if len(reader.data)-reader.pos < int(length) {
+		return "", fmt.Errorf("insufficient data for string content")
+	}
+
+	str := string(reader.data[reader.pos : reader.pos+int(length)])
+	reader.pos += int(length)
+	return str, nil
 }
 
-// writeColumnValue writes a value for a specific column type
-func (h *ConnectionHandler) writeColumnValue(dataType string, value interface{}) error {
-	switch dataType {
-	case "UInt8":
-		if v, ok := value.(uint8); ok {
-			return h.writer.WriteByte(v)
-		}
-		return h.writer.WriteByte(0)
-	case "UInt32":
-		if v, ok := value.(uint32); ok {
-			return h.writer.WriteUint32(v)
-		}
-		return h.writer.WriteUint32(0)
-	case "UInt64":
-		if v, ok := value.(uint64); ok {
-			return h.writer.WriteUvarint(v)
-		}
-		return h.writer.WriteUvarint(0)
-	case "Float64":
-		if v, ok := value.(float64); ok {
-			return h.writer.WriteFloat64(v)
-		}
-		return h.writer.WriteFloat64(0.0)
-	case "String":
-		if v, ok := value.(string); ok {
-			return h.writer.WriteString(v)
-		}
-		return h.writer.WriteString("")
-	case "DateTime":
-		if v, ok := value.(time.Time); ok {
-			return h.writer.WriteUint32(uint32(v.Unix()))
-		}
-		return h.writer.WriteUint32(uint32(time.Now().Unix()))
-	default:
-		// Default to string representation
-		return h.writer.WriteString(fmt.Sprintf("%v", value))
-	}
-}
+// readUVarIntFromReader reads a varint from a payload reader
+func (h *ConnectionHandler) readUVarIntFromReader(reader *payloadReader) (uint64, error) {
+	var value uint64
+	var shift uint
 
-// sendDataResponse sends data response
-func (h *ConnectionHandler) sendDataResponse() error {
-	// Send progress
-	if err := h.writer.WriteByte(ServerProgress); err != nil {
-		return err
-	}
-
-	if err := h.writer.WriteUvarint(1); err != nil {
-		return err
-	}
-
-	// Send end of stream
-	if err := h.writer.WriteByte(ServerEndOfStream); err != nil {
-		return err
-	}
-
-	return h.writer.Flush()
-}
-
-// readClientInfo reads the client info structure
-func (h *ConnectionHandler) readClientInfo() error {
-	// Read client info structure based on clickhouse-go encoding
-	// This matches the encodeClientInfo function in clickhouse-go
-
-	// Read query kind (ClientQueryInitial = 1)
-	_, err := h.reader.ReadByte()
-	if err != nil {
-		return err
-	}
-
-	// Read initial_user
-	_, err = h.reader.ReadString()
-	if err != nil {
-		return err
-	}
-
-	// Read initial_query_id
-	_, err = h.reader.ReadString()
-	if err != nil {
-		return err
-	}
-
-	// Read initial_address
-	_, err = h.reader.ReadString()
-	if err != nil {
-		return err
-	}
-
-	// Read initial_query_start_time_microseconds (if revision >= 54449)
-	_, err = h.reader.ReadUvarint() // Read as int64 but we'll read as uvarint for now
-	if err != nil {
-		return err
-	}
-
-	// Read interface (tcp = 1, http = 2)
-	_, err = h.reader.ReadByte()
-	if err != nil {
-		return err
-	}
-
-	// Read os_user
-	_, err = h.reader.ReadString()
-	if err != nil {
-		return err
-	}
-
-	// Read hostname
-	_, err = h.reader.ReadString()
-	if err != nil {
-		return err
-	}
-
-	// Read client_name
-	_, err = h.reader.ReadString()
-	if err != nil {
-		return err
-	}
-
-	// Read client_version_major
-	_, err = h.reader.ReadUvarint()
-	if err != nil {
-		return err
-	}
-
-	// Read client_version_minor
-	_, err = h.reader.ReadUvarint()
-	if err != nil {
-		return err
-	}
-
-	// Read client_tcp_protocol_version
-	_, err = h.reader.ReadUvarint()
-	if err != nil {
-		return err
-	}
-
-	// Read quota_key (if revision >= 54060)
-	_, err = h.reader.ReadString()
-	if err != nil {
-		return err
-	}
-
-	// Read distributed_depth (if revision >= 54448)
-	_, err = h.reader.ReadUvarint()
-	if err != nil {
-		return err
-	}
-
-	// Read version_patch (if revision >= 54401)
-	_, err = h.reader.ReadUvarint()
-	if err != nil {
-		return err
-	}
-
-	// Read OpenTelemetry info (if revision >= 54442)
-	_, err = h.reader.ReadByte() // trace_context
-	if err != nil {
-		return err
-	}
-
-	// Read parallel replicas info (if revision >= 54453)
-	_, err = h.reader.ReadUvarint() // collaborate_with_initiator
-	if err != nil {
-		return err
-	}
-	_, err = h.reader.ReadUvarint() // count_participating_replicas
-	if err != nil {
-		return err
-	}
-	_, err = h.reader.ReadUvarint() // number_of_current_replica
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// readSettings reads the settings structure
-func (h *ConnectionHandler) readSettings() error {
-	// Read settings until we find an empty string marker
 	for {
-		settingKey, err := h.reader.ReadString()
-		if err != nil {
-			return err
+		if reader.pos >= len(reader.data) {
+			return 0, fmt.Errorf("unexpected end of data while reading varint")
 		}
 
-		// If we get an empty string, we've reached the end of settings
-		if settingKey == "" {
+		b := reader.data[reader.pos]
+		reader.pos++
+
+		value |= uint64(b&0x7F) << shift
+		if b&0x80 == 0 {
 			break
 		}
-
-		// Read setting value (simplified - just read as string)
-		_, err = h.reader.ReadString()
-		if err != nil {
-			return err
+		shift += 7
+		if shift >= 64 {
+			return 0, fmt.Errorf("varint too long")
 		}
 	}
 
-	return nil
-}
-
-// readParameters reads the parameters structure
-func (h *ConnectionHandler) readParameters() error {
-	// Read parameters until we find an empty string marker
-	for {
-		paramKey, err := h.reader.ReadString()
-		if err != nil {
-			return err
-		}
-
-		// If we get an empty string, we've reached the end of parameters
-		if paramKey == "" {
-			break
-		}
-
-		// Read parameter value (simplified - just read as string)
-		_, err = h.reader.ReadString()
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// skipExternalTable skips external table data
-func (h *ConnectionHandler) skipExternalTable() error {
-	// For now, just skip external table data
-	// This is a simplified implementation
-	return nil
-}
-
-// readEmptyBlock reads an empty data block
-func (h *ConnectionHandler) readBlockInfo() error {
-	// Read block info structure
-	// This includes compression info, block number, etc.
-
-	// Read compression flag
-	_, err := h.reader.ReadUvarint()
-	if err != nil {
-		return err
-	}
-
-	// Read block number
-	_, err = h.reader.ReadUvarint()
-	if err != nil {
-		return err
-	}
-
-	// Read is_overflows flag
-	_, err = h.reader.ReadUvarint()
-	if err != nil {
-		return err
-	}
-
-	// Read bucket_num as int32
-	buf := make([]byte, 4)
-	_, err = io.ReadFull(h.reader.conn, buf)
-	if err != nil {
-		return err
-	}
-	_ = int32(binary.LittleEndian.Uint32(buf)) // bucket_num
-
-	return nil
-}
-
-// writeBlockInfo writes the BlockInfo structure required by ClickHouse protocol
-func (h *ConnectionHandler) writeBlockInfo() error {
-	// BlockInfo structure: num1, isOverflows, num2, bucketNum, num3
-	// Based on clickhouse-go implementation
-	if err := h.writer.WriteUvarint(1); err != nil { // num1
-		return err
-	}
-	if err := h.writer.WriteByte(0); err != nil { // isOverflows (bool as byte)
-		return err
-	}
-	if err := h.writer.WriteUvarint(2); err != nil { // num2
-		return err
-	}
-	// Write -1 as int32 (little endian)
-	bucketNumBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(bucketNumBytes, 0xFFFFFFFF)   // -1 as uint32
-	if err := h.writer.WriteBytes(bucketNumBytes); err != nil { // bucketNum (int32)
-		return err
-	}
-	if err := h.writer.WriteUvarint(0); err != nil { // num3
-		return err
-	}
-	return nil
-}
-
-// ColumnMetadata represents column information for batch insert
-type ColumnMetadata struct {
-	Name string
-	Type string
-}
-
-// readColumnValue reads a single column value based on its type
-func (h *ConnectionHandler) readColumnValue(dataType string) (interface{}, error) {
-	switch dataType {
-	case "UInt8":
-		val, err := h.reader.ReadByte()
-		if err != nil {
-			return nil, err
-		}
-		return val, nil
-	case "UInt16":
-		// Read as UInt16 (2 bytes)
-		buf := make([]byte, 2)
-		_, err := io.ReadFull(h.reader.conn, buf)
-		if err != nil {
-			return nil, err
-		}
-		return binary.LittleEndian.Uint16(buf), nil
-	case "UInt32":
-		val, err := h.reader.ReadUint32()
-		if err != nil {
-			return nil, err
-		}
-		return val, nil
-	case "UInt64":
-		// Read as UInt64 (8 bytes)
-		buf := make([]byte, 8)
-		_, err := io.ReadFull(h.reader.conn, buf)
-		if err != nil {
-			return nil, err
-		}
-		return binary.LittleEndian.Uint64(buf), nil
-	case "Int8":
-		val, err := h.reader.ReadByte()
-		if err != nil {
-			return nil, err
-		}
-		return int8(val), nil
-	case "Int16":
-		// Read as Int16 (2 bytes)
-		buf := make([]byte, 2)
-		_, err := io.ReadFull(h.reader.conn, buf)
-		if err != nil {
-			return nil, err
-		}
-		return int16(binary.LittleEndian.Uint16(buf)), nil
-	case "Int32":
-		// Read as Int32 (4 bytes)
-		buf := make([]byte, 4)
-		_, err := io.ReadFull(h.reader.conn, buf)
-		if err != nil {
-			return nil, err
-		}
-		return int32(binary.LittleEndian.Uint32(buf)), nil
-	case "Int64":
-		// Read as Int64 (8 bytes)
-		buf := make([]byte, 8)
-		_, err := io.ReadFull(h.reader.conn, buf)
-		if err != nil {
-			return nil, err
-		}
-		return int64(binary.LittleEndian.Uint64(buf)), nil
-	case "Float32":
-		// Read as Float32 (4 bytes)
-		buf := make([]byte, 4)
-		_, err := io.ReadFull(h.reader.conn, buf)
-		if err != nil {
-			return nil, err
-		}
-		bits := binary.LittleEndian.Uint32(buf)
-		return float32(math.Float32frombits(bits)), nil
-	case "Float64":
-		// Read as Float64 (8 bytes)
-		buf := make([]byte, 8)
-		_, err := io.ReadFull(h.reader.conn, buf)
-		if err != nil {
-			return nil, err
-		}
-		bits := binary.LittleEndian.Uint64(buf)
-		return math.Float64frombits(bits), nil
-	case "String":
-		val, err := h.reader.ReadString()
-		if err != nil {
-			return nil, err
-		}
-		return val, nil
-	case "DateTime":
-		val, err := h.reader.ReadUint32()
-		if err != nil {
-			return nil, err
-		}
-		return time.Unix(int64(val), 0), nil
-	case "Date":
-		val, err := h.reader.ReadUint32()
-		if err != nil {
-			return nil, err
-		}
-		return time.Unix(int64(val*86400), 0), nil
-	default:
-		// For unknown types, read as string
-		val, err := h.reader.ReadString()
-		if err != nil {
-			return nil, err
-		}
-		return val, nil
-	}
-}
-
-// processBatchInsert processes the batch insert data
-func (h *ConnectionHandler) processBatchInsert(tableName string, columns []ColumnMetadata, rows [][]interface{}) error {
-	h.logger.Info().
-		Str("table", tableName).
-		Int("rows", len(rows)).
-		Int("columns", len(columns)).
-		Msg("Processing batch insert")
-
-	// Store columns and rows for the table
-	h.tableColumns[tableName] = columns
-	h.tableStorage[tableName] = rows
-
-	// TODO: Integrate with actual storage system
-	// For now, just log the data
-	for i, row := range rows {
-		h.logger.Debug().
-			Int("row_index", i).
-			Interface("data", row).
-			Msg("Row data")
-	}
-
-	// Here you would typically:
-	// 1. Validate the table exists
-	// 2. Validate column types match
-	// 3. Write data to storage (Parquet files, etc.)
-	// 4. Update metadata
-
-	return nil
-}
-
-// sendBatchInsertResponse sends response for batch insert
-func (h *ConnectionHandler) sendBatchInsertResponse() error {
-	// Send progress packet
-	if err := h.writer.WriteByte(ServerProgress); err != nil {
-		return err
-	}
-
-	// Write progress info
-	if err := h.writer.WriteUvarint(1); err != nil { // rows read
-		return err
-	}
-	if err := h.writer.WriteUvarint(1); err != nil { // bytes read
-		return err
-	}
-	if err := h.writer.WriteUvarint(0); err != nil { // total rows to read
-		return err
-	}
-	if err := h.writer.WriteUvarint(0); err != nil { // total bytes to read
-		return err
-	}
-
-	// Send profile info (optional)
-	if err := h.writer.WriteByte(ServerProfileInfo); err != nil {
-		return err
-	}
-
-	// Write profile info data
-	if err := h.writer.WriteUvarint(0); err != nil { // rows
-		return err
-	}
-	if err := h.writer.WriteUvarint(0); err != nil { // blocks
-		return err
-	}
-	if err := h.writer.WriteUvarint(0); err != nil { // bytes
-		return err
-	}
-	if err := h.writer.WriteUvarint(0); err != nil { // applied_limit
-		return err
-	}
-	if err := h.writer.WriteUvarint(0); err != nil { // rows_before_limit
-		return err
-	}
-	if err := h.writer.WriteUvarint(0); err != nil { // calculated_rows_before_limit
-		return err
-	}
-
-	// Send end of stream
-	if err := h.writer.WriteByte(ServerEndOfStream); err != nil {
-		return err
-	}
-
-	return h.writer.Flush()
-}
-
-// extractTableNameFromQuery extracts table name from a SELECT query
-func (h *ConnectionHandler) extractTableNameFromQuery(query string) string {
-	// Simple parsing for "SELECT ... FROM table_name" queries
-	queryLower := strings.ToLower(query)
-	fromIndex := strings.Index(queryLower, " from ")
-	if fromIndex == -1 {
-		return ""
-	}
-	
-	// Extract everything after "FROM"
-	afterFrom := query[fromIndex+6:] // 6 = len(" from ")
-	
-	// Find the end of the table name (space, semicolon, or end of string)
-	endIndex := len(afterFrom)
-	for i, char := range afterFrom {
-		if char == ' ' || char == ';' || char == '\n' || char == '\r' {
-			endIndex = i
-			break
-		}
-	}
-	
-	tableName := strings.TrimSpace(afterFrom[:endIndex])
-	return tableName
-}
-
-// sendEmptyDataBlock sends an empty data block response
-func (h *ConnectionHandler) sendEmptyDataBlock() error {
-	// Send data packet type
-	if err := h.writer.WriteByte(ServerData); err != nil {
-		return err
-	}
-
-	// Send table name (empty string for query responses)
-	if err := h.writer.WriteString(""); err != nil {
-		return err
-	}
-
-	// Send block info
-	if err := h.writeBlockInfo(); err != nil {
-		return err
-	}
-
-	// Send column count (0)
-	if err := h.writer.WriteUvarint(0); err != nil {
-		return err
-	}
-
-	// Send row count (0)
-	if err := h.writer.WriteUvarint(0); err != nil {
-		return err
-	}
-
-	// Send end of stream
-	if err := h.writer.WriteByte(ServerEndOfStream); err != nil {
-		return err
-	}
-
-	return h.writer.Flush()
+	return value, nil
 }

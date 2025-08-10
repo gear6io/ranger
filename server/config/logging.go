@@ -23,6 +23,34 @@ func NewLogManager(cfg *LogConfig) *LogManager {
 	}
 }
 
+// CleanupLogFile clears the log file before starting logging
+func CleanupLogFile(filePath string) error {
+	if filePath == "" {
+		return nil // No file path specified, nothing to clean
+	}
+
+	// Check if file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return nil // File doesn't exist, nothing to clean
+	}
+
+	// Create log directory if it doesn't exist
+	logDir := filepath.Dir(filePath)
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return fmt.Errorf("failed to create log directory: %w", err)
+	}
+
+	// Truncate the file to clear its contents
+	file, err := os.OpenFile(filePath, os.O_WRONLY|os.O_TRUNC, 0666)
+	if err != nil {
+		return fmt.Errorf("failed to open log file for cleanup: %w", err)
+	}
+	defer file.Close()
+
+	// The file is now empty
+	return nil
+}
+
 // GetWriter returns a writer that handles log rotation
 func (lm *LogManager) GetWriter() (io.Writer, error) {
 	if lm.config.FilePath == "" {
@@ -218,6 +246,13 @@ func SetupLogger(cfg *Config) (zerolog.Logger, error) {
 
 	// File writer with rotation
 	if cfg.Log.FilePath != "" {
+		// Clean up the log file before starting logging if enabled
+		if cfg.Log.Cleanup {
+			if err := CleanupLogFile(cfg.Log.FilePath); err != nil {
+				return zerolog.Logger{}, fmt.Errorf("failed to cleanup log file: %w", err)
+			}
+		}
+
 		logManager := NewLogManager(&cfg.Log)
 		fileWriter, err := logManager.GetWriter()
 		if err != nil {

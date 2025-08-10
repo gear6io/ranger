@@ -21,10 +21,11 @@ native:
 
 # Logging Configuration
 log:
-  level: "info"           # debug, info, warn, error, fatal
+  level: "debug"           # debug, info, warn, error, fatal
   format: "console"       # console (human readable) or json
   file_path: "logs/icebox-server.log"
   console: true           # Whether to log to console
   max_size: 100          # Max file size in MB
   max_backups: 3         # Max number of backup files
-  max_age: 7             # Max age in days 
+  max_age: 7             # Max age in days
+  cleanup: true          # Whether to cleanup log file on startup 

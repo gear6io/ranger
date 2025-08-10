@@ -4,61 +4,39 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"math"
-	"net"
 )
 
-// PacketReader reads packets from the connection
+// PacketReader reads protocol packets
 type PacketReader struct {
-	conn net.Conn
+	conn io.Reader
 }
 
 // NewPacketReader creates a new packet reader
-func NewPacketReader(conn net.Conn) *PacketReader {
-	return &PacketReader{
-		conn: conn,
-	}
+func NewPacketReader(conn io.Reader) *PacketReader {
+	return &PacketReader{conn: conn}
 }
 
 // ReadByte reads a single byte
 func (r *PacketReader) ReadByte() (byte, error) {
 	buf := make([]byte, 1)
-	_, err := io.ReadFull(r.conn, buf)
-	if err != nil {
+	if _, err := r.conn.Read(buf); err != nil {
 		return 0, err
 	}
 	return buf[0], nil
 }
 
-// ReadUvarint reads an unsigned variable-length integer
-func (r *PacketReader) ReadUvarint() (uint64, error) {
-	return binary.ReadUvarint(&netConnReader{r.conn})
-}
-
-// ReadUint32 reads a 32-bit unsigned integer
+// ReadUint32 reads a 32-bit unsigned integer (big endian)
 func (r *PacketReader) ReadUint32() (uint32, error) {
 	buf := make([]byte, 4)
-	_, err := io.ReadFull(r.conn, buf)
-	if err != nil {
+	if _, err := r.conn.Read(buf); err != nil {
 		return 0, err
 	}
-	return binary.LittleEndian.Uint32(buf), nil
+	return binary.BigEndian.Uint32(buf), nil
 }
 
-// ReadFloat64 reads a 64-bit float
-func (r *PacketReader) ReadFloat64() (float64, error) {
-	buf := make([]byte, 8)
-	_, err := io.ReadFull(r.conn, buf)
-	if err != nil {
-		return 0, err
-	}
-	bits := binary.LittleEndian.Uint64(buf)
-	return math.Float64frombits(bits), nil
-}
-
-// ReadString reads a string
+// ReadString reads a string with length prefix (4 bytes, big endian)
 func (r *PacketReader) ReadString() (string, error) {
-	length, err := r.ReadUvarint()
+	length, err := r.ReadUint32()
 	if err != nil {
 		return "", err
 	}
@@ -68,17 +46,16 @@ func (r *PacketReader) ReadString() (string, error) {
 	}
 
 	buf := make([]byte, length)
-	_, err = io.ReadFull(r.conn, buf)
-	if err != nil {
+	if _, err := r.conn.Read(buf); err != nil {
 		return "", err
 	}
 
 	return string(buf), nil
 }
 
-// ReadBytes reads a byte array
+// ReadBytes reads bytes with length prefix
 func (r *PacketReader) ReadBytes() ([]byte, error) {
-	length, err := r.ReadUvarint()
+	length, err := r.ReadUint32()
 	if err != nil {
 		return nil, err
 	}
@@ -88,108 +65,114 @@ func (r *PacketReader) ReadBytes() ([]byte, error) {
 	}
 
 	buf := make([]byte, length)
-	_, err = io.ReadFull(r.conn, buf)
-	if err != nil {
+	if _, err := r.conn.Read(buf); err != nil {
 		return nil, err
 	}
 
 	return buf, nil
 }
 
-// PacketWriter writes packets to the connection
+// ReadUVarInt reads a variable-length unsigned integer
+func (r *PacketReader) ReadUVarInt() (uint64, error) {
+	var value uint64
+	var shift uint
+	for {
+		b, err := r.ReadByte()
+		if err != nil {
+			return 0, err
+		}
+		value |= uint64(b&0x7F) << shift
+		if b&0x80 == 0 {
+			break
+		}
+		shift += 7
+		if shift >= 64 {
+			return 0, fmt.Errorf("varint too long")
+		}
+	}
+	return value, nil
+}
+
+// PacketWriter writes protocol packets
 type PacketWriter struct {
-	conn net.Conn
-	buf  []byte
-	pos  int
+	conn io.Writer
 }
 
 // NewPacketWriter creates a new packet writer
-func NewPacketWriter(conn net.Conn) *PacketWriter {
-	return &PacketWriter{
-		conn: conn,
-		buf:  make([]byte, 1024),
-		pos:  0,
-	}
+func NewPacketWriter(conn io.Writer) *PacketWriter {
+	return &PacketWriter{conn: conn}
 }
 
 // WriteByte writes a single byte
 func (w *PacketWriter) WriteByte(b byte) error {
-	if w.pos >= len(w.buf) {
-		if err := w.Flush(); err != nil {
-			return err
-		}
-	}
-	w.buf[w.pos] = b
-	w.pos++
-	return nil
+	_, err := w.conn.Write([]byte{b})
+	return err
 }
 
-// WriteUvarint writes an unsigned variable-length integer
-func (w *PacketWriter) WriteUvarint(v uint64) error {
-	buf := make([]byte, binary.MaxVarintLen64)
-	n := binary.PutUvarint(buf, v)
-	return w.WriteBytes(buf[:n])
-}
-
-// WriteUint32 writes a 32-bit unsigned integer
-func (w *PacketWriter) WriteUint32(v uint32) error {
+// WriteUint32 writes a 32-bit unsigned integer (big endian)
+func (w *PacketWriter) WriteUint32(n uint32) error {
 	buf := make([]byte, 4)
-	binary.LittleEndian.PutUint32(buf, v)
-	return w.WriteBytes(buf)
+	binary.BigEndian.PutUint32(buf, n)
+	_, err := w.conn.Write(buf)
+	return err
 }
 
-// WriteFloat64 writes a 64-bit float
-func (w *PacketWriter) WriteFloat64(v float64) error {
-	// For now, we'll write the float as a string representation
-	// This is a simplified approach - in a real implementation, you'd want proper binary encoding
-	return w.WriteString(fmt.Sprintf("%f", v))
-}
-
-// WriteString writes a string
+// WriteString writes a string with length prefix
 func (w *PacketWriter) WriteString(s string) error {
-	if err := w.WriteUvarint(uint64(len(s))); err != nil {
+	if err := w.WriteUint32(uint32(len(s))); err != nil {
 		return err
 	}
-	return w.WriteBytes([]byte(s))
-}
-
-// WriteBytes writes a byte array
-func (w *PacketWriter) WriteBytes(b []byte) error {
-	if w.pos+len(b) > len(w.buf) {
-		if err := w.Flush(); err != nil {
-			return err
-		}
-		// If still too large, write directly
-		if len(b) > len(w.buf) {
-			_, err := w.conn.Write(b)
-			return err
-		}
-	}
-	copy(w.buf[w.pos:], b)
-	w.pos += len(b)
-	return nil
-}
-
-// Flush flushes the buffer to the connection
-func (w *PacketWriter) Flush() error {
-	if w.pos > 0 {
-		_, err := w.conn.Write(w.buf[:w.pos])
-		w.pos = 0
+	if len(s) > 0 {
+		_, err := w.conn.Write([]byte(s))
 		return err
 	}
 	return nil
 }
 
-// netConnReader implements io.ByteReader for net.Conn
-type netConnReader struct {
-	conn net.Conn
+// WriteBytes writes bytes with length prefix
+func (w *PacketWriter) WriteBytes(data []byte) error {
+	if err := w.WriteUint32(uint32(len(data))); err != nil {
+		return err
+	}
+	if len(data) > 0 {
+		_, err := w.conn.Write(data)
+		return err
+	}
+	return nil
 }
 
-func (r *netConnReader) ReadByte() (byte, error) {
-	buf := make([]byte, 1)
-	_, err := io.ReadFull(r.conn, buf)
-	if err != nil {
-		return 0, err
+// WriteMessage writes a complete message with length prefix
+func (w *PacketWriter) WriteMessage(msgType byte, payload []byte) error {
+	// Calculate total message length (type + payload)
+	totalLength := 1 + len(payload)
+
+	// Write message length (4 bytes, big endian)
+	if err := w.WriteUint32(uint32(totalLength)); err != nil {
+		return fmt.Errorf("failed to write message length: %w", err)
 	}
-	return buf[0], nil
+
+	// Write message type
+	if err := w.WriteByte(msgType); err != nil {
+		return fmt.Errorf("failed to write message type: %w", err)
+	}
+
+	// Write payload if any
+	if len(payload) > 0 {
+		if _, err := w.conn.Write(payload); err != nil {
+			return fmt.Errorf("failed to write payload: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// WriteUVarInt writes a variable-length unsigned integer
+func (w *PacketWriter) WriteUVarInt(n uint64) error {
+	for n >= 0x80 {
+		if err := w.WriteByte(byte(n) | 0x80); err != nil {
+			return err
+		}
+		n >>= 7
+	}
+	return w.WriteByte(byte(n))
 }

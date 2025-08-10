@@ -45,6 +45,7 @@ type LogConfig struct {
 	MaxSize    int    `yaml:"max_size"`    // Max file size in MB
 	MaxBackups int    `yaml:"max_backups"` // Max number of backup files
 	MaxAge     int    `yaml:"max_age"`     // Max age in days
+	Cleanup    bool   `yaml:"cleanup"`     // Whether to cleanup log file on startup
 }
 
 // LoadDefaultConfig returns a default configuration
@@ -73,6 +74,7 @@ func LoadDefaultConfig() *Config {
 			MaxSize:    100, // 100MB
 			MaxBackups: 3,
 			MaxAge:     7, // 7 days
+			Cleanup:    true, // Cleanup log file on startup by default
 		},
 	}
 }

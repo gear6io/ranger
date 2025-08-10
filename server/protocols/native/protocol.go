@@ -1,43 +1,47 @@
 package native
 
-// Client packet types
+// Protocol constants matching ClickHouse native protocol
+// See https://github.com/ClickHouse/ClickHouse/blob/master/src/Core/Protocol.h
 const (
-	ClientHello    byte = 0
-	ClientQuery    byte = 1
-	ClientData     byte = 2
-	ClientCancel   byte = 3
-	ClientPing     byte = 4
-	ClientAddendum byte = 110 // Addendum packet type for quota key and other extensions
+	// Client message types
+	ClientHello  = 0
+	ClientQuery  = 1
+	ClientData   = 2
+	ClientCancel = 3
+	ClientPing   = 4
+
+	// Server message types
+	ServerHello               = 0
+	ServerData                = 1
+	ServerException           = 2
+	ServerProgress            = 3
+	ServerPong                = 4
+	ServerEndOfStream         = 5
+	ServerProfileInfo         = 6
+	ServerTotals              = 7
+	ServerExtremes            = 8
+	ServerTablesStatus        = 9
+	ServerLog                 = 10
+	ServerTableColumns        = 11
+	ServerPartUUIDs           = 12
+	ServerReadTaskRequest     = 13
+	ServerProfileEvents       = 14
+	ServerTreeReadTaskRequest = 15
+
+	// Protocol versions
+	DBMS_TCP_PROTOCOL_VERSION = 54460
 )
 
-// Server packet types
-const (
-	ServerHello                byte = 0
-	ServerData                 byte = 1
-	ServerException            byte = 2
-	ServerProgress             byte = 3
-	ServerPong                 byte = 4
-	ServerEndOfStream          byte = 5
-	ServerProfileInfo          byte = 6
-	ServerTotals               byte = 7
-	ServerExtremes             byte = 8
-	ServerTablesStatusResponse byte = 9
-	ServerLog                  byte = 10
-	ServerTableColumns         byte = 11
-	ServerPartUUIDs            byte = 12
-	ServerReadTaskRequest      byte = 13
-	ServerDataBlock            byte = 14
-)
+// Block info structure for data transfer
+type BlockInfo struct {
+	IsOverflows bool
+	BucketNum   int32
+}
 
-// Compression flags
-const (
-	CompressionEnabled  uint64 = 1
-	CompressionDisabled uint64 = 0
-)
-
-// Query stages
-const (
-	QueryStageComplete           uint64 = 2
-	QueryStageFetchColumns       uint64 = 1
-	QueryStageWithMergeableState uint64 = 0
-)
+// Data block structure
+type DataBlock struct {
+	TableName   string
+	Columns     []string
+	ColumnTypes []string
+	Rows        [][]interface{}
+}
