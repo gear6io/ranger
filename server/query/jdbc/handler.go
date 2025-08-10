@@ -11,19 +11,26 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// QueryEngineInterface defines the interface for query execution
+type QueryEngineInterface interface {
+	ExecuteQuery(ctx context.Context, query string) (*duckdb.QueryResult, error)
+}
+
 // JDBCHandler handles JDBC protocol communication and SQL execution
 type JDBCHandler struct {
-	engine *duckdb.Engine
-	logger zerolog.Logger
-	ctx    context.Context
+	engine        QueryEngineInterface
+	logger        zerolog.Logger
+	ctx           context.Context
+	sqlMiddleware *SQLParserMiddleware
 }
 
 // NewJDBCHandler creates a new JDBC handler
-func NewJDBCHandler(engine *duckdb.Engine, logger zerolog.Logger, ctx context.Context) *JDBCHandler {
+func NewJDBCHandler(engine QueryEngineInterface, logger zerolog.Logger, ctx context.Context) *JDBCHandler {
 	return &JDBCHandler{
-		engine: engine,
-		logger: logger,
-		ctx:    ctx,
+		engine:        engine,
+		logger:        logger,
+		ctx:           ctx,
+		sqlMiddleware: NewSQLParserMiddleware(logger),
 	}
 }
 
@@ -107,6 +114,40 @@ func (h *JDBCHandler) handleQuery(conn io.WriteCloser, msg *Message) error {
 
 	h.logger.Debug().Str("query", query).Msg("Executing query")
 
+	// Step 1: Analyze the query using SQL parser middleware
+	analysis, err := h.sqlMiddleware.AnalyzeQuery(query)
+	if err != nil {
+		h.logger.Warn().Err(err).Str("query", query).Msg("Query analysis failed")
+		// Continue execution even if analysis fails - don't block queries
+	} else {
+		// Step 2: Validate the query for security and business rules
+		if validationErr := h.sqlMiddleware.ValidateQuery(analysis); validationErr != nil {
+			h.logger.Warn().Err(validationErr).Str("query", query).Msg("Query validation failed")
+			// For now, log the validation error but continue execution
+			// In production, you might want to block these queries
+		}
+
+		// Step 3: Log detailed query information for monitoring
+		h.logger.Info().
+			Str("statementType", analysis.StatementType).
+			Str("complexity", analysis.Complexity).
+			Int("tableCount", len(analysis.Tables)).
+			Int("columnCount", len(analysis.Columns)).
+			Bool("hasJoins", analysis.HasJoins).
+			Bool("hasSubqueries", analysis.HasSubqueries).
+			Bool("hasAggregations", analysis.HasAggregations).
+			Dur("parseTime", analysis.ParseTime).
+			Msg("Query analyzed successfully")
+
+		// Step 4: Log optimization hints if available
+		if len(analysis.OptimizationHints) > 0 {
+			h.logger.Warn().
+				Strs("optimizationHints", analysis.OptimizationHints).
+				Str("query", query).
+				Msg("Query optimization suggestions available")
+		}
+	}
+
 	// Execute query using DuckDB engine
 	result, err := h.engine.ExecuteQuery(h.ctx, query)
 	if err != nil {
@@ -136,8 +177,16 @@ func (h *JDBCHandler) handleQuery(conn io.WriteCloser, msg *Message) error {
 		}
 	}
 
-	// Send command complete
-	tag := fmt.Sprintf("SELECT %d", len(result.Rows))
+	// Send command complete with enhanced tag from SQL parser middleware
+	var tag string
+	if analysis != nil && analysis.IsValid {
+		// Use enhanced command complete tag from middleware
+		tag = h.sqlMiddleware.GenerateCommandCompleteTag(analysis, len(result.Rows))
+	} else {
+		// Fallback to basic tag if analysis failed
+		tag = fmt.Sprintf("SELECT %d", len(result.Rows))
+	}
+
 	if err := WriteCommandComplete(conn, tag); err != nil {
 		return err
 	}
@@ -227,21 +276,47 @@ func (h *JDBCHandler) getTypeOID(columnName string) int32 {
 	}
 }
 
-// ExecuteQuery executes a SQL query and returns results
-func (h *JDBCHandler) ExecuteQuery(ctx context.Context, query string) (*QueryResult, error) {
-	// Use the DuckDB engine to execute the query
-	result, err := h.engine.ExecuteQuery(ctx, query)
+// ExecuteQuery executes a SQL query and returns results with SQL parser analysis
+func (h *JDBCHandler) ExecuteQuery(query string) (*duckdb.QueryResult, error) {
+	// Analyze the query using SQL parser middleware
+	analysis, err := h.sqlMiddleware.AnalyzeQuery(query)
 	if err != nil {
-		return nil, err
+		h.logger.Debug().Err(err).Str("query", query).Msg("Query analysis failed during execution")
+	} else {
+		h.logger.Debug().
+			Str("statementType", analysis.StatementType).
+			Str("complexity", analysis.Complexity).
+			Msg("Query analysis completed during execution")
 	}
 
-	// Convert to our format
-	return &QueryResult{
-		Columns:  result.Columns,
-		Rows:     result.Rows,
-		RowCount: result.RowCount,
-		Duration: result.Duration,
-	}, nil
+	// Execute the query using the engine
+	return h.engine.ExecuteQuery(h.ctx, query)
+}
+
+// GetQueryAnalysis analyzes a SQL query and returns detailed analysis
+func (h *JDBCHandler) GetQueryAnalysis(query string) (*QueryAnalysis, error) {
+	return h.sqlMiddleware.AnalyzeQuery(query)
+}
+
+// IsQueryAllowed checks if a query is allowed based on security and business rules
+func (h *JDBCHandler) IsQueryAllowed(query string) (bool, error) {
+	analysis, err := h.sqlMiddleware.AnalyzeQuery(query)
+	if err != nil {
+		return false, err
+	}
+
+	validationErr := h.sqlMiddleware.ValidateQuery(analysis)
+	return validationErr == nil, validationErr
+}
+
+// GetQueryComplexity returns the complexity level of a query
+func (h *JDBCHandler) GetQueryComplexity(query string) (string, error) {
+	analysis, err := h.sqlMiddleware.AnalyzeQuery(query)
+	if err != nil {
+		return "UNKNOWN", err
+	}
+
+	return analysis.Complexity, nil
 }
 
 // QueryResult represents the result of a SQL query
