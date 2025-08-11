@@ -879,8 +879,8 @@ func (c *connection) readQueryResponse(query string) (*Rows, error) {
 func (c *connection) readExecResponse() error {
 	// Read response packets until EndOfStream
 	for {
-		// Read message length (4 bytes, big endian)
-		messageLength, err := c.readUint32BigEndian()
+		// Read message length (4 bytes, big endian) - we need this to know packet boundaries
+		_, err := c.readUint32BigEndian()
 		if err != nil {
 			return fmt.Errorf("failed to read message length: %w", err)
 		}
@@ -906,16 +906,48 @@ func (c *connection) readExecResponse() error {
 			}
 			return fmt.Errorf("server exception")
 		case ServerData:
-			// For now, just read the data payload and continue
-			// The payload length is messageLength - 1 (for the packet type byte)
-			payloadLength := messageLength - 1
-			if payloadLength > 0 {
-				buf := make([]byte, payloadLength)
-				_, err = c.conn.Read(buf)
+			// Parse the ServerData packet according to the server's format:
+			// columnCount (uvarint) + columnName (string) + columnType (string) + dataBlock (uvarint) + rowCount (uvarint) + data (string)
+
+			// Read column count
+			columnCount, err := c.readUvarint()
+			if err != nil {
+				return fmt.Errorf("failed to read column count: %w", err)
+			}
+
+			// Read column names and types
+			for i := uint64(0); i < columnCount; i++ {
+				// Read column name
+				_, err = c.readString()
 				if err != nil {
-					return fmt.Errorf("failed to read data payload: %w", err)
+					return fmt.Errorf("failed to read column %d name: %w", i, err)
+				}
+
+				// Read column type
+				_, err = c.readString()
+				if err != nil {
+					return fmt.Errorf("failed to read column %d type: %w", i, err)
 				}
 			}
+
+			// Read data block
+			_, err = c.readUvarint()
+			if err != nil {
+				return fmt.Errorf("failed to read data block: %w", err)
+			}
+
+			// Read row count
+			_, err = c.readUvarint()
+			if err != nil {
+				return fmt.Errorf("failed to read row count: %w", err)
+			}
+
+			// Read data (raw string)
+			_, err = c.readString()
+			if err != nil {
+				return fmt.Errorf("failed to read data: %w", err)
+			}
+
 			// Continue reading for more packets
 			continue
 		default:

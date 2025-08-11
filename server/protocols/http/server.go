@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -55,6 +56,12 @@ func (s *Server) Start(ctx context.Context) error {
 	// Add status endpoint
 	mux.HandleFunc("/status", s.handleStatus)
 
+	// Add server info endpoint
+	mux.HandleFunc("/info", s.handleInfo)
+
+	// Add health check endpoint
+	mux.HandleFunc("/health", s.handleHealth)
+
 	s.server = &http.Server{
 		Addr:    addr,
 		Handler: mux,
@@ -87,6 +94,8 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.logger.Info().Str("query", queryStr).Msg("Executing query via HTTP")
+
 	// Execute query using QueryEngine
 	result, err := s.queryEngine.ExecuteQuery(r.Context(), queryStr)
 	if err != nil {
@@ -95,13 +104,38 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return result as JSON
+	// Return comprehensive result as JSON
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
-	// Simple JSON response for now
-	response := fmt.Sprintf(`{"status":"success","rows":%d,"message":"%s"}`, result.RowCount, result.Message)
-	w.Write([]byte(response))
+	// Create a proper JSON response structure
+	response := map[string]interface{}{
+		"status":    "success",
+		"query":     queryStr,
+		"rowCount":  result.RowCount,
+		"columns":   result.Columns,
+		"message":   result.Message,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+
+	// Add data if available
+	if result.Data != nil {
+		if rows, ok := result.Data.([][]interface{}); ok {
+			response["data"] = rows
+		} else {
+			response["data"] = result.Data
+		}
+	}
+
+	// Convert to JSON
+	jsonResponse, err := json.Marshal(response)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("Failed to marshal JSON response")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Write(jsonResponse)
 }
 
 // handleStatus handles status requests
@@ -112,6 +146,55 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	// Simple status response
 	response := fmt.Sprintf(`{"status":"running","server":"http"}`)
 	w.Write([]byte(response))
+}
+
+// handleInfo handles server information requests
+func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	info := map[string]interface{}{
+		"server":      "icebox-http",
+		"version":     "0.1.0",
+		"protocol":    "HTTP/1.1",
+		"queryEngine": "enabled",
+		"endpoints": []string{
+			"POST /query - Execute SQL queries",
+			"GET /status - Server status",
+			"GET /info - Server information",
+			"GET /health - Health check",
+		},
+	}
+
+	jsonResponse, err := json.Marshal(info)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("Failed to marshal info response")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Write(jsonResponse)
+}
+
+// handleHealth handles health check requests
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	health := map[string]interface{}{
+		"status":    "healthy",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"server":    "icebox-http",
+	}
+
+	jsonResponse, err := json.Marshal(health)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("Failed to marshal health response")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Write(jsonResponse)
 }
 
 // Stop stops the HTTP server

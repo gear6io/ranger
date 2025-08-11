@@ -7,20 +7,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TFMV/icebox/server/query"
 	"github.com/rs/zerolog"
 )
 
 // JDBCHandler handles JDBC protocol communication and SQL execution
 type JDBCHandler struct {
-	logger zerolog.Logger
-	ctx    context.Context
+	queryEngine *query.Engine
+	logger      zerolog.Logger
+	ctx         context.Context
 }
 
 // NewJDBCHandler creates a new JDBC handler
-func NewJDBCHandler(logger zerolog.Logger, ctx context.Context) *JDBCHandler {
+func NewJDBCHandler(queryEngine *query.Engine, logger zerolog.Logger, ctx context.Context) *JDBCHandler {
 	return &JDBCHandler{
-		logger: logger,
-		ctx:    ctx,
+		queryEngine: queryEngine,
+		logger:      logger,
+		ctx:         ctx,
 	}
 }
 
@@ -99,35 +102,48 @@ func (h *JDBCHandler) handleMessage(conn io.WriteCloser, msg *Message) error {
 
 // handleQuery handles a simple query
 func (h *JDBCHandler) handleQuery(conn io.WriteCloser, msg *Message) error {
-	query := strings.TrimSpace(string(msg.Data))
-	h.logger.Debug().Str("query", query).Msg("Executing query")
+	queryStr := strings.TrimSpace(string(msg.Data))
+	h.logger.Debug().Str("query", queryStr).Msg("Executing query using QueryEngine")
 
-	// TODO: Implement actual query execution
-	// For now, just return a simple response
-	result := &QueryResult{
-		Columns:  []string{"message"},
-		Rows:     [][]interface{}{{"Query execution not yet implemented"}},
-		RowCount: 1,
-		Duration: time.Millisecond,
+	// Execute query using the QueryEngine
+	result, err := h.queryEngine.ExecuteQuery(h.ctx, queryStr)
+	if err != nil {
+		h.logger.Error().Err(err).Str("query", queryStr).Msg("Query execution failed")
+		return WriteErrorResponse(conn, "XX000", fmt.Sprintf("Query execution failed: %v", err))
+	}
+
+	// Convert QueryEngine result to JDBC format
+	columns := make([]ColumnDescription, len(result.Columns))
+	for i, colName := range result.Columns {
+		columns[i] = ColumnDescription{
+			Name:     colName,
+			TypeOID:  25, // text type for now, could be enhanced with proper type mapping
+			TypeSize: -1,
+		}
 	}
 
 	// Send row description
-	columns := []ColumnDescription{
-		{Name: "message", TypeOID: 25, TypeSize: -1}, // text type
-	}
 	if err := WriteRowDescription(conn, columns); err != nil {
 		return fmt.Errorf("failed to write row description: %w", err)
 	}
 
 	// Send data rows
-	for _, row := range result.Rows {
-		if err := WriteDataRow(conn, row); err != nil {
-			return fmt.Errorf("failed to write data row: %w", err)
+	if result.Data != nil {
+		if rows, ok := result.Data.([][]interface{}); ok {
+			for _, row := range rows {
+				if err := WriteDataRow(conn, row); err != nil {
+					return fmt.Errorf("failed to write data row: %w", err)
+				}
+			}
 		}
 	}
 
-	// Send command complete
-	if err := WriteCommandComplete(conn, "SELECT 1"); err != nil {
+	// Send command complete with appropriate message
+	commandMsg := "SELECT"
+	if result.RowCount > 0 {
+		commandMsg = fmt.Sprintf("SELECT %d", result.RowCount)
+	}
+	if err := WriteCommandComplete(conn, commandMsg); err != nil {
 		return fmt.Errorf("failed to write command complete: %w", err)
 	}
 
@@ -183,12 +199,25 @@ func (h *JDBCHandler) handleTerminate(conn io.WriteCloser, msg *Message) error {
 
 // ExecuteQuery executes a SQL query (for testing)
 func (h *JDBCHandler) ExecuteQuery(ctx context.Context, query string) (*QueryResult, error) {
-	// TODO: Implement actual query execution
+	// Execute query using the QueryEngine
+	result, err := h.queryEngine.ExecuteQuery(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query execution failed: %w", err)
+	}
+
+	// Convert QueryEngine result to JDBC QueryResult format
+	var rows [][]interface{}
+	if result.Data != nil {
+		if dataRows, ok := result.Data.([][]interface{}); ok {
+			rows = dataRows
+		}
+	}
+
 	return &QueryResult{
-		Columns:  []string{"message"},
-		Rows:     [][]interface{}{{"Query execution not yet implemented"}},
-		RowCount: 1,
-		Duration: time.Millisecond,
+		Columns:  result.Columns,
+		Rows:     rows,
+		RowCount: result.RowCount,
+		Duration: time.Duration(0), // QueryEngine doesn't provide duration yet
 	}, nil
 }
 

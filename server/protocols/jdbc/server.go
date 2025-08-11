@@ -11,25 +11,25 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// Server represents the JDBC protocol server
+// Server represents a JDBC server for icebox
 type Server struct {
-	queryEngine *query.Engine
 	logger      zerolog.Logger
 	server      net.Listener
 	ctx         context.Context
 	cancel      context.CancelFunc
 	wg          sync.WaitGroup
+	queryEngine *query.Engine
 }
 
-// NewServer creates a new JDBC server instance
+// NewServer creates a new JDBC server
 func NewServer(queryEngine *query.Engine, logger zerolog.Logger) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Server{
-		queryEngine: queryEngine,
 		logger:      logger.With().Str("component", "jdbc-server").Logger(),
 		ctx:         ctx,
 		cancel:      cancel,
+		queryEngine: queryEngine,
 	}, nil
 }
 
@@ -120,9 +120,16 @@ func (s *Server) handleConnection(conn net.Conn) {
 		conn.Close()
 	}()
 
-	s.logger.Debug().Str("remote_addr", conn.RemoteAddr().String()).Msg("New JDBC connection")
+	clientAddr := conn.RemoteAddr().String()
+	s.logger.Debug().Str("remote_addr", clientAddr).Msg("New JDBC connection")
 
-	// TODO: Implement actual JDBC protocol handling
-	// For now, just log the connection and close it
-	s.logger.Info().Str("remote_addr", conn.RemoteAddr().String()).Msg("JDBC connection established (protocol handling pending)")
+	// Create a new JDBC handler with the QueryEngine
+	handler := NewJDBCHandler(s.queryEngine, s.logger, s.ctx)
+
+	// Handle the connection using the QueryEngine
+	if err := handler.HandleConnection(conn); err != nil {
+		s.logger.Error().Err(err).Str("client", clientAddr).Msg("Error handling JDBC connection")
+	}
+
+	s.logger.Debug().Str("client", clientAddr).Msg("JDBC connection closed")
 }

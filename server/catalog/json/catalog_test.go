@@ -792,7 +792,7 @@ func TestConfigurationValidation(t *testing.T) {
 				},
 			},
 			expectError: true,
-			errorMsg:    "catalog URI cannot be empty",
+			errorMsg:    "catalog URI is required",
 		},
 		{
 			name: "invalid URI format",
@@ -807,7 +807,35 @@ func TestConfigurationValidation(t *testing.T) {
 				},
 			},
 			expectError: true,
-			errorMsg:    "catalog URI must be an absolute path or relative path",
+			errorMsg:    "catalog URI must be a valid URI scheme (file://, s3://), absolute path, or relative path",
+		},
+		{
+			name: "valid file:// URI scheme",
+			config: &config.Config{
+				Name: "test",
+				Catalog: config.CatalogConfig{
+					Type: "json",
+					JSON: &config.JSONConfig{
+						URI:       "file://./catalog.json",
+						Warehouse: "/tmp",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "valid s3:// URI scheme",
+			config: &config.Config{
+				Name: "test",
+				Catalog: config.CatalogConfig{
+					Type: "json",
+					JSON: &config.JSONConfig{
+						URI:       "s3://bucket/catalog.json",
+						Warehouse: "/tmp",
+					},
+				},
+			},
+			expectError: false,
 		},
 		{
 			name: "invalid warehouse path",

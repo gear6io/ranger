@@ -1,6 +1,7 @@
 package native
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -8,30 +9,33 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/TFMV/icebox/server/query"
 	"github.com/rs/zerolog"
 )
 
 // ConnectionHandler handles a single client connection
 type ConnectionHandler struct {
 	conn         net.Conn
+	queryEngine  *query.Engine
 	logger       zerolog.Logger
 	reader       *PacketReader
 	writer       *PacketWriter
 	helloSent    bool
 	currentQuery string
-	// In-memory storage for tables
+	// In-memory storage for tables (fallback)
 	tables map[string][][]interface{}
 	mu     sync.RWMutex
 }
 
 // NewConnectionHandler creates a new connection handler
-func NewConnectionHandler(conn net.Conn, logger zerolog.Logger) *ConnectionHandler {
+func NewConnectionHandler(conn net.Conn, queryEngine *query.Engine, logger zerolog.Logger) *ConnectionHandler {
 	return &ConnectionHandler{
-		conn:   conn,
-		logger: logger,
-		reader: NewPacketReader(conn),
-		writer: NewPacketWriter(conn),
-		tables: make(map[string][][]interface{}),
+		conn:        conn,
+		queryEngine: queryEngine,
+		logger:      logger,
+		reader:      NewPacketReader(conn),
+		writer:      NewPacketWriter(conn),
+		tables:      make(map[string][][]interface{}),
 	}
 }
 
@@ -191,20 +195,125 @@ func (h *ConnectionHandler) handleClientQuery(payload []byte) error {
 	// Store current query for batch operations
 	h.currentQuery = query
 
-	// Check if this is a SELECT query
-	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SELECT") {
-		// Execute SELECT query
-		if err := h.executeSelectQuery(query); err != nil {
-			h.logger.Error().Err(err).Msg("Failed to execute SELECT query")
-			return h.sendException(fmt.Sprintf("Failed to execute query: %v", err))
+	// Check if this is a simple query that should bypass the query engine
+	queryUpper := strings.ToUpper(strings.TrimSpace(query))
+
+	// For simple SELECT queries, go directly to native server handling
+	// This avoids parser crashes and provides better performance
+	if strings.HasPrefix(queryUpper, "SELECT") {
+		// Handle simple queries directly with native server logic
+		return h.executeSelectQuery(query)
+	}
+
+	// For non-SELECT queries, try the query engine first
+	ctx := context.Background() // Create a context for the query
+	result, err := h.queryEngine.ExecuteQuery(ctx, query)
+	if err != nil {
+		h.logger.Debug().Err(err).Str("query", query).Msg("Query engine failed, falling back to native server handling")
+
+		// Fall back to native server query handling for simple queries
+		if strings.HasPrefix(queryUpper, "SELECT") {
+			return h.executeSelectQuery(query)
+		} else {
+			// For non-SELECT queries, send acknowledgment
+			h.logger.Debug().Msg("Sending acknowledgment for non-SELECT query")
+
+			// Send acknowledgment in a format the client can parse:
+			// columnCount (1) + columnName ("result") + columnType ("String") + dataBlock (1) + rowCount (1) + data (acknowledgment message)
+			ackPayload := make([]byte, 0, 256)
+
+			// Column count: 1
+			ackPayload = append(ackPayload, 0x01) // uvarint 1
+
+			// Column name: "result" (4-byte length + content)
+			resultName := "result"
+			resultNameLen := make([]byte, 4)
+			binary.BigEndian.PutUint32(resultNameLen, uint32(len(resultName)))
+			ackPayload = append(ackPayload, resultNameLen...)
+			ackPayload = append(ackPayload, []byte(resultName)...)
+
+			// Column type: "String" (4-byte length + content)
+			resultType := "String"
+			resultTypeLen := make([]byte, 4)
+			binary.BigEndian.PutUint32(resultTypeLen, uint32(len(resultType)))
+			ackPayload = append(ackPayload, resultTypeLen...)
+			ackPayload = append(ackPayload, []byte(resultType)...)
+
+			// Data block: 1
+			ackPayload = append(ackPayload, 0x01) // uvarint 1
+
+			// Row count: 1
+			ackPayload = append(ackPayload, 0x01) // uvarint 1
+
+			// Data: acknowledgment message (4-byte length + content)
+			ack := fmt.Sprintf("Query executed successfully: %s", query)
+			ackLen := make([]byte, 4)
+			binary.BigEndian.PutUint32(ackLen, uint32(len(ack)))
+			ackPayload = append(ackPayload, ackLen...)
+			ackPayload = append(ackPayload, []byte(ack)...)
+
+			if err := h.writer.WriteMessage(ServerData, ackPayload); err != nil {
+				h.logger.Error().Err(err).Msg("Failed to send query acknowledgment")
+				return err
+			}
+
+			// Send EndOfStream
+			if err := h.writer.WriteMessage(ServerEndOfStream, nil); err != nil {
+				h.logger.Error().Err(err).Msg("Failed to send EndOfStream")
+				return err
+			}
+
+			h.logger.Debug().Msg("Query acknowledgment sent successfully")
+			return nil
+		}
+	}
+
+	// Query engine succeeded, handle the result
+	if strings.HasPrefix(queryUpper, "SELECT") {
+		// For SELECT queries, send the results
+		if err := h.sendQueryEngineResults(result); err != nil {
+			h.logger.Error().Err(err).Msg("Failed to send query results")
+			return err
 		}
 	} else {
-		// For non-SELECT queries, send acknowledgment and EndOfStream
+		// For non-SELECT queries, send acknowledgment
 		h.logger.Debug().Msg("Sending acknowledgment for non-SELECT query")
 
-		// Send acknowledgment
-		ack := fmt.Sprintf("Query received: %s", query)
-		if err := h.writer.WriteMessage(ServerData, []byte(ack)); err != nil {
+		// Send acknowledgment in a format the client can parse:
+		// columnCount (1) + columnName ("result") + columnType ("String") + dataBlock (1) + rowCount (1) + data (acknowledgment message)
+		ackPayload := make([]byte, 0, 256)
+
+		// Column count: 1
+		ackPayload = append(ackPayload, 0x01) // uvarint 1
+
+		// Column name: "result" (4-byte length + content)
+		resultName := "result"
+		resultNameLen := make([]byte, 4)
+		binary.BigEndian.PutUint32(resultNameLen, uint32(len(resultName)))
+		ackPayload = append(ackPayload, resultNameLen...)
+		ackPayload = append(ackPayload, []byte(resultName)...)
+
+		// Column type: "String" (4-byte length + content)
+		resultType := "String"
+		resultTypeLen := make([]byte, 4)
+		binary.BigEndian.PutUint32(resultTypeLen, uint32(len(resultType)))
+		ackPayload = append(ackPayload, resultTypeLen...)
+		ackPayload = append(ackPayload, []byte(resultType)...)
+
+		// Data block: 1
+		ackPayload = append(ackPayload, 0x01) // uvarint 1
+
+		// Row count: 1
+		ackPayload = append(ackPayload, 0x01) // uvarint 1
+
+		// Data: acknowledgment message (4-byte length + content)
+		ack := fmt.Sprintf("Query executed successfully: %s", query)
+		ackLen := make([]byte, 4)
+		binary.BigEndian.PutUint32(ackLen, uint32(len(ack)))
+		ackPayload = append(ackPayload, ackLen...)
+		ackPayload = append(ackPayload, []byte(ack)...)
+
+		if err := h.writer.WriteMessage(ServerData, ackPayload); err != nil {
 			h.logger.Error().Err(err).Msg("Failed to send query acknowledgment")
 			return err
 		}
@@ -323,28 +432,37 @@ func (h *ConnectionHandler) sendSimpleExpressionResult(columnName, columnType, v
 	// Create payload
 	payload := make([]byte, 0, 256)
 
-	// Column count = 1
-	payload = append(payload, 1) // uvarint 1
+	// Column count = 1 (as uvarint)
+	columnCountBytes := make([]byte, binary.MaxVarintLen64)
+	n := binary.PutUvarint(columnCountBytes, 1)
+	payload = append(payload, columnCountBytes[:n]...)
 
-	// Column name (4-byte length + content)
+	// Column name (4-byte big-endian length + content)
 	nameLen := make([]byte, 4)
 	binary.BigEndian.PutUint32(nameLen, uint32(len(columnName)))
 	payload = append(payload, nameLen...)
 	payload = append(payload, []byte(columnName)...)
 
-	// Column type (4-byte length + content)
+	// Column type (4-byte big-endian length + content)
 	typeLen := make([]byte, 4)
 	binary.BigEndian.PutUint32(typeLen, uint32(len(columnType)))
 	payload = append(payload, typeLen...)
 	payload = append(payload, []byte(columnType)...)
 
-	// Data block = 0
-	payload = append(payload, 0) // uvarint 0
+	// Data block = 0 (as uvarint)
+	dataBlockBytes := make([]byte, binary.MaxVarintLen64)
+	n2 := binary.PutUvarint(dataBlockBytes, 0)
+	payload = append(payload, dataBlockBytes[:n2]...)
 
-	// Row count = 1
-	payload = append(payload, 1) // uvarint 1
+	// Row count = 1 (as uvarint)
+	rowCountBytes := make([]byte, binary.MaxVarintLen64)
+	n3 := binary.PutUvarint(rowCountBytes, 1)
+	payload = append(payload, rowCountBytes[:n3]...)
 
-	// Data (comma-separated values for the column)
+	// Data (4-byte big-endian length + string content)
+	dataLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(dataLen, uint32(len(value)))
+	payload = append(payload, dataLen...)
 	payload = append(payload, []byte(value)...)
 
 	if err := h.writer.WriteMessage(ServerData, payload); err != nil {
@@ -366,8 +484,33 @@ func (h *ConnectionHandler) sendSimpleExpressionResult(columnName, columnType, v
 func (h *ConnectionHandler) sendEmptyResultSet() error {
 	h.logger.Debug().Msg("Sending empty result set")
 
-	// Send ServerData with empty content
-	if err := h.writer.WriteMessage(ServerData, []byte{}); err != nil {
+	// Create payload for empty result set
+	// Format: columnCount (uvarint) + columnName (string) + columnType (string) + dataBlock (uvarint) + rowCount (uvarint) + data (string)
+	payload := make([]byte, 0, 64)
+
+	// Column count = 0 (as uvarint)
+	columnCountBytes := make([]byte, binary.MaxVarintLen64)
+	n := binary.PutUvarint(columnCountBytes, 0)
+	payload = append(payload, columnCountBytes[:n]...)
+
+	// No column name or type for empty result set
+	// Data block = 0 (as uvarint)
+	dataBlockBytes := make([]byte, binary.MaxVarintLen64)
+	n2 := binary.PutUvarint(dataBlockBytes, 0)
+	payload = append(payload, dataBlockBytes[:n2]...)
+
+	// Row count = 0 (as uvarint)
+	rowCountBytes := make([]byte, binary.MaxVarintLen64)
+	n3 := binary.PutUvarint(rowCountBytes, 0)
+	payload = append(payload, rowCountBytes[:n3]...)
+
+	// Empty data string (4-byte length + empty content)
+	dataLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(dataLen, 0)
+	payload = append(payload, dataLen...)
+
+	// Send ServerData with proper payload
+	if err := h.writer.WriteMessage(ServerData, payload); err != nil {
 		return err
 	}
 
@@ -389,76 +532,79 @@ func (h *ConnectionHandler) sendQueryResults(tableName string, rows [][]interfac
 	columnNames := []string{"id", "name", "email", "created_at"}
 	columnTypes := []string{"UInt32", "String", "String", "DateTime"}
 
-	// For each column, send a ServerData packet
-	for colIdx, columnName := range columnNames {
-		var payload []byte
+	// Create one ServerData packet with all column data
+	payload := make([]byte, 0, 1024)
 
-		// Column count (uvarint) - always 1 for single column
-		columnCount := uint64(1)
-		columnCountBytes := make([]byte, binary.MaxVarintLen64)
-		n := binary.PutUvarint(columnCountBytes, columnCount)
-		payload = append(payload, columnCountBytes[:n]...)
+	// Column count (uvarint) - total number of columns
+	columnCount := uint64(len(columnNames))
+	columnCountBytes := make([]byte, binary.MaxVarintLen64)
+	n := binary.PutUvarint(columnCountBytes, columnCount)
+	payload = append(payload, columnCountBytes[:n]...)
 
-		// Column name (string) - 4-byte length + string content
+	// Add all column names and types
+	for i, columnName := range columnNames {
+		// Column name (4-byte big-endian length + string content)
 		columnNameLength := uint32(len(columnName))
 		columnNameLengthBytes := make([]byte, 4)
 		binary.BigEndian.PutUint32(columnNameLengthBytes, columnNameLength)
 		payload = append(payload, columnNameLengthBytes...)
 		payload = append(payload, []byte(columnName)...)
 
-		// Column type (string) - 4-byte length + string content
-		columnType := columnTypes[colIdx]
+		// Column type (4-byte big-endian length + string content)
+		columnType := columnTypes[i]
 		columnTypeLength := uint32(len(columnType))
 		columnTypeLengthBytes := make([]byte, 4)
 		binary.BigEndian.PutUint32(columnTypeLengthBytes, columnTypeLength)
 		payload = append(payload, columnTypeLengthBytes...)
 		payload = append(payload, []byte(columnType)...)
-
-		// Data block (uvarint) - placeholder for now
-		dataBlock := uint64(1)
-		dataBlockBytes := make([]byte, binary.MaxVarintLen64)
-		n = binary.PutUvarint(dataBlockBytes, dataBlock)
-		payload = append(payload, dataBlockBytes[:n]...)
-
-		// Row count (uvarint)
-		rowCount := uint64(len(rows))
-		rowCountBytes := make([]byte, binary.MaxVarintLen64)
-		n = binary.PutUvarint(rowCountBytes, rowCount)
-		payload = append(payload, rowCountBytes[:n]...)
-
-		// Data (string) - values for this column, comma-separated
-		var dataBuilder strings.Builder
-		for i, row := range rows {
-			if colIdx < len(row) {
-				dataBuilder.WriteString(fmt.Sprintf("%v", row[colIdx]))
-			}
-			if i < len(rows)-1 {
-				dataBuilder.WriteString(",")
-			}
-		}
-		data := dataBuilder.String()
-		dataLength := uint32(len(data))
-		dataLengthBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(dataLengthBytes, dataLength)
-		payload = append(payload, dataLengthBytes...)
-		payload = append(payload, []byte(data)...)
-
-		h.logger.Debug().
-			Str("column", columnName).
-			Str("type", columnType).
-			Int("rows", len(rows)).
-			Str("data", data).
-			Msg("Sending ServerData for column")
-
-		// Send the result as ServerData for this column
-		if err := h.writer.WriteMessage(ServerData, payload); err != nil {
-			h.logger.Error().Err(err).Str("column", columnName).Msg("Failed to write ServerData message")
-			return err
-		}
 	}
 
-	h.logger.Debug().Msg("Sending ServerEndOfStream after all columns")
-	// Send EndOfStream after all columns
+	// Data block (uvarint) - placeholder for now
+	dataBlock := uint64(1)
+	dataBlockBytes := make([]byte, binary.MaxVarintLen64)
+	n = binary.PutUvarint(dataBlockBytes, dataBlock)
+	payload = append(payload, dataBlockBytes[:n]...)
+
+	// Row count (uvarint)
+	rowCount := uint64(len(rows))
+	rowCountBytes := make([]byte, binary.MaxVarintLen64)
+	n = binary.PutUvarint(rowCountBytes, rowCount)
+	payload = append(payload, rowCountBytes[:n]...)
+
+	// Data (string) - serialize all rows as tab-separated values
+	var dataBuilder strings.Builder
+	for i, row := range rows {
+		for j, val := range row {
+			if j > 0 {
+				dataBuilder.WriteString("\t")
+			}
+			dataBuilder.WriteString(fmt.Sprintf("%v", val))
+		}
+		if i < len(rows)-1 {
+			dataBuilder.WriteString("\n")
+		}
+	}
+	data := dataBuilder.String()
+	dataLength := uint32(len(data))
+	dataLengthBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(dataLengthBytes, dataLength)
+	payload = append(payload, dataLengthBytes...)
+	payload = append(payload, []byte(data)...)
+
+	h.logger.Debug().
+		Int("columns", len(columnNames)).
+		Int("rows", len(rows)).
+		Str("data", data).
+		Msg("Sending ServerData with all column data")
+
+	// Send the result as one ServerData packet
+	if err := h.writer.WriteMessage(ServerData, payload); err != nil {
+		h.logger.Error().Err(err).Msg("Failed to write ServerData message")
+		return err
+	}
+
+	h.logger.Debug().Msg("Sending ServerEndOfStream after data")
+	// Send EndOfStream after data
 	return h.writer.WriteMessage(ServerEndOfStream, nil)
 }
 
@@ -682,11 +828,42 @@ func (h *ConnectionHandler) sendQueryResponse(query string) error {
 
 // sendDataResponse sends data processing response
 func (h *ConnectionHandler) sendDataResponse() error {
+	// Send acknowledgment in a format the client can parse:
+	// columnCount (1) + columnName ("result") + columnType ("String") + dataBlock (1) + rowCount (1) + data (success message)
+	ackPayload := make([]byte, 0, 256)
+
+	// Column count: 1
+	ackPayload = append(ackPayload, 0x01) // uvarint 1
+
+	// Column name: "result" (4-byte length + content)
+	resultName := "result"
+	resultNameLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(resultNameLen, uint32(len(resultName)))
+	ackPayload = append(ackPayload, resultNameLen...)
+	ackPayload = append(ackPayload, []byte(resultName)...)
+
+	// Column type: "String" (4-byte length + content)
+	resultType := "String"
+	resultTypeLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(resultTypeLen, uint32(len(resultType)))
+	ackPayload = append(ackPayload, resultTypeLen...)
+	ackPayload = append(ackPayload, []byte(resultType)...)
+
+	// Data block: 1
+	ackPayload = append(ackPayload, 0x01) // uvarint 1
+
+	// Row count: 1
+	ackPayload = append(ackPayload, 0x01) // uvarint 1
+
+	// Data: success message (4-byte length + content)
 	response := "Data block processed successfully"
-	payload := []byte(response)
+	responseLen := make([]byte, 4)
+	binary.BigEndian.PutUint32(responseLen, uint32(len(response)))
+	ackPayload = append(ackPayload, responseLen...)
+	ackPayload = append(ackPayload, []byte(response)...)
 
 	h.logger.Debug().Msg("Sending ServerData response")
-	if err := h.writer.WriteMessage(ServerData, payload); err != nil {
+	if err := h.writer.WriteMessage(ServerData, ackPayload); err != nil {
 		h.logger.Error().Err(err).Msg("Failed to write ServerData message")
 		return err
 	}
@@ -784,4 +961,43 @@ func (h *ConnectionHandler) readUVarIntFromReader(reader *payloadReader) (uint64
 	}
 
 	return value, nil
+}
+
+// sendQueryEngineResults sends query results from the QueryEngine
+func (h *ConnectionHandler) sendQueryEngineResults(result *query.QueryResult) error {
+	h.logger.Debug().
+		Int("row_count", int(result.RowCount)).
+		Int("column_count", len(result.Columns)).
+		Msg("Sending QueryEngine results")
+
+	// Send the data rows
+	if result.Data != nil {
+		if rows, ok := result.Data.([][]interface{}); ok {
+			for _, row := range rows {
+				if err := h.writer.WriteMessage(ServerData, h.serializeRow(row)); err != nil {
+					h.logger.Error().Err(err).Msg("Failed to send data row")
+					return err
+				}
+			}
+		}
+	}
+
+	// Send EndOfStream
+	if err := h.writer.WriteMessage(ServerEndOfStream, nil); err != nil {
+		h.logger.Error().Err(err).Msg("Failed to send EndOfStream")
+		return err
+	}
+
+	h.logger.Debug().Msg("QueryEngine results sent successfully")
+	return nil
+}
+
+// serializeRow converts a row to bytes for transmission
+func (h *ConnectionHandler) serializeRow(row []interface{}) []byte {
+	// Simple serialization - convert each value to string and join with tabs
+	var parts []string
+	for _, val := range row {
+		parts = append(parts, fmt.Sprintf("%v", val))
+	}
+	return []byte(strings.Join(parts, "\t"))
 }

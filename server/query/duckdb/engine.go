@@ -14,6 +14,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/apache/iceberg-go/table"
+
 	_ "github.com/marcboeker/go-duckdb/v2"
 )
 

@@ -29,7 +29,7 @@ func NewLoader(cfg *config.Config, logger zerolog.Logger) (*Loader, error) {
 	}
 
 	// Initialize QueryEngine with catalog
-	queryEngine, err := query.NewEngine(cfg)
+	queryEngine, err := query.NewEngine(cfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create query engine: %w", err)
 	}

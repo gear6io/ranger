@@ -114,8 +114,8 @@ func (s *Server) handleConnection(conn net.Conn) {
 	clientAddr := conn.RemoteAddr().String()
 	s.logger.Debug().Str("client", clientAddr).Msg("New client connected")
 
-	// Create a new connection handler
-	handler := NewConnectionHandler(conn, s.logger)
+	// Create a new connection handler with the QueryEngine
+	handler := NewConnectionHandler(conn, s.queryEngine, s.logger)
 
 	// Handle the connection
 	if err := handler.Handle(); err != nil {

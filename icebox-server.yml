@@ -1,25 +1,23 @@
 # Icebox Server Configuration
 version: "0.1.0"
 
-# HTTP Server Configuration
-# All settings are now fixed and non-configurable
-# Port: 2847, Address: 0.0.0.0, Enabled: true
-
-# JDBC Server Configuration
-# All settings are now fixed and non-configurable
-# Port: 2848, Address: 0.0.0.0, Enabled: true
-
-# Native Protocol Server Configuration
-# All settings are now fixed and non-configurable
-# Port: 2849, Address: 0.0.0.0, Enabled: true
-
 # Logging Configuration
 log:
   level: "debug"           # debug, info, warn, error, fatal
-  format: "console"       # console (human readable) or json
+  format: "console"        # console (human readable) or json
   file_path: "logs/icebox-server.log"
-  console: true           # Whether to log to console
-  max_size: 100          # Max file size in MB
-  max_backups: 3         # Max number of backup files
-  max_age: 7             # Max age in days
-  cleanup: true          # Whether to cleanup log file on startup 
+  console: true            # Whether to log to console
+  max_size: 100            # Max file size in MB
+  max_backups: 3           # Max number of backup files
+  max_age: 7               # Max age in days
+  cleanup: true            # Whether to cleanup log file on startup
+
+# Storage Configuration
+storage:
+  # Catalog configuration
+  catalog:
+    type: "json"           # Catalog type: file, sqlite, rest, etc.
+    uri: "file://./my-lakehouse/catalog.json"  # Catalog URI
+  
+  # Data storage path
+  path: "file://./my-lakehouse"             # Path to data storage directory 

@@ -20,25 +20,50 @@ type TestResult struct {
 	Message string
 }
 
-// TestClickHouseGoConnection tests the ClickHouse Go client connection and ping functionality
-func TestClickHouseGoConnection(t *testing.T) {
+// Helper function to open a connection to the Icebox server
+func openConnection(t *testing.T) *sdk.Client {
 	// Skip if server is not running
 	if !isServerRunning() {
-		t.Skip("Icebox server not running on localhost:9000. Start with: make build-server && make run-server")
+		t.Skip("Icebox server not running on localhost:2849. Start with: make build-server && make run-server")
 	}
 
 	// Connect to Icebox native server with minimal settings
 	conn, err := sdk.Open(&sdk.Options{
-		Addr: []string{"localhost:9000"},
+		Addr: []string{"localhost:2849"},
 		Auth: sdk.Auth{
 			Database: "default",
 			Username: "default",
 			Password: "",
 		},
+		Debug: false, // Reduce noise in test output
+		Settings: sdk.Settings{
+			"max_execution_time": 60,
+		},
 	})
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
+	return conn
+}
+
+// Helper function to open a direct TCP connection for protocol tests
+func openTCPConnection(t *testing.T) net.Conn {
+	// Skip if server is not running
+	if !isServerRunning() {
+		t.Skip("Icebox server not running on localhost:2849. Start with: make build-server && make run-server")
+	}
+
+	// Connect to the server
+	conn, err := net.Dial("tcp", "localhost:2849")
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	return conn
+}
+
+// TestConnection tests the Icebox Go client connection and ping functionality
+func TestConnection(t *testing.T) {
+	conn := openConnection(t)
 	defer conn.Close()
 
 	// Test the connection with ping
@@ -49,33 +74,21 @@ func TestClickHouseGoConnection(t *testing.T) {
 	t.Log("✅ Successfully connected to Icebox native server! Ping/Pong functionality is working correctly!")
 }
 
-// TestClickHouseGoQuery tests query execution (currently failing due to response format)
-func TestClickHouseGoQuery(t *testing.T) {
-	// Skip if server is not running
-	if !isServerRunning() {
-		t.Skip("Icebox server not running on localhost:9000. Start with: make build-server && make run-server")
-	}
-
-	// Connect to Icebox native server
-	conn, err := sdk.Open(&sdk.Options{
-		Addr: []string{"localhost:9000"},
-		Auth: sdk.Auth{
-			Database: "default",
-			Username: "default",
-			Password: "",
-		},
-	})
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
+// TestQuery tests query execution (currently failing due to response format)
+func TestQuery(t *testing.T) {
+	conn := openConnection(t)
 	defer conn.Close()
 
 	ctx := context.Background()
 
-	// Test simple query execution
-	if err := conn.Exec(ctx, "SELECT 1"); err != nil {
-		t.Logf("Simple query failed (expected) - Query execution still needs response format fixes: %v", err)
-		// Don't fail the test since this is expected to fail
+	// Test simple query execution with timeout context
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	// Use a simple query that should work
+	if err := conn.Exec(timeoutCtx, "SELECT 1"); err != nil {
+		t.Logf("Query execution failed (this may be expected until protocol is fully implemented): %v", err)
+		// Don't fail the test since this is expected to fail until protocol is fully implemented
 		return
 	}
 
@@ -84,24 +97,7 @@ func TestClickHouseGoQuery(t *testing.T) {
 
 // TestEnhancedMockResponses tests the enhanced mock response functionality
 func TestEnhancedMockResponses(t *testing.T) {
-	// Skip if server is not running
-	if !isServerRunning() {
-		t.Skip("Icebox server not running on localhost:9000. Start with: make build-server && make run-server")
-	}
-
-	// Connect to Icebox native server
-	conn, err := sdk.Open(&sdk.Options{
-		Addr: []string{"localhost:9000"},
-		Auth: sdk.Auth{
-			Database: "default",
-			Username: "default",
-			Password: "",
-		},
-		Debug: false, // Set to false to reduce noise in test output
-	})
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
+	conn := openConnection(t)
 	defer conn.Close()
 
 	ctx := context.Background()
@@ -158,8 +154,12 @@ func TestEnhancedMockResponses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Logf("Testing: %s - %s", tc.name, tc.description)
 
-			// Execute the query
-			if err := conn.Exec(ctx, tc.query); err != nil {
+			// Create timeout context for each query
+			timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+
+			// Execute the query with timeout
+			if err := conn.Exec(timeoutCtx, tc.query); err != nil {
 				t.Logf("Query execution failed (this may be expected for some queries): %v", err)
 				// Don't fail the test since some queries might not be fully supported yet
 				return
@@ -172,32 +172,18 @@ func TestEnhancedMockResponses(t *testing.T) {
 
 // TestMockResponseWithQuery tests query execution with result validation
 func TestMockResponseWithQuery(t *testing.T) {
-	// Skip if server is not running
-	if !isServerRunning() {
-		t.Skip("Icebox server not running on localhost:9000. Start with: make build-server && make run-server")
-	}
-
-	// Connect to Icebox native server
-	conn, err := sdk.Open(&sdk.Options{
-		Addr: []string{"localhost:9000"},
-		Auth: sdk.Auth{
-			Database: "default",
-			Username: "default",
-			Password: "",
-		},
-		Debug: false,
-	})
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
+	conn := openConnection(t)
 	defer conn.Close()
 
 	ctx := context.Background()
 
 	// Test query with result scanning
 	t.Run("Select 1 with Result", func(t *testing.T) {
+		timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
 		var result uint8
-		if err := conn.QueryRow(ctx, "SELECT 1").Scan(&result); err != nil {
+		if err := conn.QueryRow(timeoutCtx, "SELECT 1").Scan(&result); err != nil {
 			t.Logf("Query with result scanning failed (may be expected): %v", err)
 			return
 		}
@@ -206,7 +192,10 @@ func TestMockResponseWithQuery(t *testing.T) {
 
 	// Test query with multiple results
 	t.Run("Select From Users with Results", func(t *testing.T) {
-		rows, err := conn.Query(ctx, "SELECT * FROM users")
+		timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		rows, err := conn.Query(timeoutCtx, "SELECT * FROM users")
 		if err != nil {
 			t.Logf("Query with multiple results failed (may be expected): %v", err)
 			return
@@ -234,16 +223,7 @@ func TestMockResponseWithQuery(t *testing.T) {
 
 // TestNativeProtocolHandshake tests the native protocol handshake directly
 func TestNativeProtocolHandshake(t *testing.T) {
-	// Skip if server is not running
-	if !isServerRunning() {
-		t.Skip("Icebox server not running on localhost:9000. Start with: make build-server && make run-server")
-	}
-
-	// Connect to the server
-	conn, err := net.Dial("tcp", "localhost:9000")
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
+	conn := openTCPConnection(t)
 	defer conn.Close()
 
 	// Send client hello
@@ -263,16 +243,7 @@ func TestNativeProtocolHandshake(t *testing.T) {
 
 // TestNativeProtocolQuery tests native protocol query execution
 func TestNativeProtocolQuery(t *testing.T) {
-	// Skip if server is not running
-	if !isServerRunning() {
-		t.Skip("Icebox server not running on localhost:9000. Start with: make build-server && make run-server")
-	}
-
-	// Connect to the server
-	conn, err := net.Dial("tcp", "localhost:9000")
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
+	conn := openTCPConnection(t)
 	defer conn.Close()
 
 	// Send client hello
@@ -304,16 +275,7 @@ func TestNativeProtocolQuery(t *testing.T) {
 
 // TestNativeProtocolPing tests native protocol ping functionality
 func TestNativeProtocolPing(t *testing.T) {
-	// Skip if server is not running
-	if !isServerRunning() {
-		t.Skip("Icebox server not running on localhost:9000. Start with: make build-server && make run-server")
-	}
-
-	// Connect to the server
-	conn, err := net.Dial("tcp", "localhost:9000")
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
+	conn := openTCPConnection(t)
 	defer conn.Close()
 
 	// Send client hello
@@ -343,16 +305,7 @@ func TestNativeProtocolPing(t *testing.T) {
 
 // TestMockResponseProtocol tests the native protocol directly for mock responses
 func TestMockResponseProtocol(t *testing.T) {
-	// Skip if server is not running
-	if !isServerRunning() {
-		t.Skip("Icebox server not running on localhost:9000. Start with: make build-server && make run-server")
-	}
-
-	// Connect to the server
-	conn, err := net.Dial("tcp", "localhost:9000")
-	if err != nil {
-		t.Fatalf("Failed to connect: %v", err)
-	}
+	conn := openTCPConnection(t)
 	defer conn.Close()
 
 	// Send client hello
@@ -739,7 +692,7 @@ func (r *netConnReader) ReadByte() (byte, error) {
 
 // Helper function to check if server is running
 func isServerRunning() bool {
-	conn, err := net.DialTimeout("tcp", "localhost:9000", 2*time.Second)
+	conn, err := net.DialTimeout("tcp", "localhost:2849", 2*time.Second)
 	if err != nil {
 		return false
 	}
@@ -856,49 +809,36 @@ func readColumnValue(conn net.Conn, dataType string) (interface{}, error) {
 func TestNativeProtocolBatchInsert(t *testing.T) {
 	// Skip if server is not running
 	if !isServerRunning() {
-		t.Skip("Server is not running")
+		t.Skip("Icebox server not running on localhost:2849. Start with: make build-server && make run-server")
 	}
 
-	// Connect using internal SDK
-	conn, err := sdk.Open(&sdk.Options{
-		Addr: []string{"localhost:9000"},
-		Auth: sdk.Auth{
-			Database: "default",
-			Username: "default",
-			Password: "",
-		},
-		Settings: sdk.Settings{
-			"max_execution_time": 60,
-		},
-	})
-	if err != nil {
-		t.Fatalf("Failed to connect to server: %v", err)
-	}
+	// Connect to Icebox native server
+	conn := openConnection(t)
 	defer conn.Close()
-
-	// Test the connection
-	ctx := context.Background()
-	if err := conn.Ping(ctx); err != nil {
-		t.Fatalf("Failed to ping server: %v", err)
-	}
 
 	t.Log("Successfully connected to Icebox native server")
 
 	// Create a test table
+	t.Log("Starting table creation...")
 	if err := createTestTableForBatch(t, conn); err != nil {
 		t.Fatalf("Failed to create test table: %v", err)
 	}
+	t.Log("Table creation completed successfully")
 
 	// Perform batch insert
+	t.Log("Starting batch insert...")
 	if err := performBatchInsertTest(t, conn); err != nil {
 		t.Fatalf("Failed to perform batch insert: %v", err)
 	}
-
 	t.Log("Batch insert test completed successfully")
 }
 
 func createTestTableForBatch(t *testing.T, conn *sdk.Client) error {
 	ctx := context.Background()
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	t.Log("Creating test table with query...")
 
 	// Create a simple test table (skip DROP for now to isolate the issue)
 	query := `
@@ -910,19 +850,24 @@ func createTestTableForBatch(t *testing.T, conn *sdk.Client) error {
 		) ENGINE = Memory
 	`
 
-	if err := conn.Exec(ctx, query); err != nil {
+	t.Log("Executing CREATE TABLE query...")
+	if err := conn.Exec(timeoutCtx, query); err != nil {
+		t.Logf("CREATE TABLE failed with error: %v", err)
 		return fmt.Errorf("failed to create table: %w", err)
 	}
 
+	t.Log("CREATE TABLE query executed successfully")
 	t.Log("Test table created successfully")
 	return nil
 }
 
 func performBatchInsertTest(t *testing.T, conn *sdk.Client) error {
 	ctx := context.Background()
+	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 
 	// Prepare batch insert
-	batch, err := conn.PrepareBatch(ctx, "INSERT INTO test_batch_users (id, name, email, created_at)")
+	batch, err := conn.PrepareBatch(timeoutCtx, "INSERT INTO test_batch_users (id, name, email, created_at)")
 	if err != nil {
 		return fmt.Errorf("failed to prepare batch: %w", err)
 	}
@@ -977,9 +922,11 @@ func performBatchInsertTest(t *testing.T, conn *sdk.Client) error {
 
 func verifyBatchInsert(t *testing.T, conn *sdk.Client) error {
 	ctx := context.Background()
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 
 	// Query the inserted data
-	rows, err := conn.Query(ctx, "SELECT id, name, email, created_at FROM test_batch_users ORDER BY id")
+	rows, err := conn.Query(timeoutCtx, "SELECT id, name, email, created_at FROM test_batch_users ORDER BY id")
 	if err != nil {
 		return fmt.Errorf("failed to query data: %w", err)
 	}

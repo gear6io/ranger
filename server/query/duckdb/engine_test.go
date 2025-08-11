@@ -11,6 +11,7 @@ import (
 	"github.com/TFMV/icebox/deprecated/config"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

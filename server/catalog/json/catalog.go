@@ -413,26 +413,42 @@ func validateJSONConfig(cfg *config.Config) error {
 		}
 	}
 
-	// Validate URI is a valid file path
-	if !filepath.IsAbs(catalogURI) && !strings.HasPrefix(catalogURI, "./") && !strings.HasPrefix(catalogURI, "../") {
+	// Validate URI - support both URI schemes (file://, s3://) and traditional file paths
+	// TODO: Future enhancement - support for s3://, gcs://, azure:// URI schemes
+	if !isValidURI(catalogURI) {
 		return &ValidationError{
 			Field:   "catalog.uri",
-			Message: "catalog URI must be an absolute path or relative path",
+			Message: "catalog URI must be a valid URI scheme (file://, s3://), absolute path, or relative path",
 		}
 	}
 
 	// Validate storage path if provided
 	storagePath := cfg.GetStoragePath()
 	if storagePath != "" {
-		if !filepath.IsAbs(storagePath) && !strings.HasPrefix(storagePath, "./") && !strings.HasPrefix(storagePath, "../") {
+		if !isValidURI(storagePath) {
 			return &ValidationError{
 				Field:   "storage.path",
-				Message: "storage path must be an absolute path or relative path",
+				Message: "storage path must be a valid URI scheme (file://, s3://), absolute path, or relative path",
 			}
 		}
 	}
 
 	return nil
+}
+
+// isValidURI checks if the string is a valid URI scheme
+// Currently supports file:// and s3:// schemes for future extensibility
+func isValidURI(uri string) bool {
+	// Check for URI schemes
+	switch {
+	case strings.HasPrefix(uri, "file://"):
+		stripped := strings.TrimPrefix(uri, "file://")
+		return filepath.IsAbs(stripped) || strings.HasPrefix(stripped, "./") || strings.HasPrefix(stripped, "../")
+	case strings.HasPrefix(uri, "s3://"):
+		return true
+	}
+	// TODO: Add support for more URI schemes like gcs://, azure://, etc.
+	return false
 }
 
 // Name returns the catalog name
