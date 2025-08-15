@@ -1,4 +1,4 @@
-package memory
+package filesystem
 
 import (
 	"fmt"
@@ -16,12 +16,12 @@ func isCI() bool {
 	return os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" || os.Getenv("JENKINS_URL") != ""
 }
 
-func TestNewMemoryFileSystem(t *testing.T) {
+func TestNewFileStorage(t *testing.T) {
 	if isCI() {
 		t.Skip("Skipping memory filesystem tests in CI due to Windows path handling issues")
 	}
 
-	mfs := NewMemoryFileSystem()
+	mfs := NewFileStorage()
 	assert.NotNil(t, mfs)
 	assert.NotNil(t, mfs.files)
 	assert.NotNil(t, mfs.dirs)
@@ -32,7 +32,7 @@ func TestMemoryFileSystemWriteAndRead(t *testing.T) {
 		t.Skip("Skipping memory filesystem tests in CI due to Windows path handling issues")
 	}
 
-	mfs := NewMemoryFileSystem()
+	mfs := NewFileStorage()
 
 	// Test writing data
 	testData := []byte("Hello, World!")
@@ -50,7 +50,7 @@ func TestMemoryFileSystemCreateAndWrite(t *testing.T) {
 		t.Skip("Skipping memory filesystem tests in CI due to Windows path handling issues")
 	}
 
-	mfs := NewMemoryFileSystem()
+	mfs := NewFileStorage()
 
 	// Create a file for writing
 	file, err := mfs.Create("/data/output.txt")
@@ -81,7 +81,7 @@ func TestMemoryFileSystemOpenAndRead(t *testing.T) {
 		t.Skip("Skipping memory filesystem tests in CI due to Windows path handling issues")
 	}
 
-	mfs := NewMemoryFileSystem()
+	mfs := NewFileStorage()
 
 	// Write test data
 	testData := []byte("Hello, Memory FS!")
@@ -106,7 +106,7 @@ func TestMemoryFileSystemReadAt(t *testing.T) {
 		t.Skip("Skipping memory filesystem tests in CI due to Windows path handling issues")
 	}
 
-	mfs := NewMemoryFileSystem()
+	mfs := NewFileStorage()
 
 	// Write test data
 	testData := []byte("0123456789")
@@ -131,7 +131,7 @@ func TestMemoryFileSystemSeek(t *testing.T) {
 		t.Skip("Skipping memory filesystem tests in CI due to Windows path handling issues")
 	}
 
-	mfs := NewMemoryFileSystem()
+	mfs := NewFileStorage()
 
 	// Write test data
 	testData := []byte("0123456789")
@@ -161,7 +161,7 @@ func TestMemoryFileSystemStat(t *testing.T) {
 		t.Skip("Skipping memory filesystem tests in CI due to Windows path handling issues")
 	}
 
-	mfs := NewMemoryFileSystem()
+	mfs := NewFileStorage()
 
 	// Write test data
 	testData := []byte("Test file content")
@@ -182,7 +182,7 @@ func TestMemoryFileSystemExists(t *testing.T) {
 		t.Skip("Skipping memory filesystem tests in CI due to Windows path handling issues")
 	}
 
-	mfs := NewMemoryFileSystem()
+	mfs := NewFileStorage()
 
 	// Test non-existent file
 	exists, err := mfs.Exists("/nonexistent.txt")
@@ -204,7 +204,7 @@ func TestMemoryFileSystemRemove(t *testing.T) {
 		t.Skip("Skipping memory filesystem tests in CI due to Windows path handling issues")
 	}
 
-	mfs := NewMemoryFileSystem()
+	mfs := NewFileStorage()
 
 	// Write a file
 	err := mfs.WriteFile("/test.txt", []byte("content"))
@@ -230,7 +230,7 @@ func TestMemoryFileSystemDirectories(t *testing.T) {
 		t.Skip("Skipping memory filesystem tests in CI due to Windows path handling issues")
 	}
 
-	mfs := NewMemoryFileSystem()
+	mfs := NewFileStorage()
 
 	// Create nested directories by writing a file
 	err := mfs.WriteFile("/a/b/c/test.txt", []byte("content"))
@@ -255,7 +255,7 @@ func TestMemoryFileSystemMkdirAll(t *testing.T) {
 		t.Skip("Skipping memory filesystem tests in CI due to Windows path handling issues")
 	}
 
-	mfs := NewMemoryFileSystem()
+	mfs := NewFileStorage()
 
 	// Create directories
 	err := mfs.MkdirAll("/x/y/z", 0755)
@@ -278,7 +278,7 @@ func TestMemoryFileSystemListDir(t *testing.T) {
 		t.Skip("Skipping memory filesystem tests in CI due to Windows path handling issues")
 	}
 
-	mfs := NewMemoryFileSystem()
+	mfs := NewFileStorage()
 
 	// Create some files and directories
 	err := mfs.WriteFile("/dir/file1.txt", []byte("content1"))
@@ -314,7 +314,7 @@ func TestMemoryFileSystemClear(t *testing.T) {
 		t.Skip("Skipping memory filesystem tests in CI due to Windows path handling issues")
 	}
 
-	mfs := NewMemoryFileSystem()
+	mfs := NewFileStorage()
 
 	// Create some files
 	err := mfs.WriteFile("/file1.txt", []byte("content1"))
@@ -346,7 +346,7 @@ func TestMemoryFileSystemErrorCases(t *testing.T) {
 		t.Skip("Skipping memory filesystem tests in CI due to Windows path handling issues")
 	}
 
-	mfs := NewMemoryFileSystem()
+	mfs := NewFileStorage()
 
 	// Test opening non-existent file
 	_, err := mfs.Open("/nonexistent.txt")
@@ -371,7 +371,7 @@ func TestMemoryFileSystemConcurrency(t *testing.T) {
 		t.Skip("Skipping memory filesystem tests in CI due to Windows path handling issues")
 	}
 
-	mfs := NewMemoryFileSystem()
+	mfs := NewFileStorage()
 
 	// Test concurrent writes
 	const numGoroutines = 10

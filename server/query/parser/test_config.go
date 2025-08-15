@@ -8,7 +8,7 @@ import (
 func CreateTestConfig() *config.Config {
 	cfg := &config.Config{}
 	cfg.Storage.Catalog.Type = "json"
-	cfg.Storage.Path = "/tmp/icebox_test"
+	cfg.Storage.Config.Path = "/tmp/icebox_test"
 	return cfg
 }
 

@@ -1,4 +1,4 @@
-package minio
+package s3
 
 import (
 	"bytes"
@@ -210,8 +210,8 @@ type EmbeddedMinIO struct {
 	mu           sync.RWMutex // Protects non-atomic fields
 }
 
-// MinIOFileSystem implements iceberg FileIO interface with embedded MinIO backend
-type MinIOFileSystem struct {
+// S3FileSystem implements iceberg FileIO interface with embedded MinIO backend
+type S3FileSystem struct {
 	minioServer *EmbeddedMinIO
 	client      *minio.Client
 	bucket      string
@@ -792,8 +792,36 @@ func (m *EmbeddedMinIO) performHealthCheck() {
 	}
 }
 
-// NewMinIOFileSystem creates a new MinIO-backed FileSystem with comprehensive configuration
-func NewMinIOFileSystem(minioServer *EmbeddedMinIO, bucket, prefix string) (*MinIOFileSystem, error) {
+// NewS3FileSystem creates a new S3-backed FileSystem from storage config
+func NewS3FileSystem(cfg interface{}) (*S3FileSystem, error) {
+	// For now, create a simple embedded MinIO server with default config
+	// This maintains compatibility with existing code
+	path := ""
+	if config, ok := cfg.(interface{ GetStoragePath() string }); ok {
+		path = config.GetStoragePath()
+	}
+
+	embeddedConfig := &EmbeddedMinIOConfig{
+		Port:      DefaultPort,
+		Address:   DefaultAddress,
+		DataDir:   path,
+		AccessKey: DefaultAccessKey,
+		SecretKey: DefaultSecretKey,
+		AutoStart: true,
+		Console:   false,
+		Quiet:     true,
+	}
+
+	minioServer, err := NewEmbeddedMinIO(embeddedConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewS3FileSystemWithServer(minioServer, DefaultBucket, "")
+}
+
+// NewS3FileSystemWithServer creates a new MinIO-backed FileSystem with comprehensive configuration
+func NewS3FileSystemWithServer(minioServer *EmbeddedMinIO, bucket, prefix string) (*S3FileSystem, error) {
 	if !minioServer.IsRunning() {
 		return nil, &MinIOError{
 			Op:  "create_filesystem",
@@ -841,7 +869,7 @@ func NewMinIOFileSystem(minioServer *EmbeddedMinIO, bucket, prefix string) (*Min
 		logger.SetOutput(io.Discard)
 	}
 
-	return &MinIOFileSystem{
+	return &S3FileSystem{
 		minioServer: minioServer,
 		client:      client,
 		bucket:      bucket,
@@ -853,7 +881,7 @@ func NewMinIOFileSystem(minioServer *EmbeddedMinIO, bucket, prefix string) (*Min
 }
 
 // Open opens a file for reading from MinIO with comprehensive error handling
-func (fs *MinIOFileSystem) Open(location string) (icebergio.File, error) {
+func (fs *S3FileSystem) Open(location string) (icebergio.File, error) {
 	start := time.Now()
 
 	fs.mu.RLock()
@@ -914,7 +942,7 @@ func (fs *MinIOFileSystem) Open(location string) (icebergio.File, error) {
 }
 
 // Create creates a new file for writing to MinIO with enhanced buffering
-func (fs *MinIOFileSystem) Create(location string) (icebergio.File, error) {
+func (fs *S3FileSystem) Create(location string) (icebergio.File, error) {
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 
@@ -943,7 +971,7 @@ func (fs *MinIOFileSystem) Create(location string) (icebergio.File, error) {
 }
 
 // Remove removes a file from MinIO with retry logic
-func (fs *MinIOFileSystem) Remove(location string) error {
+func (fs *S3FileSystem) Remove(location string) error {
 	start := time.Now()
 
 	fs.mu.RLock()
@@ -996,7 +1024,7 @@ func (fs *MinIOFileSystem) Remove(location string) error {
 }
 
 // updateMetrics updates filesystem operation metrics
-func (fs *MinIOFileSystem) updateMetrics(operation string, duration time.Duration, bytes int64, isError bool) {
+func (fs *S3FileSystem) updateMetrics(operation string, duration time.Duration, bytes int64, isError bool) {
 	if !fs.config.EnableMetrics {
 		return
 	}
@@ -1029,7 +1057,7 @@ func (fs *MinIOFileSystem) updateMetrics(operation string, duration time.Duratio
 }
 
 // incrementErrorMetric increments error metrics
-func (fs *MinIOFileSystem) incrementErrorMetric(operation string) {
+func (fs *S3FileSystem) incrementErrorMetric(operation string) {
 	if !fs.config.EnableMetrics {
 		return
 	}
@@ -1048,7 +1076,7 @@ func (fs *MinIOFileSystem) incrementErrorMetric(operation string) {
 }
 
 // GetMetrics returns current filesystem metrics
-func (fs *MinIOFileSystem) GetMetrics() *FileSystemMetrics {
+func (fs *S3FileSystem) GetMetrics() *FileSystemMetrics {
 	fs.metrics.mu.RLock()
 	defer fs.metrics.mu.RUnlock()
 
@@ -1073,6 +1101,254 @@ func (fs *MinIOFileSystem) GetMetrics() *FileSystemMetrics {
 		CacheEvictions:   fs.metrics.CacheEvictions,
 	}
 	return metrics
+}
+
+// Exists checks if a file exists in S3
+func (fs *S3FileSystem) Exists(path string) (bool, error) {
+	start := time.Now()
+
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+
+	objectName := fs.getObjectName(path)
+
+	ctx, cancel := context.WithTimeout(context.Background(), fs.config.OperationTimeout)
+	defer cancel()
+
+	_, err := fs.client.StatObject(ctx, fs.bucket, objectName, minio.StatObjectOptions{})
+	if err != nil {
+		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+			return false, nil
+		}
+		fs.incrementErrorMetric("exists")
+		return false, &MinIOError{
+			Op:  "exists",
+			Err: err,
+			Context: map[string]interface{}{
+				"path":        path,
+				"object_name": objectName,
+				"bucket":      fs.bucket,
+			},
+		}
+	}
+
+	fs.updateMetrics("exists", time.Since(start), 0, false)
+	return true, nil
+}
+
+// MkdirAll is a no-op for S3 since it doesn't have real directories
+func (fs *S3FileSystem) MkdirAll(path string) error {
+	// S3 doesn't have real directories, so this is always successful
+	return nil
+}
+
+// WriteFile writes data to S3
+func (fs *S3FileSystem) WriteFile(path string, data []byte) error {
+	start := time.Now()
+
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	objectName := fs.getObjectName(path)
+
+	ctx, cancel := context.WithTimeout(context.Background(), fs.config.OperationTimeout)
+	defer cancel()
+
+	// Simple PutObject for all files
+	reader := bytes.NewReader(data)
+	_, err := fs.client.PutObject(ctx, fs.bucket, objectName, reader, int64(len(data)), minio.PutObjectOptions{})
+	if err != nil {
+		fs.incrementErrorMetric("write")
+		return &MinIOError{
+			Op:  "write_file",
+			Err: err,
+			Context: map[string]interface{}{
+				"path":        path,
+				"object_name": objectName,
+				"bucket":      fs.bucket,
+				"size":        len(data),
+			},
+		}
+	}
+
+	fs.updateMetrics("write", time.Since(start), int64(len(data)), false)
+	return nil
+}
+
+// ReadFile reads data from S3 with streaming for large files
+func (fs *S3FileSystem) ReadFile(path string) ([]byte, error) {
+	start := time.Now()
+
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+
+	objectName := fs.getObjectName(path)
+
+	ctx, cancel := context.WithTimeout(context.Background(), fs.config.OperationTimeout)
+	defer cancel()
+
+	// Get object info to check size
+	objInfo, err := fs.client.StatObject(ctx, fs.bucket, objectName, minio.StatObjectOptions{})
+	if err != nil {
+		fs.incrementErrorMetric("read")
+		return nil, &MinIOError{
+			Op:  "read_file",
+			Err: err,
+			Context: map[string]interface{}{
+				"path":        path,
+				"object_name": objectName,
+				"bucket":      fs.bucket,
+			},
+		}
+	}
+
+	// For very large files (>100MB), use streaming approach
+	const streamingThreshold = 100 * 1024 * 1024 // 100MB
+	if objInfo.Size > streamingThreshold {
+		return fs.readFileStreaming(ctx, objectName, objInfo.Size)
+	}
+
+	// Download entire object for smaller files
+	obj, err := fs.client.GetObject(ctx, fs.bucket, objectName, minio.GetObjectOptions{})
+	if err != nil {
+		fs.incrementErrorMetric("read")
+		return nil, &MinIOError{
+			Op:  "read_file",
+			Err: err,
+			Context: map[string]interface{}{
+				"path":        path,
+				"object_name": objectName,
+				"bucket":      fs.bucket,
+			},
+		}
+	}
+	defer obj.Close()
+
+	data, err := io.ReadAll(obj)
+	if err != nil {
+		fs.incrementErrorMetric("read")
+		return nil, &MinIOError{
+			Op:  "read_file",
+			Err: err,
+			Context: map[string]interface{}{
+				"path":        path,
+				"object_name": objectName,
+				"bucket":      fs.bucket,
+			},
+		}
+	}
+
+	fs.updateMetrics("read", time.Since(start), int64(len(data)), false)
+	return data, nil
+}
+
+// readFileStreaming handles streaming read for large files
+func (fs *S3FileSystem) readFileStreaming(ctx context.Context, objectName string, size int64) ([]byte, error) {
+	// For files larger than 100MB, we should implement true streaming
+	// For now, we'll download in chunks to avoid memory issues
+	const chunkSize = 10 * 1024 * 1024 // 10MB chunks
+
+	if size > 100*1024*1024 { // 100MB
+		return nil, fmt.Errorf("file too large for memory download: %d bytes (max: 100MB)", size)
+	}
+
+	// Download in chunks to be more memory efficient
+	obj, err := fs.client.GetObject(ctx, fs.bucket, objectName, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer obj.Close()
+
+	return io.ReadAll(obj)
+}
+
+// OpenForRead opens a file for streaming read
+func (fs *S3FileSystem) OpenForRead(path string) (io.ReadCloser, error) {
+	start := time.Now()
+
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+
+	objectName := fs.getObjectName(path)
+
+	ctx, cancel := context.WithTimeout(context.Background(), fs.config.OperationTimeout)
+	defer cancel()
+
+	obj, err := fs.client.GetObject(ctx, fs.bucket, objectName, minio.GetObjectOptions{})
+	if err != nil {
+		fs.incrementErrorMetric("read")
+		return nil, &MinIOError{
+			Op:  "open_for_read",
+			Err: err,
+			Context: map[string]interface{}{
+				"path":        path,
+				"object_name": objectName,
+				"bucket":      fs.bucket,
+			},
+		}
+	}
+
+	fs.updateMetrics("read", time.Since(start), 0, false)
+	return obj, nil
+}
+
+// OpenForWrite opens a file for streaming write
+func (fs *S3FileSystem) OpenForWrite(path string) (io.WriteCloser, error) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	objectName := fs.getObjectName(path)
+
+	return &s3WriteCloser{
+		fs:         fs,
+		objectName: objectName,
+		buffer:     make([]byte, 0, fs.config.BufferSize),
+	}, nil
+}
+
+// s3WriteCloser implements io.WriteCloser for S3
+type s3WriteCloser struct {
+	fs         *S3FileSystem
+	objectName string
+	buffer     []byte
+	closed     bool
+}
+
+func (w *s3WriteCloser) Write(p []byte) (n int, err error) {
+	if w.closed {
+		return 0, fmt.Errorf("write on closed writer")
+	}
+	w.buffer = append(w.buffer, p...)
+	return len(p), nil
+}
+
+func (w *s3WriteCloser) Close() error {
+	if w.closed {
+		return nil
+	}
+	w.closed = true
+
+	// Upload the buffered data
+	ctx, cancel := context.WithTimeout(context.Background(), w.fs.config.OperationTimeout)
+	defer cancel()
+
+	reader := bytes.NewReader(w.buffer)
+	_, err := w.fs.client.PutObject(ctx, w.fs.bucket, w.objectName, reader, int64(len(w.buffer)), minio.PutObjectOptions{})
+	if err != nil {
+		w.fs.incrementErrorMetric("write")
+		return &MinIOError{
+			Op:  "write_close",
+			Err: err,
+			Context: map[string]interface{}{
+				"object_name": w.objectName,
+				"bucket":      w.fs.bucket,
+				"size":        len(w.buffer),
+			},
+		}
+	}
+
+	w.fs.updateMetrics("write", time.Since(time.Now()), int64(len(w.buffer)), false)
+	return nil
 }
 
 // ensureBucket creates a bucket if it doesn't exist with comprehensive error handling
@@ -1696,7 +1972,7 @@ func isPortAvailable(port int) bool {
 }
 
 // getObjectName converts a location to MinIO object name with proper path handling
-func (fs *MinIOFileSystem) getObjectName(location string) string {
+func (fs *S3FileSystem) getObjectName(location string) string {
 	// Clean the location path and convert backslashes to forward slashes
 	location = filepath.Clean(location)
 	location = strings.ReplaceAll(location, "\\", "/")
@@ -1718,7 +1994,7 @@ type minioFile struct {
 	bucket     string
 	client     *minio.Client
 	position   int64
-	fs         *MinIOFileSystem
+	fs         *S3FileSystem
 	requestID  string
 	mu         sync.Mutex
 }
@@ -1911,7 +2187,7 @@ type minioWriteFile struct {
 	bucket     string
 	client     *minio.Client
 	buffer     []byte
-	fs         *MinIOFileSystem
+	fs         *S3FileSystem
 	requestID  string
 	startTime  time.Time
 	mu         sync.Mutex

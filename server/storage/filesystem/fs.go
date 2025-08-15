@@ -1,9 +1,9 @@
-package memory
+package filesystem
 
 import (
 	"bytes"
 	"fmt"
-	stdio "io"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,19 +11,17 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/apache/iceberg-go/io"
 )
 
-// MemoryFileSystem implements an in-memory file system for testing and CI
-type MemoryFileSystem struct {
-	files map[string]*memoryFile
+// FileStorage implements an in-memory file system for testing and CI
+type FileStorage struct {
+	files map[string]*file
 	dirs  map[string]bool
 	mu    sync.RWMutex
 }
 
 // memoryFile represents a file stored in memory
-type memoryFile struct {
+type file struct {
 	data     []byte
 	modTime  time.Time
 	position int64
@@ -31,8 +29,8 @@ type memoryFile struct {
 }
 
 // memoryWriteFile represents a file open for writing
-type memoryWriteFile struct {
-	fs   *MemoryFileSystem
+type fileWriter struct {
+	fs   *FileStorage
 	path string
 	buf  *bytes.Buffer
 }
@@ -45,21 +43,21 @@ type memoryFileInfo struct {
 	isDir   bool
 }
 
-// NewMemoryFileSystem creates a new in-memory file system
-func NewMemoryFileSystem() *MemoryFileSystem {
-	return &MemoryFileSystem{
-		files: make(map[string]*memoryFile),
+// NewFileStorage creates a new in-memory file system
+func NewFileStorage() *FileStorage {
+	return &FileStorage{
+		files: make(map[string]*file),
 		dirs:  make(map[string]bool),
 	}
 }
 
 // Open opens a file for reading
-func (mfs *MemoryFileSystem) Open(path string) (io.File, error) {
+func (mfs *FileStorage) Open(path string) (interface{}, error) {
 	mfs.mu.RLock()
 	defer mfs.mu.RUnlock()
 
 	cleanPath := filepath.Clean(path)
-	file, exists := mfs.files[cleanPath]
+	fileData, exists := mfs.files[cleanPath]
 	if !exists {
 		return nil, &os.PathError{
 			Op:   "open",
@@ -69,20 +67,20 @@ func (mfs *MemoryFileSystem) Open(path string) (io.File, error) {
 	}
 
 	// Create a copy for reading
-	fileCopy := &memoryFile{
-		data:    make([]byte, len(file.data)),
-		modTime: file.modTime,
+	fileCopy := &file{
+		data:    make([]byte, len(fileData.data)),
+		modTime: fileData.modTime,
 	}
-	copy(fileCopy.data, file.data)
+	copy(fileCopy.data, fileData.data)
 
-	return &memoryReadFile{
+	return &fileReader{
 		file: fileCopy,
 		path: path,
 	}, nil
 }
 
 // Create creates a new file for writing
-func (mfs *MemoryFileSystem) Create(path string) (io.File, error) {
+func (mfs *FileStorage) Create(path string) (interface{}, error) {
 	cleanPath := filepath.Clean(path)
 
 	// Ensure parent directories exist
@@ -90,7 +88,7 @@ func (mfs *MemoryFileSystem) Create(path string) (io.File, error) {
 		return nil, err
 	}
 
-	return &memoryWriteFile{
+	return &fileWriter{
 		fs:   mfs,
 		path: cleanPath,
 		buf:  bytes.NewBuffer(nil),
@@ -98,7 +96,7 @@ func (mfs *MemoryFileSystem) Create(path string) (io.File, error) {
 }
 
 // Remove removes a file
-func (mfs *MemoryFileSystem) Remove(path string) error {
+func (mfs *FileStorage) Remove(path string) error {
 	mfs.mu.Lock()
 	defer mfs.mu.Unlock()
 
@@ -116,7 +114,7 @@ func (mfs *MemoryFileSystem) Remove(path string) error {
 }
 
 // Exists checks if a file or directory exists
-func (mfs *MemoryFileSystem) Exists(path string) (bool, error) {
+func (mfs *FileStorage) Exists(path string) (bool, error) {
 	mfs.mu.RLock()
 	defer mfs.mu.RUnlock()
 
@@ -128,7 +126,7 @@ func (mfs *MemoryFileSystem) Exists(path string) (bool, error) {
 }
 
 // Stat returns file information
-func (mfs *MemoryFileSystem) Stat(path string) (os.FileInfo, error) {
+func (mfs *FileStorage) Stat(path string) (os.FileInfo, error) {
 	mfs.mu.RLock()
 	defer mfs.mu.RUnlock()
 
@@ -162,7 +160,7 @@ func (mfs *MemoryFileSystem) Stat(path string) (os.FileInfo, error) {
 }
 
 // ListDir lists directory contents
-func (mfs *MemoryFileSystem) ListDir(path string) ([]os.FileInfo, error) {
+func (mfs *FileStorage) ListDir(path string) ([]os.FileInfo, error) {
 	mfs.mu.RLock()
 	defer mfs.mu.RUnlock()
 
@@ -219,7 +217,7 @@ func (mfs *MemoryFileSystem) ListDir(path string) ([]os.FileInfo, error) {
 }
 
 // MkdirAll creates directories recursively
-func (mfs *MemoryFileSystem) MkdirAll(path string, perm os.FileMode) error {
+func (mfs *FileStorage) MkdirAll(path string) error {
 	mfs.mu.Lock()
 	defer mfs.mu.Unlock()
 
@@ -234,60 +232,103 @@ func (mfs *MemoryFileSystem) MkdirAll(path string, perm os.FileMode) error {
 }
 
 // WriteFile writes data to a file (convenience method)
-func (mfs *MemoryFileSystem) WriteFile(path string, data []byte) error {
+func (mfs *FileStorage) WriteFile(path string, data []byte) error {
 	file, err := mfs.Create(path)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
 
-	// Cast to our memory write file to access Write method
-	if writeFile, ok := file.(*memoryWriteFile); ok {
-		_, err = writeFile.Write(data)
-		return err
+	// The Create method always returns *fileWriter, so we can cast directly
+	writeFile, ok := file.(*fileWriter)
+	if !ok {
+		return fmt.Errorf("unexpected file type: %T", file)
 	}
 
-	return fmt.Errorf("file does not support writing")
+	_, err = writeFile.Write(data)
+	return err
 }
 
 // ReadFile reads data from a file (convenience method)
-func (mfs *MemoryFileSystem) ReadFile(path string) ([]byte, error) {
+func (mfs *FileStorage) ReadFile(path string) ([]byte, error) {
 	file, err := mfs.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
 
-	mfs.mu.RLock()
-	cleanPath := filepath.Clean(path)
-	memFile := mfs.files[cleanPath]
-	mfs.mu.RUnlock()
-
-	if memFile == nil {
-		return nil, os.ErrNotExist
+	// The Open method always returns *fileReader, so we can cast directly
+	reader, ok := file.(*fileReader)
+	if !ok {
+		return nil, fmt.Errorf("unexpected file type: %T", file)
 	}
 
-	return memFile.data, nil
+	// Read all data from the reader
+	data := make([]byte, 0)
+	buffer := make([]byte, 1024)
+	for {
+		n, err := reader.Read(buffer)
+		if n > 0 {
+			data = append(data, buffer[:n]...)
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return data, nil
 }
 
 // Clear removes all files and directories
-func (mfs *MemoryFileSystem) Clear() {
+func (mfs *FileStorage) Clear() {
 	mfs.mu.Lock()
 	defer mfs.mu.Unlock()
 
-	mfs.files = make(map[string]*memoryFile)
+	mfs.files = make(map[string]*file)
 	mfs.dirs = make(map[string]bool)
 }
 
+// OpenForRead opens a file for streaming read
+func (mfs *FileStorage) OpenForRead(path string) (io.ReadCloser, error) {
+	file, err := mfs.Open(path)
+	if err != nil {
+		return nil, err
+	}
+
+	// The Open method always returns *fileReader, so we can cast directly
+	reader, ok := file.(*fileReader)
+	if !ok {
+		return nil, fmt.Errorf("unexpected file type: %T", file)
+	}
+
+	return reader, nil
+}
+
+// OpenForWrite opens a file for streaming write
+func (mfs *FileStorage) OpenForWrite(path string) (io.WriteCloser, error) {
+	file, err := mfs.Create(path)
+	if err != nil {
+		return nil, err
+	}
+
+	// The Create method always returns *fileWriter, so we can cast directly
+	writer, ok := file.(*fileWriter)
+	if !ok {
+		return nil, fmt.Errorf("unexpected file type: %T", file)
+	}
+
+	return writer, nil
+}
+
 // ensureParentDirs ensures parent directories exist (with lock)
-func (mfs *MemoryFileSystem) ensureParentDirs(path string) error {
+func (mfs *FileStorage) ensureParentDirs(path string) error {
 	mfs.mu.Lock()
 	defer mfs.mu.Unlock()
 	return mfs.ensureParentDirsLocked(path)
 }
 
 // ensureParentDirsLocked ensures parent directories exist (assumes lock held)
-func (mfs *MemoryFileSystem) ensureParentDirsLocked(path string) error {
+func (mfs *FileStorage) ensureParentDirsLocked(path string) error {
 	dir := filepath.Dir(path)
 
 	// Termination conditions to prevent infinite recursion
@@ -314,17 +355,17 @@ func (mfs *MemoryFileSystem) ensureParentDirsLocked(path string) error {
 }
 
 // memoryReadFile implements io.File for reading
-type memoryReadFile struct {
-	file *memoryFile
+type fileReader struct {
+	file *file
 	path string
 }
 
-func (mrf *memoryReadFile) Read(p []byte) (n int, err error) {
+func (mrf *fileReader) Read(p []byte) (n int, err error) {
 	mrf.file.mu.Lock()
 	defer mrf.file.mu.Unlock()
 
 	if mrf.file.position >= int64(len(mrf.file.data)) {
-		return 0, stdio.EOF
+		return 0, io.EOF
 	}
 
 	n = copy(p, mrf.file.data[mrf.file.position:])
@@ -332,22 +373,22 @@ func (mrf *memoryReadFile) Read(p []byte) (n int, err error) {
 	return n, nil
 }
 
-func (mrf *memoryReadFile) ReadAt(p []byte, off int64) (n int, err error) {
+func (mrf *fileReader) ReadAt(p []byte, off int64) (n int, err error) {
 	mrf.file.mu.RLock()
 	defer mrf.file.mu.RUnlock()
 
 	if off < 0 || off >= int64(len(mrf.file.data)) {
-		return 0, stdio.EOF
+		return 0, io.EOF
 	}
 
 	n = copy(p, mrf.file.data[off:])
 	if n < len(p) {
-		err = stdio.EOF
+		err = io.EOF
 	}
 	return n, err
 }
 
-func (mrf *memoryReadFile) Seek(offset int64, whence int) (int64, error) {
+func (mrf *fileReader) Seek(offset int64, whence int) (int64, error) {
 	mrf.file.mu.Lock()
 	defer mrf.file.mu.Unlock()
 
@@ -371,7 +412,7 @@ func (mrf *memoryReadFile) Seek(offset int64, whence int) (int64, error) {
 	return newPos, nil
 }
 
-func (mrf *memoryReadFile) Stat() (os.FileInfo, error) {
+func (mrf *fileReader) Stat() (os.FileInfo, error) {
 	mrf.file.mu.RLock()
 	defer mrf.file.mu.RUnlock()
 
@@ -383,28 +424,28 @@ func (mrf *memoryReadFile) Stat() (os.FileInfo, error) {
 	}, nil
 }
 
-func (mrf *memoryReadFile) Close() error {
+func (mrf *fileReader) Close() error {
 	return nil
 }
 
 // memoryWriteFile methods
-func (mwf *memoryWriteFile) Write(p []byte) (n int, err error) {
+func (mwf *fileWriter) Write(p []byte) (n int, err error) {
 	return mwf.buf.Write(p)
 }
 
-func (mwf *memoryWriteFile) Read(p []byte) (n int, err error) {
+func (mwf *fileWriter) Read(p []byte) (n int, err error) {
 	return 0, fmt.Errorf("read not supported on write-only file")
 }
 
-func (mwf *memoryWriteFile) ReadAt(p []byte, off int64) (n int, err error) {
+func (mwf *fileWriter) ReadAt(p []byte, off int64) (n int, err error) {
 	return 0, fmt.Errorf("read not supported on write-only file")
 }
 
-func (mwf *memoryWriteFile) Seek(offset int64, whence int) (int64, error) {
+func (mwf *fileWriter) Seek(offset int64, whence int) (int64, error) {
 	return 0, fmt.Errorf("seek not supported on write-only file")
 }
 
-func (mwf *memoryWriteFile) Stat() (os.FileInfo, error) {
+func (mwf *fileWriter) Stat() (os.FileInfo, error) {
 	return &memoryFileInfo{
 		name:    filepath.Base(mwf.path),
 		size:    int64(mwf.buf.Len()),
@@ -413,12 +454,12 @@ func (mwf *memoryWriteFile) Stat() (os.FileInfo, error) {
 	}, nil
 }
 
-func (mwf *memoryWriteFile) Close() error {
+func (mwf *fileWriter) Close() error {
 	mwf.fs.mu.Lock()
 	defer mwf.fs.mu.Unlock()
 
 	// Store the file data
-	mwf.fs.files[mwf.path] = &memoryFile{
+	mwf.fs.files[mwf.path] = &file{
 		data:    mwf.buf.Bytes(),
 		modTime: time.Now(),
 	}

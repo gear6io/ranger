@@ -1,4 +1,4 @@
-package minio
+package s3
 
 import (
 	"context"
@@ -467,7 +467,7 @@ func TestHealthChecks(t *testing.T) {
 }
 
 // FileSystem Tests
-func TestNewMinIOFileSystem(t *testing.T) {
+func TestNewS3FileSystem(t *testing.T) {
 	t.Skip("Skipping MinIO tests for now")
 	config := createTestConfig()
 	server, cleanup := setupTestServer(t, config)
@@ -513,7 +513,7 @@ func TestNewMinIOFileSystem(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fs, err := NewMinIOFileSystem(server, tt.bucket, tt.prefix)
+			fs, err := NewS3FileSystemWithServer(server, tt.bucket, tt.prefix)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -529,14 +529,14 @@ func TestNewMinIOFileSystem(t *testing.T) {
 	}
 }
 
-func TestMinIOFileSystemWithStoppedServer(t *testing.T) {
+func TestS3FileSystemWithStoppedServer(t *testing.T) {
 	t.Skip("Skipping MinIO tests for now")
 	config := createTestConfig()
 	server, err := NewEmbeddedMinIO(config)
 	require.NoError(t, err)
 
 	// Try to create filesystem with stopped server
-	fs, err := NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err := NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	assert.Error(t, err)
 	assert.Nil(t, fs)
 
@@ -555,7 +555,7 @@ func TestFileOperationsBasic(t *testing.T) {
 	server, cleanup := setupTestServer(t, config)
 	defer cleanup()
 
-	fs, err := NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err := NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	require.NoError(t, err)
 
 	testData := generateTestData(1024)
@@ -606,7 +606,7 @@ func TestFileOperationsAdvanced(t *testing.T) {
 	server, cleanup := setupTestServer(t, config)
 	defer cleanup()
 
-	fs, err := NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err := NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	require.NoError(t, err)
 
 	testData := generateTestData(2048)
@@ -665,7 +665,7 @@ func TestFileOperationsErrors(t *testing.T) {
 	server, cleanup := setupTestServer(t, config)
 	defer cleanup()
 
-	fs, err := NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err := NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -733,7 +733,7 @@ func TestWriteFileOperations(t *testing.T) {
 	server, cleanup := setupTestServer(t, config)
 	defer cleanup()
 
-	fs, err := NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err := NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	require.NoError(t, err)
 
 	writeFile, err := fs.Create("test-write.txt")
@@ -806,7 +806,7 @@ func TestReadFileOperations(t *testing.T) {
 	server, cleanup := setupTestServer(t, config)
 	defer cleanup()
 
-	fs, err := NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err := NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	require.NoError(t, err)
 
 	// Create test file first
@@ -882,7 +882,7 @@ func TestLargeFileOperations(t *testing.T) {
 	server, cleanup := setupTestServer(t, config)
 	defer cleanup()
 
-	fs, err := NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err := NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	require.NoError(t, err)
 
 	// Generate large test data
@@ -951,7 +951,7 @@ func TestConcurrentFileOperations(t *testing.T) {
 	server, cleanup := setupTestServer(t, config)
 	defer cleanup()
 
-	fs, err := NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err := NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup
@@ -1044,7 +1044,7 @@ func TestBufferOverflow(t *testing.T) {
 	server, cleanup := setupTestServer(t, config)
 	defer cleanup()
 
-	fs, err := NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err := NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	require.NoError(t, err)
 
 	writeFile, err := fs.Create("overflow-test.txt")
@@ -1070,7 +1070,7 @@ func TestRetryLogic(t *testing.T) {
 	server, cleanup := setupTestServer(t, config)
 	defer cleanup()
 
-	fs, err := NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err := NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	require.NoError(t, err)
 
 	// Test retry on non-existent file (should fail after retries)
@@ -1098,7 +1098,7 @@ func TestMetricsCollection(t *testing.T) {
 	server, cleanup := setupTestServer(t, config)
 	defer cleanup()
 
-	fs, err := NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err := NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	require.NoError(t, err)
 
 	// Initial metrics
@@ -1304,7 +1304,7 @@ func TestObjectNameGeneration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fs, err := NewMinIOFileSystem(server, testBucket, tt.prefix)
+			fs, err := NewS3FileSystem(server, testBucket, tt.prefix)
 			require.NoError(t, err)
 
 			objectName := fs.getObjectName(tt.location)
@@ -1325,7 +1325,7 @@ func TestPerformanceBenchmarks(t *testing.T) {
 	server, cleanup := setupTestServer(t, config)
 	defer cleanup()
 
-	fs, err := NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err := NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	require.NoError(t, err)
 
 	// Test different file sizes
@@ -1377,7 +1377,7 @@ func TestErrorRecovery(t *testing.T) {
 	server, cleanup := setupTestServer(t, config)
 	defer cleanup()
 
-	fs, err := NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err := NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	require.NoError(t, err)
 
 	// Test recovery after server restart
@@ -1408,7 +1408,7 @@ func TestErrorRecovery(t *testing.T) {
 	require.NoError(t, err)
 
 	// Update filesystem client
-	fs, err = NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err = NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	require.NoError(t, err)
 
 	// Read file (should work now)
@@ -1437,7 +1437,7 @@ func TestResourceCleanup(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create filesystem
-	fs, err := NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err := NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	require.NoError(t, err)
 
 	// Create and close multiple files
@@ -1476,7 +1476,7 @@ func TestEndToEndWorkflow(t *testing.T) {
 	server, cleanup := setupTestServer(t, config)
 	defer cleanup()
 
-	fs, err := NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err := NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	require.NoError(t, err)
 
 	// Simulate a complete workflow
@@ -1592,7 +1592,7 @@ func BenchmarkFileOperations(b *testing.B) {
 		os.RemoveAll(config.DataDir)
 	}()
 
-	fs, err := NewMinIOFileSystem(server, testBucket, testPrefix)
+	fs, err := NewS3FileSystemWithServer(server, testBucket, testPrefix)
 	if err != nil {
 		b.Fatal(err)
 	}
