@@ -48,14 +48,14 @@ func NewEngine(cfg *config.Config, logger zerolog.Logger) (*Engine, error) {
 
 // ExecuteQuery routes and executes a query
 func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, error) {
-	// Create a new parser with lexer for this specific query
-	lexer := parser.NewLexer([]byte(query))
-	p := parser.NewParser(lexer)
+	// Create a catalog-aware parser
+	catalogAdapter := parser.NewDefaultCatalogAdapter()
+	enhancedParser := parser.NewEnhancedParser(catalogAdapter)
 
-	// Parse the query to determine type
-	stmt, err := p.Parse()
+	// Parse and validate the query against catalog
+	stmt, err := enhancedParser.ParseAndValidate(ctx, query, catalogAdapter)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse query: %w", err)
+		return nil, fmt.Errorf("failed to parse and validate query: %w", err)
 	}
 
 	// Route based on statement type
