@@ -19,5 +19,5 @@ storage:
     type: "json"           # Catalog type: file, sqlite, rest, etc.
     uri: "file://./my-lakehouse/catalog.json"  # Catalog URI
   
-  # Data storage path
-  path: "file://./my-lakehouse"             # Path to data storage directory 
+  config:
+    type: "memory"         # Storage type: memory, filesystem, s3 (path required only for filesystem and s3) 

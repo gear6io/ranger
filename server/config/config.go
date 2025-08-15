@@ -28,13 +28,19 @@ type LogConfig struct {
 // StorageConfig represents storage configuration
 type StorageConfig struct {
 	Catalog CatalogConfig `yaml:"catalog"`
-	Path    string        `yaml:"path"`
+	Config  DataConfig    `yaml:"config"`
 }
 
 // CatalogConfig represents catalog configuration
 type CatalogConfig struct {
 	Type string `yaml:"type"`
 	URI  string `yaml:"uri"`
+}
+
+// DataConfig represents data storage configuration
+type DataConfig struct {
+	Type string `yaml:"type"`           // memory, filesystem, s3
+	Path string `yaml:"path,omitempty"` // optional, only required for filesystem and s3
 }
 
 // LoadDefaultConfig returns a default configuration
@@ -55,7 +61,9 @@ func LoadDefaultConfig() *Config {
 				Type: "file",
 				URI:  "file:///var/lib/icebox/catalog",
 			},
-			Path: "data",
+			Config: DataConfig{
+				Type: "memory", // Default to memory storage
+			},
 		},
 	}
 }
@@ -70,6 +78,11 @@ func LoadConfig(filename string) (*Config, error) {
 	var config Config
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	// Validate the loaded configuration
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
 
 	return &config, nil
@@ -91,8 +104,57 @@ func SaveConfig(config *Config, filename string) error {
 
 // Validate validates the configuration
 func (c *Config) Validate() error {
+	// Validate storage configuration
+	if err := c.Storage.Validate(); err != nil {
+		return fmt.Errorf("storage validation failed: %w", err)
+	}
+
 	// Port validation is no longer needed since ports are fixed
 	// Address validation could be added here if needed
+	return nil
+}
+
+// Validate validates the storage configuration
+func (s *StorageConfig) Validate() error {
+	// Validate catalog configuration
+	if err := s.Catalog.Validate(); err != nil {
+		return fmt.Errorf("catalog validation failed: %w", err)
+	}
+
+	// Validate data storage configuration
+	if err := s.Config.Validate(); err != nil {
+		return fmt.Errorf("data storage validation failed: %w", err)
+	}
+
+	return nil
+}
+
+// Validate validates the catalog configuration
+func (c *CatalogConfig) Validate() error {
+	if c.Type == "" {
+		return fmt.Errorf("catalog type is required")
+	}
+
+	if c.URI == "" {
+		return fmt.Errorf("catalog URI is required")
+	}
+
+	return nil
+}
+
+// Validate validates the data storage configuration
+func (d *DataConfig) Validate() error {
+	if d.Type == "" {
+		return fmt.Errorf("storage type is required")
+	}
+
+	// Path is required for filesystem and S3 storage types
+	if d.Type == "filesystem" || d.Type == "s3" {
+		if d.Path == "" {
+			return fmt.Errorf("path is required for %s storage type", d.Type)
+		}
+	}
+
 	return nil
 }
 
@@ -151,9 +213,14 @@ func (c *Config) IsNativeServerEnabled() bool {
 	return NATIVE_SERVER_ENABLED
 }
 
+// GetStorageType returns the storage type
+func (c *Config) GetStorageType() string {
+	return c.Storage.Config.Type
+}
+
 // GetStoragePath returns the storage path
 func (c *Config) GetStoragePath() string {
-	return c.Storage.Path
+	return c.Storage.Config.Path
 }
 
 // GetCatalogType returns the catalog type

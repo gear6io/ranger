@@ -8,6 +8,7 @@ import (
 	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/gateway"
 	"github.com/TFMV/icebox/server/query"
+	"github.com/TFMV/icebox/server/storage"
 	"github.com/rs/zerolog"
 )
 
@@ -17,6 +18,7 @@ type Loader struct {
 	catalog     catalog.CatalogInterface
 	queryEngine *query.Engine
 	gateway     *gateway.Gateway
+	storage     *storage.Manager
 	logger      zerolog.Logger
 }
 
@@ -26,6 +28,12 @@ func NewLoader(cfg *config.Config, logger zerolog.Logger) (*Loader, error) {
 	catalogInstance, err := catalog.NewCatalog(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create catalog: %w", err)
+	}
+
+	// Initialize storage manager based on configuration
+	storageManager, err := storage.NewManagerFromServerConfig(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create storage manager: %w", err)
 	}
 
 	// Initialize QueryEngine with catalog
@@ -45,6 +53,7 @@ func NewLoader(cfg *config.Config, logger zerolog.Logger) (*Loader, error) {
 		catalog:     catalogInstance,
 		queryEngine: queryEngine,
 		gateway:     gatewayInstance,
+		storage:     storageManager,
 		logger:      logger.With().Str("component", "loader").Logger(),
 	}, nil
 }
@@ -93,6 +102,11 @@ func (l *Loader) GetQueryEngine() *query.Engine {
 // GetGateway returns the Gateway instance
 func (l *Loader) GetGateway() *gateway.Gateway {
 	return l.gateway
+}
+
+// GetStorage returns the storage manager
+func (l *Loader) GetStorage() *storage.Manager {
+	return l.storage
 }
 
 // GetStatus returns the status of all components

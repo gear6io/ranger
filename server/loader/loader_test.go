@@ -16,7 +16,9 @@ func TestNewLoader(t *testing.T) {
 				Type: "json",
 				URI:  ".icebox/catalog.json",
 			},
-			Path: ".icebox/warehouse",
+			Config: config.DataConfig{
+				Type: "memory",
+			},
 		},
 	}
 
@@ -49,5 +51,9 @@ func TestNewLoader(t *testing.T) {
 
 	if loader.GetGateway() == nil {
 		t.Error("Gateway should not be nil")
+	}
+
+	if loader.GetStorage() == nil {
+		t.Error("Storage should not be nil")
 	}
 }

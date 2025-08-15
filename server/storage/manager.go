@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/storage/local"
 	"github.com/TFMV/icebox/server/storage/memory"
 	"github.com/TFMV/icebox/server/storage/minio"
@@ -39,10 +40,16 @@ func NewManager(cfg *Config, logger zerolog.Logger) (*Manager, error) {
 
 	switch cfg.Type {
 	case "filesystem":
+		if cfg.Path == "" {
+			return nil, fmt.Errorf("path is required for filesystem storage type")
+		}
 		fs, err = local.NewLocalFileSystem(cfg.Path)
 	case "memory":
 		fs, err = memory.NewFileSystemAdapter()
 	case "s3":
+		if cfg.Path == "" {
+			return nil, fmt.Errorf("path is required for S3 storage type")
+		}
 		fs, err = minio.NewS3FileSystem(cfg)
 	default:
 		return nil, fmt.Errorf("unsupported storage type: %s", cfg.Type)
@@ -57,6 +64,24 @@ func NewManager(cfg *Config, logger zerolog.Logger) (*Manager, error) {
 		logger: logger,
 		fs:     fs,
 	}, nil
+}
+
+// NewManagerFromServerConfig creates a new storage manager from server configuration
+func NewManagerFromServerConfig(cfg *config.Config, logger zerolog.Logger) (*Manager, error) {
+	// Create storage config from server config
+	storageCfg := &Config{
+		Type: cfg.GetStorageType(),
+		Path: cfg.GetStoragePath(),
+	}
+
+	// Validate that path is provided when required
+	if storageCfg.Type == "filesystem" || storageCfg.Type == "s3" {
+		if storageCfg.Path == "" {
+			return nil, fmt.Errorf("path is required for %s storage type", storageCfg.Type)
+		}
+	}
+
+	return NewManager(storageCfg, logger)
 }
 
 // Initialize initializes the data storage

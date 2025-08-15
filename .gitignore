@@ -34,3 +34,5 @@ art/
 gocheck_artifacts/
 my-lakehouse/
 logs/
+.vscode/
+bin/
