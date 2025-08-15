@@ -55,10 +55,9 @@ func TestMemoryFileSystemCreateAndWrite(t *testing.T) {
 	// Create a file for writing
 	file, err := mfs.Create("/data/output.txt")
 	require.NoError(t, err)
-	defer file.Close()
 
 	// Cast to write file and write data
-	writeFile, ok := file.(*memoryWriteFile)
+	writeFile, ok := file.(*fileWriter)
 	require.True(t, ok)
 
 	testData := []byte("Test content")
@@ -67,7 +66,7 @@ func TestMemoryFileSystemCreateAndWrite(t *testing.T) {
 	assert.Equal(t, len(testData), n)
 
 	// Close to flush
-	err = file.Close()
+	err = writeFile.Close()
 	require.NoError(t, err)
 
 	// Verify data was written
@@ -91,11 +90,15 @@ func TestMemoryFileSystemOpenAndRead(t *testing.T) {
 	// Open file for reading
 	file, err := mfs.Open("/test.txt")
 	require.NoError(t, err)
-	defer file.Close()
+
+	// Cast to reader
+	reader, ok := file.(*fileReader)
+	require.True(t, ok)
+	defer reader.Close()
 
 	// Read data
 	buf := make([]byte, len(testData))
-	n, err := file.Read(buf)
+	n, err := reader.Read(buf)
 	require.NoError(t, err)
 	assert.Equal(t, len(testData), n)
 	assert.Equal(t, testData, buf)
@@ -116,11 +119,15 @@ func TestMemoryFileSystemReadAt(t *testing.T) {
 	// Open file for reading
 	file, err := mfs.Open("/test.txt")
 	require.NoError(t, err)
-	defer file.Close()
+
+	// Cast to reader
+	reader, ok := file.(*fileReader)
+	require.True(t, ok)
+	defer reader.Close()
 
 	// Test ReadAt
 	buf := make([]byte, 3)
-	n, err := file.ReadAt(buf, 5)
+	n, err := reader.ReadAt(buf, 5)
 	require.NoError(t, err)
 	assert.Equal(t, 3, n)
 	assert.Equal(t, []byte("567"), buf)
@@ -141,16 +148,20 @@ func TestMemoryFileSystemSeek(t *testing.T) {
 	// Open file for reading
 	file, err := mfs.Open("/test.txt")
 	require.NoError(t, err)
-	defer file.Close()
+
+	// Cast to reader
+	reader, ok := file.(*fileReader)
+	require.True(t, ok)
+	defer reader.Close()
 
 	// Test seeking
-	pos, err := file.Seek(5, 0) // SEEK_SET
+	pos, err := reader.Seek(5, 0) // SEEK_SET
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), pos)
 
 	// Read after seek
 	buf := make([]byte, 3)
-	n, err := file.Read(buf)
+	n, err := reader.Read(buf)
 	require.NoError(t, err)
 	assert.Equal(t, 3, n)
 	assert.Equal(t, []byte("567"), buf)
@@ -258,7 +269,7 @@ func TestMemoryFileSystemMkdirAll(t *testing.T) {
 	mfs := NewFileStorage()
 
 	// Create directories
-	err := mfs.MkdirAll("/x/y/z", 0755)
+	err := mfs.MkdirAll("/x/y/z")
 	require.NoError(t, err)
 
 	// Test directory existence

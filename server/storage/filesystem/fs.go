@@ -245,7 +245,12 @@ func (mfs *FileStorage) WriteFile(path string, data []byte) error {
 	}
 
 	_, err = writeFile.Write(data)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Close the writer to actually store the file
+	return writeFile.Close()
 }
 
 // ReadFile reads data from a file (convenience method)

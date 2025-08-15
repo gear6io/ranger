@@ -65,7 +65,7 @@ func NewEngine(cfg *config.Config, logger zerolog.Logger) (*Engine, error) {
 	}
 
 	// Initialize storage manager
-	storageMgr, err := storage.NewManagerFromServerConfig(cfg, logger)
+	storageMgr, err := storage.NewManager(cfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage manager: %w", err)
 	}
@@ -170,7 +170,7 @@ func (e *Engine) CreateTable(ctx context.Context, tableName string, schema *pars
 
 	// Create table directory in storage
 	tablePath := fmt.Sprintf("tables/%s", tableName)
-	if err := e.storageMgr.GetFileSystem().MkdirAll(tablePath, 0755); err != nil {
+	if err := e.storageMgr.GetFileSystem().MkdirAll(tablePath); err != nil {
 		return fmt.Errorf("failed to create table directory in storage: %w", err)
 	}
 

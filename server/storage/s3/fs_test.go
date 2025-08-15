@@ -1304,7 +1304,7 @@ func TestObjectNameGeneration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fs, err := NewS3FileSystem(server, testBucket, tt.prefix)
+			fs, err := NewS3FileSystemWithServer(server, testBucket, tt.prefix)
 			require.NoError(t, err)
 
 			objectName := fs.getObjectName(tt.location)

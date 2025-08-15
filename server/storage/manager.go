@@ -45,45 +45,10 @@ type FileSystem interface {
 }
 
 // NewManager creates a new data storage manager
-func NewManager(cfg *Config, logger zerolog.Logger) (*Manager, error) {
+func NewManager(cfg *config.Config, logger zerolog.Logger) (*Manager, error) {
 	var fs FileSystem
 	var err error
 
-	switch cfg.Type {
-	case "filesystem":
-		if cfg.Path == "" {
-			return nil, fmt.Errorf("path is required for filesystem storage type")
-		}
-		fs = filesystem.NewFileStorage()
-		err = nil
-	case "memory":
-		fs, err = memory.NewMemoryStorage()
-	case "s3":
-		if cfg.Path == "" {
-			return nil, fmt.Errorf("path is required for S3 storage type")
-		}
-		fs, err = s3.NewS3FileSystem(cfg)
-	default:
-		return nil, fmt.Errorf("unsupported storage type: %s", cfg.Type)
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to create filesystem: %w", err)
-	}
-
-	// Create metadata manager
-	meta := NewMetadataManager(cfg.Path)
-
-	return &Manager{
-		config: cfg,
-		logger: logger,
-		fs:     fs,
-		meta:   meta,
-	}, nil
-}
-
-// NewManagerFromServerConfig creates a new storage manager from server configuration
-func NewManagerFromServerConfig(cfg *config.Config, logger zerolog.Logger) (*Manager, error) {
 	// Create storage config from server config
 	storageCfg := &Config{
 		Type: cfg.GetStorageType(),
@@ -97,7 +62,30 @@ func NewManagerFromServerConfig(cfg *config.Config, logger zerolog.Logger) (*Man
 		}
 	}
 
-	return NewManager(storageCfg, logger)
+	switch storageCfg.Type {
+	case "filesystem":
+		fs = filesystem.NewFileStorage()
+	case "memory":
+		fs, err = memory.NewMemoryStorage()
+	case "s3":
+		fs, err = s3.NewS3FileSystem(cfg)
+	default:
+		return nil, fmt.Errorf("unsupported storage type: %s", storageCfg.Type)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to create filesystem: %w", err)
+	}
+
+	// Create metadata manager
+	meta := NewMetadataManager(storageCfg.Path)
+
+	return &Manager{
+		config: storageCfg,
+		logger: logger,
+		fs:     fs,
+		meta:   meta,
+	}, nil
 }
 
 // Initialize initializes the data storage
