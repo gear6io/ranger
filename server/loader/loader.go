@@ -31,7 +31,7 @@ func NewLoader(cfg *config.Config, logger zerolog.Logger) (*Loader, error) {
 	}
 
 	// Initialize storage manager based on configuration
-	storageManager, err := storage.NewManagerFromServerConfig(cfg, logger)
+	storageManager, err := storage.NewManager(cfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage manager: %w", err)
 	}
