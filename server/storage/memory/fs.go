@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"sync"
+
+	"github.com/TFMV/icebox/pkg/errors"
 )
 
 // MemoryStorage implements a simple in-memory data store
@@ -35,7 +37,8 @@ func (fsa *MemoryStorage) Open(path string) (io.ReadCloser, error) {
 
 	data, exists := fsa.data[path]
 	if !exists {
-		return nil, io.ErrUnexpectedEOF
+		return nil, errors.New(ErrFileNotFound, "file not found").
+			AddContext("path", path)
 	}
 
 	return io.NopCloser(bytes.NewReader(data)), nil
@@ -54,6 +57,11 @@ func (fsa *MemoryStorage) Create(path string) (io.WriteCloser, error) {
 func (fsa *MemoryStorage) Remove(path string) error {
 	fsa.mu.Lock()
 	defer fsa.mu.Unlock()
+
+	if _, exists := fsa.data[path]; !exists {
+		return errors.New(ErrFileNotFound, "file not found for removal").
+			AddContext("path", path)
+	}
 
 	delete(fsa.data, path)
 	return nil
@@ -90,7 +98,8 @@ func (fsa *MemoryStorage) ReadFile(path string) ([]byte, error) {
 
 	data, exists := fsa.data[path]
 	if !exists {
-		return nil, io.ErrUnexpectedEOF
+		return nil, errors.New(ErrFileNotFound, "file not found").
+			AddContext("path", path)
 	}
 
 	return data, nil
@@ -117,9 +126,13 @@ func (mwc *memoryWriteCloser) Close() error {
 
 // OpenForRead opens a file for streaming read
 func (fsa *MemoryStorage) OpenForRead(path string) (io.ReadCloser, error) {
+	fsa.mu.RLock()
+	defer fsa.mu.RUnlock()
+
 	data, exists := fsa.data[path]
 	if !exists {
-		return nil, io.ErrUnexpectedEOF
+		return nil, errors.New(ErrFileNotFound, "file not found for streaming read").
+			AddContext("path", path)
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
@@ -142,6 +155,12 @@ func (fsa *MemoryStorage) PrepareTableEnvironment(tableName string) error {
 	fsa.mu.Lock()
 	defer fsa.mu.Unlock()
 
+	// Check if table already exists
+	if _, exists := fsa.tables[tableName]; exists {
+		return errors.New(ErrTableAlreadyExists, "table environment already exists").
+			AddContext("table_name", tableName)
+	}
+
 	// Create in-memory table data structure
 	fsa.tables[tableName] = &TableData{
 		Schema: []byte{},
@@ -155,6 +174,12 @@ func (fsa *MemoryStorage) StoreTableData(tableName string, data []byte) error {
 	fsa.mu.Lock()
 	defer fsa.mu.Unlock()
 
+	// Check if table environment exists
+	if _, exists := fsa.tables[tableName]; !exists {
+		return errors.New(ErrTableNotFound, "table environment not found").
+			AddContext("table_name", tableName)
+	}
+
 	// Store data in the table
 	fsa.data[fmt.Sprintf("tables/%s/data", tableName)] = data
 	return nil
@@ -165,9 +190,16 @@ func (fsa *MemoryStorage) GetTableData(tableName string) ([]byte, error) {
 	fsa.mu.RLock()
 	defer fsa.mu.RUnlock()
 
+	// Check if table environment exists
+	if _, exists := fsa.tables[tableName]; !exists {
+		return nil, errors.New(ErrTableNotFound, "table environment not found").
+			AddContext("table_name", tableName)
+	}
+
 	data, exists := fsa.data[fmt.Sprintf("tables/%s/data", tableName)]
 	if !exists {
-		return nil, fmt.Errorf("table data not found: %s", tableName)
+		return nil, errors.New(ErrTableDataNotFound, "table data not found").
+			AddContext("table_name", tableName)
 	}
 
 	return data, nil
@@ -177,6 +209,12 @@ func (fsa *MemoryStorage) GetTableData(tableName string) ([]byte, error) {
 func (fsa *MemoryStorage) RemoveTableEnvironment(tableName string) error {
 	fsa.mu.Lock()
 	defer fsa.mu.Unlock()
+
+	// Check if table environment exists
+	if _, exists := fsa.tables[tableName]; !exists {
+		return errors.New(ErrTableNotFound, "table environment not found for removal").
+			AddContext("table_name", tableName)
+	}
 
 	// Remove table data structure
 	delete(fsa.tables, tableName)
