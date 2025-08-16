@@ -24,7 +24,8 @@ storage:
   
   # Data storage configuration
   data:
-    type: "filesystem"     # Storage type: memory, filesystem, s3
+    # Storage engine is now specified per-table at runtime
+    # All engines (memory, filesystem, s3) are available
     # Data will be automatically stored at {data_path}/data/
   
   # Internal metadata is always SQLite (not configurable)

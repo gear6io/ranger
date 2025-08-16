@@ -15,7 +15,7 @@ func TestStorageManagerWithCatalog(t *testing.T) {
 	cfg := config.LoadDefaultConfig()
 	cfg.Storage.DataPath = "/tmp/icebox_test"
 	cfg.Storage.Catalog.Type = "json"
-	cfg.Storage.Data.Type = "memory"
+	// Storage engine is now specified per-table, not globally
 
 	// Create logger
 	logger := zerolog.New(zerolog.NewConsoleWriter())
@@ -45,9 +45,10 @@ func TestStorageManagerWithCatalog(t *testing.T) {
 
 	// Get status
 	status := manager.GetStatus()
-	assert.Equal(t, "memory", status["type"])
 	assert.Equal(t, "/tmp/icebox_test", status["base_path"])
 	assert.Equal(t, "/tmp/icebox_test/catalog", status["catalog_path"])
 	assert.Equal(t, "/tmp/icebox_test/data", status["data_path"])
 	assert.Equal(t, "/tmp/icebox_test/.icebox/metadata.db", status["metadata_path"])
+	assert.Contains(t, status, "total_engines")
+	assert.Contains(t, status, "default_engine")
 }

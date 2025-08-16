@@ -11,26 +11,22 @@ import (
 
 	"github.com/TFMV/icebox/server/catalog"
 	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/storage/filesystem"
-	"github.com/TFMV/icebox/server/storage/memory"
-	"github.com/TFMV/icebox/server/storage/s3"
 	"github.com/rs/zerolog"
 )
 
 // Manager manages data storage operations
 type Manager struct {
-	config      *Config
-	logger      zerolog.Logger
-	fs          FileSystem
-	meta        *MetadataManager
-	pathManager *PathManager
-	catalog     catalog.CatalogInterface // Fix interface reference
+	config         *Config
+	logger         zerolog.Logger
+	engineRegistry *StorageEngineRegistry
+	meta           *MetadataManager
+	pathManager    *PathManager
+	catalog        catalog.CatalogInterface // Fix interface reference
 }
 
 // Config holds data storage configuration
 type Config struct {
-	Type string `yaml:"type"` // filesystem, s3, memory
-	Path string `yaml:"path"` // for filesystem storage
+	Path string `yaml:"path"` // for filesystem storage (no more Type field)
 }
 
 // FileSystem interface for data storage operations
@@ -57,9 +53,6 @@ type FileSystem interface {
 
 // NewManager creates a new data storage manager
 func NewManager(cfg *config.Config, logger zerolog.Logger) (*Manager, error) {
-	var fs FileSystem
-	var err error
-
 	// Get the base data path (already validated in config layer)
 	basePath := cfg.GetStoragePath()
 
@@ -68,31 +61,20 @@ func NewManager(cfg *config.Config, logger zerolog.Logger) (*Manager, error) {
 
 	// Create storage config from server config
 	storageCfg := &Config{
-		Type: cfg.GetStorageType(),
 		Path: pathManager.GetDataPath(), // Use PathManager for data path
 	}
 
-	// Create filesystem based on storage type
-	switch storageCfg.Type {
-	case "filesystem":
-		fs = filesystem.NewFileStorage()
-	case "memory":
-		fs, err = memory.NewMemoryStorage()
-	case "s3":
-		fs, err = s3.NewS3FileSystem(cfg)
-	default:
-		return nil, fmt.Errorf("unsupported storage type: %s", storageCfg.Type)
-	}
-
+	// Create storage engine registry (initializes all available engines)
+	engineRegistry, err := NewStorageEngineRegistry(cfg, logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create filesystem: %w", err)
+		return nil, fmt.Errorf("failed to create storage engine registry: %w", err)
 	}
 
 	// Create metadata manager with internal metadata path from PathManager
 	meta := NewMetadataManager(pathManager.GetInternalMetadataDBPath())
 
 	// Initialize catalog
-	catalog, err := catalog.NewCatalog(cfg)
+	catalog, err := catalog.NewCatalog(cfg, pathManager)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize catalog: %w", err)
 	}
@@ -100,39 +82,44 @@ func NewManager(cfg *config.Config, logger zerolog.Logger) (*Manager, error) {
 	// Log the storage configuration
 	logger.Info().
 		Str("base_path", basePath).
-		Str("storage_type", storageCfg.Type).
 		Str("data_path", storageCfg.Path).
 		Str("metadata_path", pathManager.GetInternalMetadataDBPath()).
 		Str("catalog_uri", pathManager.GetCatalogURI(cfg.GetCatalogType())).
-		Msg("Storage manager initialized")
+		Msg("Storage manager initialized with multi-engine support")
 
 	return &Manager{
-		config:      storageCfg,
-		logger:      logger,
-		fs:          fs,
-		meta:        meta,
-		pathManager: pathManager,
-		catalog:     catalog,
+		config:         storageCfg,
+		logger:         logger,
+		engineRegistry: engineRegistry,
+		meta:           meta,
+		pathManager:    pathManager,
+		catalog:        catalog,
 	}, nil
 }
 
 // Initialize initializes the data storage
 func (m *Manager) Initialize(ctx context.Context) error {
-	m.logger.Info().Str("type", m.config.Type).Msg("Initializing data storage")
+	m.logger.Info().Msg("Initializing data storage with multi-engine support")
 
 	// Ensure the standardized directory structure exists
 	if err := m.pathManager.EnsureDirectoryStructure(); err != nil {
 		return fmt.Errorf("failed to create directory structure: %w", err)
 	}
 
+	// Get default engine for initialization
+	defaultEngine, err := m.engineRegistry.GetDefaultEngine()
+	if err != nil {
+		return fmt.Errorf("failed to get default storage engine: %w", err)
+	}
+
 	// Ensure base directory exists for filesystem operations
-	if err := m.fs.MkdirAll(m.config.Path); err != nil {
+	if err := defaultEngine.MkdirAll(m.config.Path); err != nil {
 		return fmt.Errorf("failed to create base directory: %w", err)
 	}
 
 	// Ensure tables directory exists
 	tablesPath := filepath.Join(m.config.Path, "")
-	if err := m.fs.MkdirAll(tablesPath); err != nil {
+	if err := defaultEngine.MkdirAll(tablesPath); err != nil {
 		return fmt.Errorf("failed to create tables directory: %w", err)
 	}
 
@@ -148,14 +135,21 @@ func (m *Manager) Close() error {
 
 // GetStatus returns the current status of the storage manager
 func (m *Manager) GetStatus() map[string]interface{} {
-	return map[string]interface{}{
-		"type":          m.config.Type,
+	status := map[string]interface{}{
 		"base_path":     m.pathManager.GetBasePath(),
 		"catalog_path":  m.pathManager.GetCatalogPath(),
 		"data_path":     m.pathManager.GetDataPath(),
 		"metadata_path": m.pathManager.GetInternalMetadataDBPath(),
 		"initialized":   true,
 	}
+
+	// Add engine registry status
+	engineStatus := m.engineRegistry.GetEngineStatus()
+	for k, v := range engineStatus {
+		status[k] = v
+	}
+
+	return status
 }
 
 // GetPathManager returns the path manager for external use
@@ -168,9 +162,19 @@ func (m *Manager) GetCatalog() catalog.CatalogInterface {
 	return m.catalog
 }
 
-// GetFileSystem returns the underlying filesystem
+// GetEngineRegistry returns the engine registry for external use
+func (m *Manager) GetEngineRegistry() *StorageEngineRegistry {
+	return m.engineRegistry
+}
+
+// GetFileSystem returns the default filesystem (for backward compatibility)
 func (m *Manager) GetFileSystem() FileSystem {
-	return m.fs
+	engine, err := m.engineRegistry.GetDefaultEngine()
+	if err != nil {
+		// Return nil if no default engine available
+		return nil
+	}
+	return engine
 }
 
 // ============================================================================
@@ -187,24 +191,36 @@ func generateTableFileName(tableName string, date time.Time, ulid string) string
 // TABLE MANAGEMENT METHODS
 // ============================================================================
 
-// CreateTable creates a new table with schema
-func (m *Manager) CreateTable(tableIdentifier string, schema []byte) error {
+// CreateTable creates a new table with schema and storage engine
+func (m *Manager) CreateTable(tableIdentifier string, schema []byte, storageEngine EngineType, engineConfig map[string]interface{}) error {
 	// Parse table identifier (database.table or just table)
 	database, tableName := m.pathManager.ParseTableIdentifier(tableIdentifier)
 
 	m.logger.Info().
 		Str("database", database).
 		Str("table", tableName).
+		Str("storage_engine", storageEngine.String()).
 		Msg("Creating new table")
 
+	// Validate storage engine
+	if !m.engineRegistry.EngineExists(storageEngine) {
+		return fmt.Errorf("unsupported storage engine: %s", storageEngine)
+	}
+
 	// First create table metadata in internal storage
-	_, err := m.meta.CreateTableMetadata(tableIdentifier, schema)
+	_, err := m.meta.CreateTableMetadata(tableIdentifier, schema, storageEngine, engineConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create table metadata: %w", err)
 	}
 
-	// Then prepare storage environment
-	if err := m.fs.PrepareTableEnvironment(tableIdentifier); err != nil {
+	// Get the appropriate storage engine for this table
+	engine, err := m.engineRegistry.GetEngine(storageEngine)
+	if err != nil {
+		return fmt.Errorf("failed to get storage engine %s: %w", storageEngine, err)
+	}
+
+	// Then prepare storage environment using the specified engine
+	if err := engine.PrepareTableEnvironment(tableIdentifier); err != nil {
 		// Clean up metadata if storage preparation fails
 		// TODO: Add RemoveTableMetadata method to MetadataManager
 		return fmt.Errorf("failed to prepare table storage environment: %w", err)
@@ -218,6 +234,7 @@ func (m *Manager) CreateTable(tableIdentifier string, schema []byte) error {
 	m.logger.Info().
 		Str("database", database).
 		Str("table", tableName).
+		Str("storage_engine", storageEngine.String()).
 		Msg("Table created successfully")
 
 	return nil
@@ -239,20 +256,33 @@ func (m *Manager) InsertData(tableIdentifier string, data [][]interface{}) error
 		return fmt.Errorf("table does not exist: %s", tableIdentifier)
 	}
 
+	// Get table metadata to determine storage engine
+	metadata, err := m.meta.LoadTableMetadata(tableIdentifier)
+	if err != nil {
+		return fmt.Errorf("failed to load table metadata: %w", err)
+	}
+
+	// Get the appropriate storage engine for this table
+	engine, err := m.engineRegistry.GetEngine(metadata.StorageEngine)
+	if err != nil {
+		return fmt.Errorf("failed to get storage engine %s: %w", metadata.StorageEngine, err)
+	}
+
 	// Serialize data to bytes
 	dataBytes, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("failed to serialize data: %w", err)
 	}
 
-	// Store data in storage
-	if err := m.fs.StoreTableData(tableIdentifier, dataBytes); err != nil {
+	// Store data in storage using the appropriate engine
+	if err := engine.StoreTableData(tableIdentifier, dataBytes); err != nil {
 		return fmt.Errorf("failed to store data in storage: %w", err)
 	}
 
 	m.logger.Info().
 		Str("database", database).
 		Str("table", tableName).
+		Str("storage_engine", metadata.StorageEngine.String()).
 		Int("rows", len(data)).
 		Msg("Data inserted successfully")
 
@@ -286,8 +316,20 @@ func (m *Manager) GetTableData(tableIdentifier string) ([][]interface{}, error) 
 		return nil, fmt.Errorf("table does not exist: %s", tableIdentifier)
 	}
 
-	// Get data from storage
-	dataBytes, err := m.fs.GetTableData(tableIdentifier)
+	// Get table metadata to determine storage engine
+	metadata, err := m.meta.LoadTableMetadata(tableIdentifier)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load table metadata: %w", err)
+	}
+
+	// Get the appropriate storage engine for this table
+	engine, err := m.engineRegistry.GetEngine(metadata.StorageEngine)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get storage engine %s: %w", metadata.StorageEngine, err)
+	}
+
+	// Get data from storage using the appropriate engine
+	dataBytes, err := engine.GetTableData(tableIdentifier)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get data from storage: %w", err)
 	}
@@ -301,8 +343,14 @@ func (m *Manager) GetTableData(tableIdentifier string) ([][]interface{}, error) 
 	return data, nil
 }
 
-// GetTableSchema returns schema for a table
+// GetTableSchema retrieves the schema for the specified table
 func (m *Manager) GetTableSchema(tableIdentifier string) ([]byte, error) {
+	// Check if table exists in metadata
+	if !m.meta.TableExists(tableIdentifier) {
+		return nil, fmt.Errorf("table does not exist: %s", tableIdentifier)
+	}
+
+	// Get table metadata
 	metadata, err := m.meta.LoadTableMetadata(tableIdentifier)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load table metadata: %w", err)
@@ -326,8 +374,20 @@ func (m *Manager) RemoveTable(tableIdentifier string) error {
 		return fmt.Errorf("table does not exist: %s", tableIdentifier)
 	}
 
-	// Remove storage environment
-	if err := m.fs.RemoveTableEnvironment(tableIdentifier); err != nil {
+	// Get table metadata to determine storage engine
+	metadata, err := m.meta.LoadTableMetadata(tableIdentifier)
+	if err != nil {
+		return fmt.Errorf("failed to load table metadata: %w", err)
+	}
+
+	// Get the appropriate storage engine for this table
+	engine, err := m.engineRegistry.GetEngine(metadata.StorageEngine)
+	if err != nil {
+		return fmt.Errorf("failed to get storage engine %s: %w", metadata.StorageEngine, err)
+	}
+
+	// Remove storage environment using the appropriate engine
+	if err := engine.RemoveTableEnvironment(tableIdentifier); err != nil {
 		return fmt.Errorf("failed to remove table storage environment: %w", err)
 	}
 
@@ -354,13 +414,13 @@ func (m *Manager) TableExists(tableIdentifier string) bool {
 // createIcebergMetadata creates proper Iceberg metadata structure
 func (m *Manager) createIcebergMetadata(database, tableName string, schema []byte) error {
 	// Create table metadata directory
-	metadataDir := m.pathManager.GetTableMetadataPath(database, tableName)
+	metadataDir := m.pathManager.GetTableMetadataPath([]string{database}, tableName)
 	if err := os.MkdirAll(metadataDir, 0755); err != nil {
 		return fmt.Errorf("failed to create metadata directory: %w", err)
 	}
 
 	// Create data directory
-	dataDir := m.pathManager.GetTableDataPath(database, tableName)
+	dataDir := m.pathManager.GetTableDataPath([]string{database}, tableName)
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return fmt.Errorf("failed to create data directory: %w", err)
 	}

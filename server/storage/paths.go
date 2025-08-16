@@ -72,29 +72,56 @@ func (pm *PathManager) GetTablePath(database, tableName string) string {
 	return filepath.Join(pm.GetDataPath(), database, tableName)
 }
 
-// GetTableDataPath returns the data directory path for a table
-func (pm *PathManager) GetTableDataPath(database, tableName string) string {
-	return filepath.Join(pm.GetTablePath(database, tableName), "data")
+// GetTableDataPath returns the data directory path for a table (implements shared.PathManager)
+func (pm *PathManager) GetTableDataPath(namespace []string, tableName string) string {
+	if len(namespace) == 0 {
+		return filepath.Join(pm.GetDataPath(), "default", tableName, "data")
+	}
+	nsPath := strings.Join(namespace, "/")
+	return filepath.Join(pm.GetDataPath(), nsPath, tableName, "data")
 }
 
-// GetTableMetadataPath returns the metadata directory path for a table
-func (pm *PathManager) GetTableMetadataPath(database, tableName string) string {
-	return filepath.Join(pm.GetTablePath(database, tableName), "metadata")
+// GetTableMetadataPath returns the metadata directory path for a table (implements shared.PathManager)
+func (pm *PathManager) GetTableMetadataPath(namespace []string, tableName string) string {
+	if len(namespace) == 0 {
+		return filepath.Join(pm.GetDataPath(), "default", tableName, "metadata")
+	}
+	nsPath := strings.Join(namespace, "/")
+	return filepath.Join(pm.GetDataPath(), nsPath, tableName, "metadata")
 }
 
 // GetTableMetadataFile returns the path for a specific metadata version file
 func (pm *PathManager) GetTableMetadataFile(database, tableName string, version int) string {
-	return filepath.Join(pm.GetTableMetadataPath(database, tableName), fmt.Sprintf("v%d.metadata.json", version))
+	namespace := []string{database}
+	return filepath.Join(pm.GetTableMetadataPath(namespace, tableName), fmt.Sprintf("v%d.metadata.json", version))
 }
 
 // GetTableDataFile returns the path for a data file
 func (pm *PathManager) GetTableDataFile(database, tableName, fileName string) string {
-	return filepath.Join(pm.GetTableDataPath(database, tableName), fileName)
+	namespace := []string{database}
+	return filepath.Join(pm.GetTableDataPath(namespace, tableName), fileName)
 }
 
 // GetNamespacePath returns the path for a namespace
-func (pm *PathManager) GetNamespacePath(namespace string) string {
-	return filepath.Join(pm.GetDataPath(), namespace)
+func (pm *PathManager) GetNamespacePath(namespace []string) string {
+	nsPath := strings.Join(namespace, "/")
+	return filepath.Join(pm.GetDataPath(), nsPath)
+}
+
+// GetViewMetadataPath returns the metadata path for a view (implements shared.PathManager)
+func (pm *PathManager) GetViewMetadataPath(namespace []string, viewName string) string {
+	nsPath := strings.Join(namespace, "/")
+	return filepath.Join(pm.GetDataPath(), nsPath, viewName, "metadata")
+}
+
+// GetMetadataDir returns the metadata directory (implements shared.PathManager)
+func (pm *PathManager) GetMetadataDir() string {
+	return pm.GetInternalMetadataPath()
+}
+
+// GetDataDir returns the data directory (implements shared.PathManager)
+func (pm *PathManager) GetDataDir() string {
+	return pm.GetDataPath()
 }
 
 // ParseTableIdentifier parses a table identifier (database.table or just table)

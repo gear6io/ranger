@@ -38,8 +38,10 @@ type CatalogConfig struct {
 }
 
 // DataConfig represents data storage configuration
+// Note: Storage engine is now specified per-table, not globally
 type DataConfig struct {
-	Type string `yaml:"type"` // memory, filesystem, s3
+	// Engine-specific configurations can be added here later
+	// For now, all engines are available at runtime
 }
 
 // LoadDefaultConfig returns a default configuration
@@ -61,7 +63,7 @@ func LoadDefaultConfig() *Config {
 				Type: "json",
 			},
 			Data: DataConfig{
-				Type: "filesystem", // Default to filesystem storage
+				// All storage engines are now available at runtime
 			},
 		},
 	}
@@ -87,7 +89,7 @@ func LoadConfig(filename string) (*Config, error) {
 	// Log the data path being used
 	fmt.Printf("📁 Using data path: %s\n", config.GetStoragePath())
 	fmt.Printf("🗄️  Catalog type: %s\n", config.GetCatalogType())
-	fmt.Printf("💾 Storage type: %s\n", config.GetStorageType())
+	fmt.Printf("💾 Storage engines: All available at runtime (per-table selection)\n")
 
 	return &config, nil
 }
@@ -149,18 +151,8 @@ func (c *CatalogConfig) Validate() error {
 
 // Validate validates the data storage configuration
 func (d *DataConfig) Validate() error {
-	if d.Type == "" {
-		return fmt.Errorf("storage type is required")
-	}
-
-	// Validate storage type
-	switch d.Type {
-	case "memory", "filesystem", "s3":
-		// All valid types
-	default:
-		return fmt.Errorf("unsupported storage type: %s", d.Type)
-	}
-
+	// Storage type is now specified per-table, not globally
+	// All engines are available at runtime
 	return nil
 }
 
@@ -220,11 +212,11 @@ func (c *Config) IsNativeServerEnabled() bool {
 }
 
 // GetStorageType returns the storage type
+// Note: This method is deprecated. Storage engine is now specified per-table.
 func (c *Config) GetStorageType() string {
-	if c.Storage.Data.Type == "" {
-		return "filesystem" // Default to filesystem
-	}
-	return c.Storage.Data.Type
+	// Return default for backward compatibility
+	// In the new multi-engine architecture, storage type is specified per-table
+	return "filesystem"
 }
 
 // GetCatalogURI returns the catalog URI based on data path and catalog type

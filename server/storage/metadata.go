@@ -10,13 +10,15 @@ import (
 
 // TableMetadata represents metadata for a table
 type TableMetadata struct {
-	Name         string     `json:"name"`
-	Schema       []byte     `json:"schema"`
-	FileCount    int        `json:"file_count"`
-	TotalSize    int64      `json:"total_size"`
-	LastModified time.Time  `json:"last_modified"`
-	Created      time.Time  `json:"created"`
-	Files        []FileInfo `json:"files"`
+	Name          string                 `json:"name"`
+	Schema        []byte                 `json:"schema"`
+	StorageEngine EngineType             `json:"storage_engine"`          // NEW: FILESYSTEM, MEMORY, S3
+	EngineConfig  map[string]interface{} `json:"engine_config,omitempty"` // NEW: engine-specific config
+	FileCount     int                    `json:"file_count"`
+	TotalSize     int64                  `json:"total_size"`
+	LastModified  time.Time              `json:"last_modified"`
+	Created       time.Time              `json:"created"`
+	Files         []FileInfo             `json:"files"`
 }
 
 // FileInfo represents information about a data file
@@ -41,17 +43,19 @@ func NewMetadataManager(metadataDBPath string) *MetadataManager {
 }
 
 // CreateTableMetadata creates metadata for a new table
-func (mm *MetadataManager) CreateTableMetadata(tableName string, schema []byte) (*TableMetadata, error) {
+func (mm *MetadataManager) CreateTableMetadata(tableName string, schema []byte, storageEngine EngineType, engineConfig map[string]interface{}) (*TableMetadata, error) {
 	now := time.Now()
 
 	metadata := &TableMetadata{
-		Name:         tableName,
-		Schema:       schema,
-		FileCount:    0,
-		TotalSize:    0,
-		LastModified: now,
-		Created:      now,
-		Files:        []FileInfo{},
+		Name:          tableName,
+		Schema:        schema,
+		StorageEngine: storageEngine,
+		EngineConfig:  engineConfig,
+		FileCount:     0,
+		TotalSize:     0,
+		LastModified:  now,
+		Created:       now,
+		Files:         []FileInfo{},
 	}
 
 	// For memory storage (empty base path), don't create files on disk
