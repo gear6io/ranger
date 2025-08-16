@@ -135,8 +135,9 @@ type FromClause struct {
 
 // Table represents a table in a FROM clause
 type Table struct {
-	Name  *Identifier
-	Alias *Identifier // i.e. AS alias
+	Database *Identifier // Database name (optional, defaults to "default")
+	Name     *Identifier // Table name
+	Alias    *Identifier // i.e. AS alias
 }
 
 // WhereClause represents a WHERE clause in a SELECT statement
@@ -392,6 +393,24 @@ const (
 	SHOW_INDEXES
 	SHOW_GRANTS
 )
+
+// String returns the string representation of ShowType
+func (st ShowType) String() string {
+	switch st {
+	case SHOW_DATABASES:
+		return "DATABASES"
+	case SHOW_TABLES:
+		return "TABLES"
+	case SHOW_USERS:
+		return "USERS"
+	case SHOW_INDEXES:
+		return "INDEXES"
+	case SHOW_GRANTS:
+		return "GRANTS"
+	default:
+		return "UNKNOWN"
+	}
+}
 
 // ShowStmt represents a SHOW statement
 type ShowStmt struct {

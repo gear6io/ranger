@@ -518,3 +518,8 @@ func generateUUID() string {
 	// Simple UUID generation - in production, use proper UUID library
 	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), time.Now().Unix())
 }
+
+// GetMetadataManager returns the metadata manager instance
+func (m *Manager) GetMetadataManager() metadata.MetadataManagerInterface {
+	return m.meta
+}

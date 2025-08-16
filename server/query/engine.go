@@ -81,13 +81,15 @@ func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 	}
 
 	// Route based on statement type
-	switch stmt.(type) {
+	switch stmt := stmt.(type) {
 	case *parser.SelectStmt:
 		return e.executeReadQuery(ctx, query)
 	case *parser.InsertStmt:
 		return e.executeInsertQuery(ctx, query)
 	case *parser.CreateTableStmt:
 		return e.executeDDLQuery(ctx, query)
+	case *parser.ShowStmt:
+		return e.executeShowStmt(ctx, stmt)
 	default:
 		return nil, fmt.Errorf("unsupported statement type")
 	}
@@ -127,6 +129,69 @@ func (e *Engine) executeInsertQuery(ctx context.Context, query string) (*QueryRe
 		RowCount: result.RowCount,
 		Columns:  result.Columns,
 		Message:  fmt.Sprintf("INSERT %d", result.RowCount),
+	}, nil
+}
+
+// executeShowStmt handles SHOW statements
+func (e *Engine) executeShowStmt(ctx context.Context, stmt *parser.ShowStmt) (*QueryResult, error) {
+	e.logger.Debug().Str("show_type", stmt.ShowType.String()).Msg("Executing SHOW statement")
+
+	switch stmt.ShowType {
+	case parser.SHOW_DATABASES:
+		return e.executeShowDatabases(ctx)
+	case parser.SHOW_TABLES:
+		return e.executeShowTables(ctx)
+	default:
+		return nil, fmt.Errorf("unsupported SHOW type: %s", stmt.ShowType.String())
+	}
+}
+
+// executeShowDatabases lists all available databases
+func (e *Engine) executeShowDatabases(ctx context.Context) (*QueryResult, error) {
+	e.logger.Debug().Msg("Executing SHOW DATABASES")
+
+	// Get databases from metadata manager
+	databases, err := e.storageMgr.GetMetadataManager().ListDatabases(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list databases: %w", err)
+	}
+
+	// Format result as table data
+	var rows [][]interface{}
+	for _, db := range databases {
+		rows = append(rows, []interface{}{db})
+	}
+
+	return &QueryResult{
+		Data:     rows,
+		RowCount: int64(len(rows)),
+		Columns:  []string{"Database"},
+		Message:  fmt.Sprintf("Found %d database(s)", len(rows)),
+	}, nil
+}
+
+// executeShowTables lists all available tables in the current database
+func (e *Engine) executeShowTables(ctx context.Context) (*QueryResult, error) {
+	e.logger.Debug().Msg("Executing SHOW TABLES")
+
+	// For now, show tables from default database
+	// TODO: Support USE database context
+	tables, err := e.storageMgr.GetMetadataManager().ListAllTables(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list tables: %w", err)
+	}
+
+	// Format result as table data
+	var rows [][]interface{}
+	for _, table := range tables {
+		rows = append(rows, []interface{}{table})
+	}
+
+	return &QueryResult{
+		Data:     rows,
+		RowCount: int64(len(rows)),
+		Columns:  []string{"Table"},
+		Message:  fmt.Sprintf("Found %d table(s)", len(rows)),
 	}, nil
 }
 

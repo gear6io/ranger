@@ -1203,6 +1203,153 @@ func TestNewParserShowUsers(t *testing.T) {
 	}
 }
 
+// TestDatabaseTableParsing tests parsing of database.table format
+func TestDatabaseTableParsing(t *testing.T) {
+	// Test parsing of database.table format
+	query := "SELECT * FROM db1.table1;"
+
+	// Create a new parser
+	lexer := NewLexer([]byte(query))
+	parser := NewParser(lexer)
+
+	// Parse the query
+	result, err := parser.Parse()
+	if err != nil {
+		t.Fatalf("Failed to parse query: %v", err)
+	}
+
+	// Check that it's a SELECT statement
+	selectStmt, ok := result.(*SelectStmt)
+	if !ok {
+		t.Fatalf("Expected SelectStmt, got %T", result)
+	}
+
+	// Check that the FROM clause has the correct table structure
+	if selectStmt.TableExpression == nil {
+		t.Fatal("Expected TableExpression to be set")
+	}
+	if selectStmt.TableExpression.FromClause == nil {
+		t.Fatal("Expected FromClause to be set")
+	}
+	if len(selectStmt.TableExpression.FromClause.Tables) != 1 {
+		t.Fatalf("Expected 1 table, got %d", len(selectStmt.TableExpression.FromClause.Tables))
+	}
+
+	table := selectStmt.TableExpression.FromClause.Tables[0]
+	if table.Database == nil {
+		t.Fatal("Database should be set for db1.table1")
+	}
+	if table.Name == nil {
+		t.Fatal("Table name should be set for db1.table1")
+	}
+
+	if table.Database.Value != "db1" {
+		t.Errorf("Expected database 'db1', got '%s'", table.Database.Value)
+	}
+	if table.Name.Value != "table1" {
+		t.Errorf("Expected table 'table1', got '%s'", table.Name.Value)
+	}
+}
+
+// TestSimpleTableParsing tests parsing of simple table name (no database)
+func TestSimpleTableParsing(t *testing.T) {
+	// Test parsing of simple table name (no database)
+	query := "SELECT * FROM table1;"
+
+	// Create a new parser
+	lexer := NewLexer([]byte(query))
+	parser := NewParser(lexer)
+
+	// Parse the query
+	result, err := parser.Parse()
+	if err != nil {
+		t.Fatalf("Failed to parse query: %v", err)
+	}
+
+	// Check that it's a SELECT statement
+	selectStmt, ok := result.(*SelectStmt)
+	if !ok {
+		t.Fatalf("Expected SelectStmt, got %T", result)
+	}
+
+	// Check that the FROM clause has the correct table structure
+	if selectStmt.TableExpression == nil {
+		t.Fatal("Expected TableExpression to be set")
+	}
+	if selectStmt.TableExpression.FromClause == nil {
+		t.Fatal("Expected FromClause to be set")
+	}
+	if len(selectStmt.TableExpression.FromClause.Tables) != 1 {
+		t.Fatalf("Expected 1 table, got %d", len(selectStmt.TableExpression.FromClause.Tables))
+	}
+
+	table := selectStmt.TableExpression.FromClause.Tables[0]
+	if table.Database != nil {
+		t.Fatal("Database should be nil for simple table name")
+	}
+	if table.Name == nil {
+		t.Fatal("Table name should be set")
+	}
+
+	if table.Name.Value != "table1" {
+		t.Errorf("Expected table 'table1', got '%s'", table.Name.Value)
+	}
+}
+
+// TestTableWithAliasParsing tests parsing of database.table with alias
+func TestTableWithAliasParsing(t *testing.T) {
+	// Test parsing of database.table with alias
+	query := "SELECT * FROM db1.table1 AS t1;"
+
+	// Create a new parser
+	lexer := NewLexer([]byte(query))
+	parser := NewParser(lexer)
+
+	// Parse the query
+	result, err := parser.Parse()
+	if err != nil {
+		t.Fatalf("Failed to parse query: %v", err)
+	}
+
+	// Check that it's a SELECT statement
+	selectStmt, ok := result.(*SelectStmt)
+	if !ok {
+		t.Fatalf("Expected SelectStmt, got %T", result)
+	}
+
+	// Check that the FROM clause has the correct table structure
+	if selectStmt.TableExpression == nil {
+		t.Fatal("Expected TableExpression to be set")
+	}
+	if selectStmt.TableExpression.FromClause == nil {
+		t.Fatal("Expected FromClause to be set")
+	}
+	if len(selectStmt.TableExpression.FromClause.Tables) != 1 {
+		t.Fatalf("Expected 1 table, got %d", len(selectStmt.TableExpression.FromClause.Tables))
+	}
+
+	table := selectStmt.TableExpression.FromClause.Tables[0]
+	if table.Database == nil {
+		t.Fatal("Database should be set for db1.table1")
+	}
+	if table.Name == nil {
+		t.Fatal("Table name should be set for db1.table1")
+	}
+	if table.Alias == nil {
+		t.Fatal("Alias should be set")
+	}
+
+	if table.Database.Value != "db1" {
+		t.Errorf("Expected database 'db1', got '%s'", table.Database.Value)
+	}
+	if table.Name.Value != "table1" {
+		t.Errorf("Expected table 'table1', got '%s'", table.Name.Value)
+	}
+	if table.Alias.Value != "t1" {
+		t.Errorf("Expected alias 't1', got '%s'", table.Alias.Value)
+	}
+}
+
 // TestNewParserAlterUser tests ALTER USER statement parsing
 func TestNewParserAlterUser(t *testing.T) {
 	statement := []byte(`

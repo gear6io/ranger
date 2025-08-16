@@ -159,6 +159,7 @@ const (
 	DIVIDE_TOK            // /
 	MODULUS_TOK           // %
 	AT_TOK                // @
+	DOT_TOK               // .
 )
 
 // Parser is a parser for SQL
@@ -191,7 +192,7 @@ func NewLexer(input []byte) *Lexer {
 
 // isLetter returns true if r is a letter
 func isLetter(r rune) bool {
-	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_' || r == '.' || r == '*'
+	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_' || r == '*'
 }
 
 // isDigit returns true if r is a digit
@@ -333,6 +334,15 @@ func (l *Lexer) nextToken() Token {
 			if !insideLiteral {
 				l.pos++
 				return Token{tokenT: AT_TOK, value: "@"}
+			} else {
+				stringLiteral += string(l.input[l.pos])
+				l.pos++
+				continue
+			}
+		case '.':
+			if !insideLiteral {
+				l.pos++
+				return Token{tokenT: DOT_TOK, value: "."}
 			} else {
 				stringLiteral += string(l.input[l.pos])
 				l.pos++
@@ -3542,13 +3552,29 @@ func (p *Parser) parseFromClause() (*FromClause, error) {
 func (p *Parser) parseTable() (*Table, error) {
 	table := &Table{}
 
-	// Parse table name
-	tableName, err := p.parseIdentifier()
+	// Parse first identifier (could be database or table name)
+	firstIdent, err := p.parseIdentifier()
 	if err != nil {
 		return nil, err
 	}
 
-	table.Name = tableName
+	// Check if next token is a dot (indicating database.table format)
+	if p.peek(0).tokenT == DOT_TOK {
+		// This is database.table format
+		table.Database = firstIdent
+		p.consume() // Consume the dot
+
+		// Parse table name
+		tableName, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		table.Name = tableName
+	} else {
+		// This is just table name (no database specified)
+		table.Name = firstIdent
+		// Database will be set to "default" later in processing
+	}
 
 	// can have tablename aliasname i.e users u
 	// OR tablename aliasname i.e users as u
@@ -3564,7 +3590,6 @@ func (p *Parser) parseTable() (*Table, error) {
 			return nil, err
 		}
 		table.Alias = aliasName
-
 	}
 
 	return table, nil
