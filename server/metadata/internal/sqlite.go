@@ -288,7 +288,7 @@ func (sm *Store) TableExists(ctx context.Context, dbName, tableName string) bool
 }
 
 // CreateTableMetadata creates detailed metadata for a table (for storage operations)
-func (sm *Store) CreateTableMetadata(ctx context.Context, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*types.TableMetadata, error) {
+func (sm *Store) CreateTableMetadata(ctx context.Context, database, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*types.TableMetadata, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	// Serialize engine config to JSON
@@ -302,14 +302,15 @@ func (sm *Store) CreateTableMetadata(ctx context.Context, tableName string, sche
 	}
 
 	// Insert table metadata record
-	insertSQL := `INSERT INTO table_metadata (table_name, schema, storage_engine, engine_config, file_count, total_size, last_modified, created) VALUES (?, ?, ?, ?, 0, 0, ?, ?)`
-	_, err := sm.db.ExecContext(ctx, insertSQL, tableName, schema, storageEngine, engineConfigJSON, now, now)
+	insertSQL := `INSERT INTO table_metadata (database_name, table_name, schema, storage_engine, engine_config, file_count, total_size, last_modified, created) VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)`
+	_, err := sm.db.ExecContext(ctx, insertSQL, database, tableName, schema, storageEngine, engineConfigJSON, now, now)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create table metadata for %s: %w", tableName, err)
+		return nil, fmt.Errorf("failed to create table metadata for %s.%s: %w", database, tableName, err)
 	}
 
 	// Create metadata object
 	tableMetadata := &types.TableMetadata{
+		Database:      database,
 		Name:          tableName,
 		Schema:        schema,
 		StorageEngine: storageEngine,
@@ -325,20 +326,20 @@ func (sm *Store) CreateTableMetadata(ctx context.Context, tableName string, sche
 }
 
 // LoadTableMetadata loads detailed metadata for a table
-func (sm *Store) LoadTableMetadata(ctx context.Context, tableName string) (*types.TableMetadata, error) {
-	query := `SELECT table_name, schema, storage_engine, engine_config, file_count, total_size, last_modified, created FROM table_metadata WHERE table_name = ?`
+func (sm *Store) LoadTableMetadata(ctx context.Context, database, tableName string) (*types.TableMetadata, error) {
+	query := `SELECT table_name, schema, storage_engine, engine_config, file_count, total_size, last_modified, created FROM table_metadata WHERE database_name = ? AND table_name = ?`
 
 	var tableNameStr, storageEngine, engineConfigJSON, lastModified, created string
 	var schema []byte
 	var fileCount int
 	var totalSize int64
 
-	err := sm.db.QueryRowContext(ctx, query, tableName).Scan(
+	err := sm.db.QueryRowContext(ctx, query, database, tableName).Scan(
 		&tableNameStr, &schema, &storageEngine, &engineConfigJSON,
 		&fileCount, &totalSize, &lastModified, &created)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("table metadata not found: %s", tableName)
+			return nil, fmt.Errorf("table metadata not found: %s.%s", database, tableName)
 		}
 		return nil, fmt.Errorf("failed to load table metadata: %w", err)
 	}
@@ -352,12 +353,13 @@ func (sm *Store) LoadTableMetadata(ctx context.Context, tableName string) (*type
 	}
 
 	// Load files for this table
-	files, err := sm.loadTableFiles(ctx, tableName)
+	files, err := sm.loadTableFiles(ctx, database, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load table files: %w", err)
 	}
 
 	tableMetadata := &types.TableMetadata{
+		Database:      database,
 		Name:          tableNameStr,
 		Schema:        schema,
 		StorageEngine: storageEngine,
@@ -374,7 +376,7 @@ func (sm *Store) LoadTableMetadata(ctx context.Context, tableName string) (*type
 
 // ListAllTables returns a list of all tables across all databases (for storage manager)
 func (sm *Store) ListAllTables(ctx context.Context) ([]string, error) {
-	query := `SELECT DISTINCT table_name FROM tables ORDER BY table_name`
+	query := `SELECT database_name, table_name FROM tables ORDER BY database_name, table_name`
 	rows, err := sm.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query all tables: %w", err)
@@ -383,20 +385,20 @@ func (sm *Store) ListAllTables(ctx context.Context) ([]string, error) {
 
 	var tables []string
 	for rows.Next() {
-		var tableName string
-		if err := rows.Scan(&tableName); err != nil {
-			return nil, fmt.Errorf("failed to scan table name: %w", err)
+		var databaseName, tableName string
+		if err := rows.Scan(&databaseName, &tableName); err != nil {
+			return nil, fmt.Errorf("failed to scan table info: %w", err)
 		}
-		tables = append(tables, tableName)
+		tables = append(tables, fmt.Sprintf("%s.%s", databaseName, tableName))
 	}
 
 	return tables, nil
 }
 
 // loadTableFiles loads file information for a table
-func (sm *Store) loadTableFiles(ctx context.Context, tableName string) ([]types.FileInfo, error) {
-	query := `SELECT file_name, file_size, created, modified, date FROM table_files WHERE table_name = ? ORDER BY file_name`
-	rows, err := sm.db.QueryContext(ctx, query, tableName)
+func (sm *Store) loadTableFiles(ctx context.Context, database, tableName string) ([]types.FileInfo, error) {
+	query := `SELECT file_name, file_size, created, modified, date FROM table_files WHERE database_name = ? AND table_name = ? ORDER BY file_name`
+	rows, err := sm.db.QueryContext(ctx, query, database, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query table files: %w", err)
 	}

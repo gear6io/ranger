@@ -494,12 +494,12 @@ func (mwf *fileWriter) Close() error {
 // ============================================================================
 
 // PrepareTableEnvironment creates the storage environment for a table
-func (mfs *FileStorage) PrepareTableEnvironment(tableName string) error {
+func (mfs *FileStorage) PrepareTableEnvironment(database, tableName string) error {
 	mfs.mu.Lock()
 	defer mfs.mu.Unlock()
 
-	// Create table directory structure
-	tablePath := filepath.Join("tables", tableName)
+	// Create table directory structure with database namespace
+	tablePath := filepath.Join("tables", database, tableName)
 	if err := mfs.MkdirAll(tablePath); err != nil {
 		return fmt.Errorf("failed to create table directory: %w", err)
 	}
@@ -521,12 +521,12 @@ func (mfs *FileStorage) PrepareTableEnvironment(tableName string) error {
 }
 
 // StoreTableData stores data for a table
-func (mfs *FileStorage) StoreTableData(tableName string, data []byte) error {
+func (mfs *FileStorage) StoreTableData(database, tableName string, data []byte) error {
 	mfs.mu.Lock()
 	defer mfs.mu.Unlock()
 
-	// Store data in the data file
-	dataPath := filepath.Join("tables", tableName, "data", "data.json")
+	// Store data in the data file with database namespace
+	dataPath := filepath.Join("tables", database, tableName, "data", "data.json")
 	if err := mfs.WriteFile(dataPath, data); err != nil {
 		return fmt.Errorf("failed to write data file: %w", err)
 	}
@@ -535,12 +535,12 @@ func (mfs *FileStorage) StoreTableData(tableName string, data []byte) error {
 }
 
 // GetTableData retrieves data for a table
-func (mfs *FileStorage) GetTableData(tableName string) ([]byte, error) {
+func (mfs *FileStorage) GetTableData(database, tableName string) ([]byte, error) {
 	mfs.mu.RLock()
 	defer mfs.mu.RUnlock()
 
-	// Read data from the data file
-	dataPath := filepath.Join("tables", tableName, "data", "data.json")
+	// Read data from the data file with database namespace
+	dataPath := filepath.Join("tables", database, tableName, "data", "data.json")
 	data, err := mfs.ReadFile(dataPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read data file: %w", err)
@@ -550,12 +550,12 @@ func (mfs *FileStorage) GetTableData(tableName string) ([]byte, error) {
 }
 
 // RemoveTableEnvironment removes the storage environment for a table
-func (mfs *FileStorage) RemoveTableEnvironment(tableName string) error {
+func (mfs *FileStorage) RemoveTableEnvironment(database, tableName string) error {
 	mfs.mu.Lock()
 	defer mfs.mu.Unlock()
 
-	// Remove table directory and all files
-	tablePath := filepath.Join("tables", tableName)
+	// Remove table directory and all files with database namespace
+	tablePath := filepath.Join("tables", database, tableName)
 
 	// Remove data file
 	dataPath := filepath.Join(tablePath, "data", "data.json")

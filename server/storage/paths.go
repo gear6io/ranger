@@ -124,20 +124,6 @@ func (pm *PathManager) GetDataDir() string {
 	return pm.GetDataPath()
 }
 
-// ParseTableIdentifier parses a table identifier (database.table or just table)
-func (pm *PathManager) ParseTableIdentifier(tableIdentifier string) (database, tableName string) {
-	parts := strings.Split(tableIdentifier, ".")
-	if len(parts) == 1 {
-		// Just table name, use default database
-		return "default", parts[0]
-	} else if len(parts) == 2 {
-		// database.table format
-		return parts[0], parts[1]
-	}
-	// Invalid format, return as-is
-	return "default", tableIdentifier
-}
-
 // EnsureDirectoryStructure creates all necessary directories
 func (pm *PathManager) EnsureDirectoryStructure() error {
 	dirs := []string{

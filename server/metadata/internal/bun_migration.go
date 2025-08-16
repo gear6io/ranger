@@ -89,7 +89,8 @@ func (bmm *BunMigrationManager) createInitialSchema(ctx context.Context) error {
 	_, err = bmm.db.NewCreateTable().
 		Model(&struct {
 			bun.BaseModel `bun:"table:table_metadata"`
-			TableName     string `bun:"table_name,pk,type:text"`
+			DatabaseName  string `bun:"database_name,type:text,notnull"`
+			TableName     string `bun:"table_name,type:text,notnull"`
 			Schema        []byte `bun:"schema,type:blob"`
 			StorageEngine string `bun:"storage_engine,type:text,notnull"`
 			EngineConfig  string `bun:"engine_config,type:text,default:'{}'"`
@@ -98,6 +99,8 @@ func (bmm *BunMigrationManager) createInitialSchema(ctx context.Context) error {
 			LastModified  string `bun:"last_modified,type:text,notnull"`
 			Created       string `bun:"created,type:text,notnull"`
 		}{}).
+		ForeignKey(`("database_name") REFERENCES "databases" ("name") ON DELETE CASCADE`).
+		ForeignKey(`("table_name") REFERENCES "tables" ("table_name") ON DELETE CASCADE`).
 		IfNotExists().
 		Exec(ctx)
 	if err != nil {
@@ -108,6 +111,7 @@ func (bmm *BunMigrationManager) createInitialSchema(ctx context.Context) error {
 	_, err = bmm.db.NewCreateTable().
 		Model(&struct {
 			bun.BaseModel `bun:"table:table_files"`
+			DatabaseName  string `bun:"database_name,type:text,notnull"`
 			TableName     string `bun:"table_name,type:text,notnull"`
 			FileName      string `bun:"file_name,type:text,notnull"`
 			FileSize      int64  `bun:"file_size,type:integer,notnull"`
@@ -115,7 +119,8 @@ func (bmm *BunMigrationManager) createInitialSchema(ctx context.Context) error {
 			Modified      string `bun:"modified,type:text,notnull"`
 			Date          string `bun:"date,type:text,notnull"`
 		}{}).
-		ForeignKey(`("table_name") REFERENCES "table_metadata" ("table_name") ON DELETE CASCADE`).
+		ForeignKey(`("database_name") REFERENCES "databases" ("name") ON DELETE CASCADE`).
+		ForeignKey(`("table_name") REFERENCES "tables" ("table_name") ON DELETE CASCADE`).
 		IfNotExists().
 		Exec(ctx)
 	if err != nil {

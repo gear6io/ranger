@@ -148,7 +148,7 @@ func (e *Engine) executeDDLQuery(ctx context.Context, query string) (*QueryResul
 	case *parser.CreateTableStmt:
 		// Create table using our storage manager
 		schemaData := e.serializeTableSchema(stmt.TableSchema)
-		if err := e.storageMgr.CreateTable(ctx, stmt.TableName.Value, schemaData, "default", nil); err != nil {
+		if err := e.storageMgr.CreateTable(ctx, "default", stmt.TableName.Value, schemaData, "default", nil); err != nil {
 			return nil, fmt.Errorf("failed to create table in storage: %w", err)
 		}
 
@@ -181,7 +181,7 @@ func (e *Engine) CreateTable(ctx context.Context, tableName string, schema *pars
 
 	// Store table schema in storage using Storage Manager
 	schemaData := e.serializeTableSchema(schema)
-	if err := e.storageMgr.CreateTable(ctx, tableName, schemaData, "default", nil); err != nil {
+	if err := e.storageMgr.CreateTable(ctx, "default", tableName, schemaData, "default", nil); err != nil {
 		return fmt.Errorf("failed to create table in storage: %w", err)
 	}
 
@@ -194,7 +194,7 @@ func (e *Engine) InsertData(ctx context.Context, tableName string, data [][]inte
 	e.logger.Info().Str("table", tableName).Int("rows", len(data)).Msg("Inserting data")
 
 	// Store data in storage using Storage Manager
-	if err := e.storageMgr.InsertData(ctx, tableName, data); err != nil {
+	if err := e.storageMgr.InsertData(ctx, "default", tableName, data); err != nil {
 		return fmt.Errorf("failed to store data in storage: %w", err)
 	}
 
@@ -207,7 +207,7 @@ func (e *Engine) GetTableData(ctx context.Context, tableName string, limit int) 
 	e.logger.Info().Str("table", tableName).Int("limit", limit).Msg("Retrieving table data")
 
 	// Get data from storage using Storage Manager
-	data, err := e.storageMgr.GetTableData(ctx, tableName)
+	data, err := e.storageMgr.GetTableData(ctx, "default", tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve data from storage: %w", err)
 	}
@@ -226,7 +226,7 @@ func (e *Engine) GetTableSchema(ctx context.Context, tableName string) (*parser.
 	e.logger.Info().Str("table", tableName).Msg("Retrieving table schema")
 
 	// Get schema from storage using Storage Manager
-	schemaData, err := e.storageMgr.GetTableSchema(ctx, tableName)
+	schemaData, err := e.storageMgr.GetTableSchema(ctx, "default", tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve schema from storage: %w", err)
 	}

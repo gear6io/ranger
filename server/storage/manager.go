@@ -24,7 +24,7 @@ type Manager struct {
 	engineRegistry *StorageEngineRegistry
 	meta           metadata.MetadataManagerInterface
 	pathManager    *PathManager
-	catalog        catalog.CatalogInterface // Fix interface reference
+	catalog        catalog.CatalogInterface
 }
 
 // Config holds data storage configuration
@@ -48,10 +48,10 @@ type FileSystem interface {
 	Exists(path string) (bool, error)
 
 	// Storage environment preparation
-	PrepareTableEnvironment(tableName string) error
-	StoreTableData(tableName string, data []byte) error
-	GetTableData(tableName string) ([]byte, error)
-	RemoveTableEnvironment(tableName string) error
+	PrepareTableEnvironment(database, tableName string) error
+	StoreTableData(database, tableName string, data []byte) error
+	GetTableData(database, tableName string) ([]byte, error)
+	RemoveTableEnvironment(database, tableName string) error
 }
 
 // NewManager creates a new data storage manager
@@ -198,10 +198,7 @@ func generateTableFileName(tableName string, date time.Time, ulid string) string
 // ============================================================================
 
 // CreateTable creates a new table with schema and storage engine
-func (m *Manager) CreateTable(ctx context.Context, tableIdentifier string, schema []byte, storageEngine string, engineConfig map[string]interface{}) error {
-	// Parse table identifier (database.table or just table)
-	database, tableName := m.pathManager.ParseTableIdentifier(tableIdentifier)
-
+func (m *Manager) CreateTable(ctx context.Context, database, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) error {
 	m.logger.Info().
 		Str("database", database).
 		Str("table", tableName).
@@ -214,9 +211,9 @@ func (m *Manager) CreateTable(ctx context.Context, tableIdentifier string, schem
 	}
 
 	// First create table metadata in internal storage
-	_, err := m.meta.CreateTableMetadata(ctx, tableIdentifier, schema, storageEngine, engineConfig)
+	_, err := m.meta.CreateTableMetadata(ctx, database, tableName, schema, storageEngine, engineConfig)
 	if err != nil {
-		return errors.New(errors.CommonInternal, "failed to create table metadata").AddContext("table", tableIdentifier).AddContext("storage_engine", storageEngine)
+		return errors.New(errors.CommonInternal, "failed to create table metadata").AddContext("database", database).AddContext("table", tableName).AddContext("storage_engine", storageEngine)
 	}
 
 	// Get the appropriate storage engine for this table
@@ -226,7 +223,7 @@ func (m *Manager) CreateTable(ctx context.Context, tableIdentifier string, schem
 	}
 
 	// Then prepare storage environment using the specified engine
-	if err := engine.PrepareTableEnvironment(tableIdentifier); err != nil {
+	if err := engine.PrepareTableEnvironment(database, tableName); err != nil {
 		// Clean up metadata if storage preparation fails
 		// TODO: Add RemoveTableMetadata method to MetadataManager
 		return fmt.Errorf("failed to prepare table storage environment: %w", err)
@@ -247,10 +244,7 @@ func (m *Manager) CreateTable(ctx context.Context, tableIdentifier string, schem
 }
 
 // InsertData inserts data into a table
-func (m *Manager) InsertData(ctx context.Context, tableIdentifier string, data [][]interface{}) error {
-	// Parse table identifier (database.table or just table)
-	database, tableName := m.pathManager.ParseTableIdentifier(tableIdentifier)
-
+func (m *Manager) InsertData(ctx context.Context, database, tableName string, data [][]interface{}) error {
 	m.logger.Info().
 		Str("database", database).
 		Str("table", tableName).
@@ -258,14 +252,14 @@ func (m *Manager) InsertData(ctx context.Context, tableIdentifier string, data [
 		Msg("Inserting data into table")
 
 	// Check if table exists in metadata
-	if !m.meta.TableExists(ctx, "default", tableIdentifier) {
-		return errors.New(errors.CommonNotFound, "table does not exist").AddContext("table", tableIdentifier)
+	if !m.meta.TableExists(ctx, database, tableName) {
+		return errors.New(errors.CommonNotFound, "table does not exist").AddContext("database", database).AddContext("table", tableName)
 	}
 
 	// Get table metadata to determine storage engine
-	metadata, err := m.meta.LoadTableMetadata(ctx, tableIdentifier)
+	metadata, err := m.meta.LoadTableMetadata(ctx, database, tableName)
 	if err != nil {
-		return errors.New(errors.CommonInternal, "failed to load table metadata").AddContext("table", tableIdentifier)
+		return errors.New(errors.CommonInternal, "failed to load table metadata").AddContext("database", database).AddContext("table", tableName)
 	}
 
 	// Get the appropriate storage engine for this table
@@ -281,7 +275,7 @@ func (m *Manager) InsertData(ctx context.Context, tableIdentifier string, data [
 	}
 
 	// Store data in storage using the appropriate engine
-	if err := engine.StoreTableData(tableIdentifier, dataBytes); err != nil {
+	if err := engine.StoreTableData(database, tableName, dataBytes); err != nil {
 		return fmt.Errorf("failed to store data in storage: %w", err)
 	}
 
@@ -296,13 +290,13 @@ func (m *Manager) InsertData(ctx context.Context, tableIdentifier string, data [
 }
 
 // GetTableMetadata returns metadata for a table
-func (m *Manager) GetTableMetadata(ctx context.Context, tableIdentifier string) (*types.TableMetadata, error) {
-	return m.meta.LoadTableMetadata(ctx, tableIdentifier)
+func (m *Manager) GetTableMetadata(ctx context.Context, database, tableName string) (*types.TableMetadata, error) {
+	return m.meta.LoadTableMetadata(ctx, database, tableName)
 }
 
 // ListTableFiles returns a list of files for a table
-func (m *Manager) ListTableFiles(ctx context.Context, tableIdentifier string) ([]string, error) {
-	metadata, err := m.meta.LoadTableMetadata(ctx, tableIdentifier)
+func (m *Manager) ListTableFiles(ctx context.Context, database, tableName string) ([]string, error) {
+	metadata, err := m.meta.LoadTableMetadata(ctx, database, tableName)
 	if err != nil {
 		return nil, err
 	}
@@ -316,16 +310,16 @@ func (m *Manager) ListTableFiles(ctx context.Context, tableIdentifier string) ([
 }
 
 // GetTableData returns data from a table
-func (m *Manager) GetTableData(ctx context.Context, tableIdentifier string) ([][]interface{}, error) {
+func (m *Manager) GetTableData(ctx context.Context, database, tableName string) ([][]interface{}, error) {
 	// Check if table exists in metadata
-	if !m.meta.TableExists(ctx, "default", tableIdentifier) {
-		return nil, errors.New(errors.CommonNotFound, "table does not exist").AddContext("table", tableIdentifier)
+	if !m.meta.TableExists(ctx, database, tableName) {
+		return nil, errors.New(errors.CommonNotFound, "table does not exist").AddContext("database", database).AddContext("table", tableName)
 	}
 
 	// Get table metadata to determine storage engine
-	metadata, err := m.meta.LoadTableMetadata(ctx, tableIdentifier)
+	metadata, err := m.meta.LoadTableMetadata(ctx, database, tableName)
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to load table metadata").AddContext("table", tableIdentifier)
+		return nil, errors.New(errors.CommonInternal, "failed to load table metadata").AddContext("database", database).AddContext("table", tableName)
 	}
 
 	// Get the appropriate storage engine for this table
@@ -335,7 +329,7 @@ func (m *Manager) GetTableData(ctx context.Context, tableIdentifier string) ([][
 	}
 
 	// Get data from storage using the appropriate engine
-	dataBytes, err := engine.GetTableData(tableIdentifier)
+	dataBytes, err := engine.GetTableData(database, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get data from storage: %w", err)
 	}
@@ -350,40 +344,37 @@ func (m *Manager) GetTableData(ctx context.Context, tableIdentifier string) ([][
 }
 
 // GetTableSchema retrieves the schema for the specified table
-func (m *Manager) GetTableSchema(ctx context.Context, tableIdentifier string) ([]byte, error) {
+func (m *Manager) GetTableSchema(ctx context.Context, database, tableName string) ([]byte, error) {
 	// Check if table exists in metadata
-	if !m.meta.TableExists(ctx, "default", tableIdentifier) {
-		return nil, errors.New(errors.CommonNotFound, "table does not exist").AddContext("table", tableIdentifier)
+	if !m.meta.TableExists(ctx, database, tableName) {
+		return nil, errors.New(errors.CommonNotFound, "table does not exist").AddContext("database", database).AddContext("table", tableName)
 	}
 
 	// Get table metadata
-	metadata, err := m.meta.LoadTableMetadata(ctx, tableIdentifier)
+	metadata, err := m.meta.LoadTableMetadata(ctx, database, tableName)
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to load table metadata").AddContext("table", tableIdentifier)
+		return nil, errors.New(errors.CommonInternal, "failed to load table metadata").AddContext("database", database).AddContext("table", tableName)
 	}
 
 	return metadata.Schema, nil
 }
 
 // RemoveTable removes a table and all its data
-func (m *Manager) RemoveTable(ctx context.Context, tableIdentifier string) error {
-	// Parse table identifier (database.table or just table)
-	database, tableName := m.pathManager.ParseTableIdentifier(tableIdentifier)
-
+func (m *Manager) RemoveTable(ctx context.Context, database, tableName string) error {
 	m.logger.Info().
 		Str("database", database).
 		Str("table", tableName).
 		Msg("Removing table")
 
 	// Check if table exists in metadata
-	if !m.meta.TableExists(ctx, "default", tableIdentifier) {
-		return errors.New(errors.CommonNotFound, "table does not exist").AddContext("table", tableIdentifier)
+	if !m.meta.TableExists(ctx, database, tableName) {
+		return errors.New(errors.CommonNotFound, "table does not exist").AddContext("database", database).AddContext("table", tableName)
 	}
 
 	// Get table metadata to determine storage engine
-	metadata, err := m.meta.LoadTableMetadata(ctx, tableIdentifier)
+	metadata, err := m.meta.LoadTableMetadata(ctx, database, tableName)
 	if err != nil {
-		return errors.New(errors.CommonInternal, "failed to load table metadata").AddContext("table", tableIdentifier)
+		return errors.New(errors.CommonInternal, "failed to load table metadata").AddContext("database", database).AddContext("table", tableName)
 	}
 
 	// Get the appropriate storage engine for this table
@@ -393,12 +384,12 @@ func (m *Manager) RemoveTable(ctx context.Context, tableIdentifier string) error
 	}
 
 	// Remove storage environment using the appropriate engine
-	if err := engine.RemoveTableEnvironment(tableIdentifier); err != nil {
+	if err := engine.RemoveTableEnvironment(database, tableName); err != nil {
 		return fmt.Errorf("failed to remove table storage environment: %w", err)
 	}
 
 	// Remove metadata (if method exists)
-	// TODO: Add RemoveTableMetadata method to MetadataManager if needed
+	// TODO: Add RemoveTableMetadata method to MetadataManager
 
 	m.logger.Info().
 		Str("database", database).
@@ -413,8 +404,8 @@ func (m *Manager) ListTables(ctx context.Context) ([]string, error) {
 }
 
 // TableExists checks if a table exists
-func (m *Manager) TableExists(ctx context.Context, tableIdentifier string) bool {
-	return m.meta.TableExists(ctx, "default", tableIdentifier)
+func (m *Manager) TableExists(ctx context.Context, database, tableName string) bool {
+	return m.meta.TableExists(ctx, database, tableName)
 }
 
 // createIcebergMetadata creates proper Iceberg metadata structure
@@ -444,7 +435,7 @@ func (m *Manager) createIcebergMetadata(database, tableName string, schema []byt
 	icebergMetadata := map[string]interface{}{
 		"format-version":  2,
 		"table-uuid":      generateUUID(),
-		"location":        fmt.Sprintf("file://%s", dataDir),
+		"location":        dataDir,
 		"last-updated-ms": time.Now().UnixMilli(),
 		"last-column-id":  0,
 		"schemas": []map[string]interface{}{

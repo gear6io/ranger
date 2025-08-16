@@ -106,69 +106,56 @@ func TestMemoryStorage_PrepareTableEnvironment_AlreadyExists(t *testing.T) {
 	storage, _ := NewMemoryStorage()
 
 	// First time should succeed
-	err := storage.PrepareTableEnvironment("test_table")
+	err := storage.PrepareTableEnvironment("test_db", "test_table")
 	if err != nil {
 		t.Fatalf("Expected no error on first creation, got: %v", err)
 	}
 
-	// Second time should fail with table_already_exists
-	err = storage.PrepareTableEnvironment("test_table")
-	if err == nil {
-		t.Fatal("Expected error for duplicate table creation")
+	// Second time should also succeed (filesystem operations are idempotent)
+	err = storage.PrepareTableEnvironment("test_db", "test_table")
+	if err != nil {
+		t.Fatalf("Expected no error on second creation (should be idempotent), got: %v", err)
 	}
 
-	// Check if it's our structured error
-	if iceboxErr, ok := err.(*errors.Error); ok {
-		if iceboxErr.Code.String() != ErrTableAlreadyExists.String() {
-			t.Errorf("Expected error code '%s', got: %s", ErrTableAlreadyExists.String(), iceboxErr.Code.String())
-		}
-		if iceboxErr.Context["table_name"] != "test_table" {
-			t.Errorf("Expected table_name context 'test_table', got: %s", iceboxErr.Context["table_name"])
-		}
-	} else {
-		t.Fatal("Expected structured error from pkg/errors")
+	// Verify the table environment exists
+	exists, err := storage.Exists("tables/test_db/test_table/data/data.json")
+	if err != nil {
+		t.Fatalf("Expected no error checking table existence, got: %v", err)
+	}
+	if !exists {
+		t.Fatal("Expected table environment to exist after creation")
 	}
 }
 
 func TestMemoryStorage_StoreTableData_TableNotFound(t *testing.T) {
 	storage, _ := NewMemoryStorage()
 
-	err := storage.StoreTableData("nonexistent_table", []byte("data"))
-	if err == nil {
-		t.Fatal("Expected error for non-existent table")
+	// Try to store data for a non-existent table - should create it automatically
+	err := storage.StoreTableData("test_db", "nonexistent_table", []byte("data"))
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	// Check if it's our structured error
-	if iceboxErr, ok := err.(*errors.Error); ok {
-		if iceboxErr.Code.String() != ErrTableNotFound.String() {
-			t.Errorf("Expected error code '%s', got: %s", ErrTableNotFound.String(), iceboxErr.Code.String())
-		}
-		if iceboxErr.Context["table_name"] != "nonexistent_table" {
-			t.Errorf("Expected table_name context 'nonexistent_table', got: %s", iceboxErr.Context["table_name"])
-		}
-	} else {
-		t.Fatal("Expected structured error from pkg/errors")
+	// Verify the data was stored
+	data, err := storage.GetTableData("test_db", "nonexistent_table")
+	if err != nil {
+		t.Fatalf("Expected no error reading stored data, got: %v", err)
+	}
+	if !bytes.Equal(data, []byte("data")) {
+		t.Fatalf("Expected stored data to match, got: %v, want: %v", data, []byte("data"))
 	}
 }
 
 func TestMemoryStorage_GetTableData_TableNotFound(t *testing.T) {
 	storage, _ := NewMemoryStorage()
 
-	_, err := storage.GetTableData("nonexistent_table")
-	if err == nil {
-		t.Fatal("Expected error for non-existent table")
+	// Try to get data from a non-existent table - should return empty data
+	data, err := storage.GetTableData("test_db", "nonexistent_table")
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
 	}
-
-	// Check if it's our structured error
-	if iceboxErr, ok := err.(*errors.Error); ok {
-		if iceboxErr.Code.String() != ErrTableNotFound.String() {
-			t.Errorf("Expected error code '%s', got: %s", ErrTableNotFound.String(), iceboxErr.Code.String())
-		}
-		if iceboxErr.Context["table_name"] != "nonexistent_table" {
-			t.Errorf("Expected table_name context 'nonexistent_table', got: %s", iceboxErr.Context["table_name"])
-		}
-	} else {
-		t.Fatal("Expected structured error from pkg/errors")
+	if !bytes.Equal(data, []byte("[]")) {
+		t.Fatalf("Expected empty JSON array for non-existent table, got: %v", data)
 	}
 }
 
@@ -176,47 +163,28 @@ func TestMemoryStorage_GetTableData_DataNotFound(t *testing.T) {
 	storage, _ := NewMemoryStorage()
 
 	// Create table environment but don't store data
-	err := storage.PrepareTableEnvironment("test_table")
+	err := storage.PrepareTableEnvironment("test_db", "test_table")
 	if err != nil {
 		t.Fatalf("Expected no error on table creation, got: %v", err)
 	}
 
-	_, err = storage.GetTableData("test_table")
-	if err == nil {
-		t.Fatal("Expected error for missing table data")
+	// Try to get data from empty table - should return empty data
+	data, err := storage.GetTableData("test_db", "test_table")
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
 	}
-
-	// Check if it's our structured error
-	if iceboxErr, ok := err.(*errors.Error); ok {
-		if iceboxErr.Code.String() != ErrTableDataNotFound.String() {
-			t.Errorf("Expected error code '%s', got: %s", ErrTableDataNotFound.String(), iceboxErr.Code.String())
-		}
-		if iceboxErr.Context["table_name"] != "test_table" {
-			t.Errorf("Expected table_name context 'test_table', got: %s", iceboxErr.Context["table_name"])
-		}
-	} else {
-		t.Fatal("Expected structured error from pkg/errors")
+	if !bytes.Equal(data, []byte("[]")) {
+		t.Fatalf("Expected empty JSON array for new table, got: %v", data)
 	}
 }
 
 func TestMemoryStorage_RemoveTableEnvironment_TableNotFound(t *testing.T) {
 	storage, _ := NewMemoryStorage()
 
-	err := storage.RemoveTableEnvironment("nonexistent_table")
-	if err == nil {
-		t.Fatal("Expected error for non-existent table")
-	}
-
-	// Check if it's our structured error
-	if iceboxErr, ok := err.(*errors.Error); ok {
-		if iceboxErr.Code.String() != ErrTableNotFound.String() {
-			t.Errorf("Expected error code '%s', got: %s", ErrTableNotFound.String(), iceboxErr.Code.String())
-		}
-		if iceboxErr.Context["table_name"] != "nonexistent_table" {
-			t.Errorf("Expected table_name context 'nonexistent_table', got: %s", iceboxErr.Context["table_name"])
-		}
-	} else {
-		t.Fatal("Expected structured error from pkg/errors")
+	// Try to remove a non-existent table - should not error
+	err := storage.RemoveTableEnvironment("test_db", "nonexistent_table")
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
 	}
 }
 
@@ -251,17 +219,17 @@ func TestMemoryStorage_SuccessfulOperations(t *testing.T) {
 	}
 
 	// Test successful table operations
-	err = storage.PrepareTableEnvironment("test_table")
+	err = storage.PrepareTableEnvironment("test_db", "test_table")
 	if err != nil {
 		t.Fatalf("Expected no error on PrepareTableEnvironment, got: %v", err)
 	}
 
-	err = storage.StoreTableData("test_table", testData)
+	err = storage.StoreTableData("test_db", "test_table", testData)
 	if err != nil {
 		t.Fatalf("Expected no error on StoreTableData, got: %v", err)
 	}
 
-	data, err = storage.GetTableData("test_table")
+	data, err = storage.GetTableData("test_db", "test_table")
 	if err != nil {
 		t.Fatalf("Expected no error on GetTableData, got: %v", err)
 	}
@@ -311,7 +279,7 @@ func TestMemoryStorage_SuccessfulOperations(t *testing.T) {
 		t.Fatalf("Expected no error on Remove, got: %v", err)
 	}
 
-	err = storage.RemoveTableEnvironment("test_table")
+	err = storage.RemoveTableEnvironment("test_db", "test_table")
 	if err != nil {
 		t.Fatalf("Expected no error on RemoveTableEnvironment, got: %v", err)
 	}

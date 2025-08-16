@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"path/filepath"
 	"sync"
 
 	"github.com/TFMV/icebox/pkg/errors"
@@ -159,76 +160,83 @@ func (fsa *MemoryStorage) OpenForWrite(path string) (io.WriteCloser, error) {
 // ============================================================================
 
 // PrepareTableEnvironment creates the storage environment for a table
-func (fsa *MemoryStorage) PrepareTableEnvironment(tableName string) error {
-	fsa.mu.Lock()
-	defer fsa.mu.Unlock()
-
-	// Check if table already exists
-	if _, exists := fsa.tables[tableName]; exists {
-		return errors.New(ErrTableAlreadyExists, "table environment already exists").
-			AddContext("table_name", tableName)
+func (fsa *MemoryStorage) PrepareTableEnvironment(database, tableName string) error {
+	// Create table directory structure with database namespace
+	tablePath := filepath.Join("tables", database, tableName)
+	if err := fsa.MkdirAll(tablePath); err != nil {
+		return fmt.Errorf("failed to create table directory: %w", err)
 	}
 
-	// Create in-memory table data structure
-	fsa.tables[tableName] = &TableData{
-		Schema: []byte{},
-		Rows:   make([][]interface{}, 0),
+	// Create data subdirectory
+	dataPath := filepath.Join(tablePath, "data")
+	if err := fsa.MkdirAll(dataPath); err != nil {
+		return fmt.Errorf("failed to create data directory: %w", err)
 	}
+
+	// Create empty data file
+	emptyData := []byte("[]")
+	dataFilePath := filepath.Join(dataPath, "data.json")
+	if err := fsa.WriteFile(dataFilePath, emptyData); err != nil {
+		return fmt.Errorf("failed to create data file: %w", err)
+	}
+
 	return nil
 }
 
 // StoreTableData stores data for a table
-func (fsa *MemoryStorage) StoreTableData(tableName string, data []byte) error {
-	fsa.mu.Lock()
-	defer fsa.mu.Unlock()
-
-	// Check if table environment exists
-	if _, exists := fsa.tables[tableName]; !exists {
-		return errors.New(ErrTableNotFound, "table environment not found").
-			AddContext("table_name", tableName)
+func (fsa *MemoryStorage) StoreTableData(database, tableName string, data []byte) error {
+	// Store data in the data file with database namespace
+	dataPath := filepath.Join("tables", database, tableName, "data", "data.json")
+	if err := fsa.WriteFile(dataPath, data); err != nil {
+		return fmt.Errorf("failed to write data file: %w", err)
 	}
 
-	// Store data in the table
-	fsa.data[fmt.Sprintf("tables/%s/data", tableName)] = data
 	return nil
 }
 
 // GetTableData retrieves data for a table
-func (fsa *MemoryStorage) GetTableData(tableName string) ([]byte, error) {
-	fsa.mu.RLock()
-	defer fsa.mu.RUnlock()
+func (fsa *MemoryStorage) GetTableData(database, tableName string) ([]byte, error) {
+	// Read data from the data file with database namespace
+	dataPath := filepath.Join("tables", database, tableName, "data", "data.json")
 
-	// Check if table environment exists
-	if _, exists := fsa.tables[tableName]; !exists {
-		return nil, errors.New(ErrTableNotFound, "table environment not found").
-			AddContext("table_name", tableName)
-	}
-
-	data, exists := fsa.data[fmt.Sprintf("tables/%s/data", tableName)]
-	if !exists {
-		return nil, errors.New(ErrTableDataNotFound, "table data not found").
-			AddContext("table_name", tableName)
+	// Try to read the file first
+	data, err := fsa.ReadFile(dataPath)
+	if err != nil {
+		// If file doesn't exist, create it with empty data
+		emptyData := []byte("[]")
+		if err := fsa.WriteFile(dataPath, emptyData); err != nil {
+			return nil, fmt.Errorf("failed to create data file: %w", err)
+		}
+		return emptyData, nil
 	}
 
 	return data, nil
 }
 
 // RemoveTableEnvironment removes the storage environment for a table
-func (fsa *MemoryStorage) RemoveTableEnvironment(tableName string) error {
-	fsa.mu.Lock()
-	defer fsa.mu.Unlock()
+func (fsa *MemoryStorage) RemoveTableEnvironment(database, tableName string) error {
+	// Remove table directory and all files with database namespace
+	tablePath := filepath.Join("tables", database, tableName)
 
-	// Check if table environment exists
-	if _, exists := fsa.tables[tableName]; !exists {
-		return errors.New(ErrTableNotFound, "table environment not found for removal").
-			AddContext("table_name", tableName)
+	// Remove data file
+	dataPath := filepath.Join(tablePath, "data", "data.json")
+	if err := fsa.Remove(dataPath); err != nil {
+		// Log warning but continue
+		fmt.Printf("Warning: failed to remove data file %s: %v\n", dataPath, err)
 	}
 
-	// Remove table data structure
-	delete(fsa.tables, tableName)
+	// Remove data directory
+	dataDir := filepath.Join(tablePath, "data")
+	if err := fsa.Remove(dataDir); err != nil {
+		// Log warning but continue
+		fmt.Printf("Warning: failed to remove data directory %s: %v\n", dataDir, err)
+	}
 
-	// Remove table data
-	delete(fsa.data, fmt.Sprintf("tables/%s/data", tableName))
+	// Remove table directory
+	if err := fsa.Remove(tablePath); err != nil {
+		// Log warning but continue
+		fmt.Printf("Warning: failed to remove table directory %s: %v\n", tablePath, err)
+	}
 
 	return nil
 }

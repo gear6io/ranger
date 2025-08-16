@@ -39,30 +39,6 @@ func TestPathManager(t *testing.T) {
 	}
 }
 
-func TestParseTableIdentifier(t *testing.T) {
-	pm := NewPathManager("/test/path")
-
-	tests := []struct {
-		input     string
-		database  string
-		tableName string
-	}{
-		{"users", "default", "users"},
-		{"analytics.users", "analytics", "users"},
-		{"db.table", "db", "table"},
-		{"schema.users", "schema", "users"},
-		{"", "default", ""},
-	}
-
-	for _, test := range tests {
-		database, tableName := pm.ParseTableIdentifier(test.input)
-		if database != test.database || tableName != test.tableName {
-			t.Errorf("ParseTableIdentifier(%q) = (%q, %q), want (%q, %q)",
-				test.input, database, tableName, test.database, test.tableName)
-		}
-	}
-}
-
 func TestGetCatalogURI(t *testing.T) {
 	pm := NewPathManager("/test/path")
 

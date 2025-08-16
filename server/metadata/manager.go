@@ -160,13 +160,13 @@ func (mm *MetadataManager) GetBunDB() *bun.DB {
 }
 
 // CreateTableMetadata creates detailed metadata for a table (for storage operations)
-func (mm *MetadataManager) CreateTableMetadata(ctx context.Context, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*types.TableMetadata, error) {
-	return mm.storage.CreateTableMetadata(ctx, tableName, schema, storageEngine, engineConfig)
+func (mm *MetadataManager) CreateTableMetadata(ctx context.Context, database, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*types.TableMetadata, error) {
+	return mm.storage.CreateTableMetadata(ctx, database, tableName, schema, storageEngine, engineConfig)
 }
 
 // LoadTableMetadata loads detailed metadata for a table
-func (mm *MetadataManager) LoadTableMetadata(ctx context.Context, tableName string) (*types.TableMetadata, error) {
-	return mm.storage.LoadTableMetadata(ctx, tableName)
+func (mm *MetadataManager) LoadTableMetadata(ctx context.Context, database, tableName string) (*types.TableMetadata, error) {
+	return mm.storage.LoadTableMetadata(ctx, database, tableName)
 }
 
 // ListAllTables returns a list of all tables across all databases (for storage manager)

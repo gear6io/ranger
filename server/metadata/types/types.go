@@ -2,6 +2,7 @@ package types
 
 // TableMetadata represents detailed table metadata for storage operations
 type TableMetadata struct {
+	Database      string                 `json:"database"`
 	Name          string                 `json:"name"`
 	Schema        []byte                 `json:"schema"`
 	StorageEngine string                 `json:"storage_engine"`
