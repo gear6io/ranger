@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/catalog/shared"
 	"github.com/TFMV/icebox/server/config"
 	"github.com/apache/iceberg-go"
@@ -184,24 +185,7 @@ func (v *View) Dialect() string {
 	return ""
 }
 
-// ConcurrentModificationError represents a concurrent modification error
-type ConcurrentModificationError struct {
-	message string
-}
-
-func (e *ConcurrentModificationError) Error() string {
-	return e.message
-}
-
-// ValidationError represents a validation error
-type ValidationError struct {
-	Field   string
-	Message string
-}
-
-func (e *ValidationError) Error() string {
-	return fmt.Sprintf("validation error for field '%s': %s", e.Field, e.Message)
-}
+// Note: Using shared error package for error handling
 
 // Catalog implements the iceberg-go catalog.Catalog interface using JSON file storage
 // This catalog only manages Iceberg catalog and metadata files, not data storage
@@ -358,12 +342,12 @@ func loadIndexConfig() (*IndexConfig, error) {
 
 	data, err := os.ReadFile(indexPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read .icebox/index: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to read .icebox/index")
 	}
 
 	var index IndexConfig
 	if err := json.Unmarshal(data, &index); err != nil {
-		return nil, fmt.Errorf("failed to parse .icebox/index: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to parse .icebox/index")
 	}
 
 	return &index, nil
@@ -389,7 +373,7 @@ func NewCatalog(cfg *config.Config, pathManager shared.PathManager) (*Catalog, e
 
 	// Ensure catalog directory exists
 	if err := catalog.ensureCatalogExists(); err != nil {
-		return nil, fmt.Errorf("failed to ensure catalog exists: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to ensure catalog exists")
 	}
 
 	return catalog, nil
@@ -400,10 +384,7 @@ func validateJSONConfig(cfg *config.Config) error {
 	// Validate catalog type
 	catalogType := cfg.GetCatalogType()
 	if catalogType != "json" {
-		return &ValidationError{
-			Field:   "catalog.type",
-			Message: fmt.Sprintf("expected catalog type 'json', got '%s'", catalogType),
-		}
+		return shared.NewCatalogValidation("catalog.type", fmt.Sprintf("expected catalog type 'json', got '%s'", catalogType))
 	}
 
 	// Note: Catalog URI validation is now handled by PathManager
@@ -485,7 +466,7 @@ func (c *Catalog) CreateView(ctx context.Context, identifier table.Identifier, s
 	data, etag, err := c.readCatalogData()
 	if err != nil {
 		c.metrics.IncrementOperationErrors()
-		return nil, fmt.Errorf("failed to read catalog: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	namespace := identifier[:len(identifier)-1]
@@ -503,7 +484,7 @@ func (c *Catalog) CreateView(ctx context.Context, identifier table.Identifier, s
 	// Check if view already exists
 	if _, exists := data.Views[viewKey]; exists {
 		c.metrics.IncrementOperationErrors()
-		return nil, fmt.Errorf("view %s already exists", namespaceToString(identifier))
+		return nil, shared.NewCatalogAlreadyExists(fmt.Sprintf("view %s already exists", namespaceToString(identifier)))
 	}
 
 	// Generate view metadata
@@ -554,7 +535,7 @@ func (c *Catalog) CreateView(ctx context.Context, identifier table.Identifier, s
 	// Write view metadata file
 	if err := c.writeViewMetadata(viewMetadata, metadataLocation); err != nil {
 		c.metrics.IncrementOperationErrors()
-		return nil, fmt.Errorf("failed to write view metadata: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to write view metadata")
 	}
 
 	// Create a deep copy of the data to avoid concurrent map writes
@@ -615,7 +596,7 @@ func (c *Catalog) LoadView(ctx context.Context, identifier table.Identifier) (*V
 
 	data, _, err := c.readCatalogData()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read catalog: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	namespace := identifier[:len(identifier)-1]
@@ -624,13 +605,13 @@ func (c *Catalog) LoadView(ctx context.Context, identifier table.Identifier) (*V
 
 	viewEntry, exists := data.Views[viewKey]
 	if !exists {
-		return nil, fmt.Errorf("view %s does not exist", namespaceToString(identifier))
+		return nil, shared.NewCatalogViewNotFound(fmt.Sprintf("view %s does not exist", namespaceToString(identifier)))
 	}
 
 	// Load view metadata
 	viewMetadata, err := c.loadViewMetadata(viewEntry.MetadataLocation)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load view metadata: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to load view metadata")
 	}
 
 	return &View{
@@ -650,7 +631,7 @@ func (c *Catalog) DropView(ctx context.Context, identifier table.Identifier) err
 	data, etag, err := c.readCatalogData()
 	if err != nil {
 		c.metrics.IncrementOperationErrors()
-		return fmt.Errorf("failed to read catalog: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	namespace := identifier[:len(identifier)-1]
@@ -658,7 +639,7 @@ func (c *Catalog) DropView(ctx context.Context, identifier table.Identifier) err
 	viewKey := c.viewKey(namespace, viewName)
 
 	if _, exists := data.Views[viewKey]; !exists {
-		return fmt.Errorf("view %s does not exist", namespaceToString(identifier))
+		return shared.NewCatalogViewNotFound(fmt.Sprintf("view %s does not exist", namespaceToString(identifier)))
 	}
 
 	// Create a deep copy of the data to avoid concurrent map writes
@@ -708,7 +689,7 @@ func (c *Catalog) ViewExists(ctx context.Context, identifier table.Identifier) (
 
 	data, _, err := c.readCatalogData()
 	if err != nil {
-		return false, fmt.Errorf("failed to read catalog: %w", err)
+		return false, errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	namespace := identifier[:len(identifier)-1]
@@ -724,7 +705,7 @@ func (c *Catalog) ListViews(ctx context.Context, namespace table.Identifier) ite
 	return func(yield func(table.Identifier, error) bool) {
 		data, _, err := c.readCatalogData()
 		if err != nil {
-			yield(nil, fmt.Errorf("failed to read catalog: %w", err))
+			yield(nil, errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog"))
 			return
 		}
 
@@ -753,11 +734,11 @@ func (c *Catalog) RenameView(ctx context.Context, from, to table.Identifier) (*V
 	// Validate identifiers
 	if err := c.validateViewIdentifier(from); err != nil {
 		c.metrics.IncrementOperationErrors()
-		return nil, fmt.Errorf("invalid source identifier: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInvalidInput, err, "invalid source identifier")
 	}
 	if err := c.validateViewIdentifier(to); err != nil {
 		c.metrics.IncrementOperationErrors()
-		return nil, fmt.Errorf("invalid destination identifier: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInvalidInput, err, "invalid destination identifier")
 	}
 
 	// Check if trying to rename to different namespace
@@ -765,16 +746,13 @@ func (c *Catalog) RenameView(ctx context.Context, from, to table.Identifier) (*V
 	toNamespace := to[:len(to)-1]
 	if namespaceToString(fromNamespace) != namespaceToString(toNamespace) {
 		c.metrics.IncrementOperationErrors()
-		return nil, &ValidationError{
-			Field:   "view_identifier",
-			Message: "cannot rename view to different namespace",
-		}
+		return nil, shared.NewCatalogValidation("view_identifier", "cannot rename view to different namespace")
 	}
 
 	data, etag, err := c.readCatalogData()
 	if err != nil {
 		c.metrics.IncrementOperationErrors()
-		return nil, fmt.Errorf("failed to read catalog: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	fromViewKey := c.viewKey(fromNamespace, from[len(from)-1])
@@ -783,13 +761,13 @@ func (c *Catalog) RenameView(ctx context.Context, from, to table.Identifier) (*V
 	// Check if source view exists
 	_, exists := data.Views[fromViewKey]
 	if !exists {
-		return nil, fmt.Errorf("view %s does not exist", namespaceToString(from))
+		return nil, shared.NewCatalogViewNotFound(fmt.Sprintf("view %s does not exist", namespaceToString(from)))
 	}
 
 	// Check if destination view already exists
 	if _, exists := data.Views[toViewKey]; exists {
 		c.metrics.IncrementOperationErrors()
-		return nil, fmt.Errorf("view %s already exists", namespaceToString(to))
+		return nil, shared.NewCatalogAlreadyExists(fmt.Sprintf("view %s already exists", namespaceToString(to)))
 	}
 
 	// Create a deep copy of the data to avoid concurrent map writes
@@ -884,7 +862,7 @@ func (c *Catalog) readCatalogData() (*CatalogData, string, error) {
 			}
 			return emptyData, "", nil
 		}
-		return nil, "", fmt.Errorf("failed to open catalog file: %w", err)
+		return nil, "", errors.Wrapf(shared.CatalogInternal, err, "failed to open catalog file")
 	}
 	defer file.Close()
 
@@ -893,12 +871,12 @@ func (c *Catalog) readCatalogData() (*CatalogData, string, error) {
 	decoder.DisallowUnknownFields() // Strict JSON parsing
 
 	if err := decoder.Decode(&data); err != nil {
-		return nil, "", fmt.Errorf("failed to decode catalog JSON: %w", err)
+		return nil, "", errors.Wrapf(shared.CatalogInternal, err, "failed to decode catalog JSON")
 	}
 
 	// Validate data integrity
 	if err := c.validateCatalogData(&data); err != nil {
-		return nil, "", fmt.Errorf("catalog data validation failed: %w", err)
+		return nil, "", errors.Wrapf(shared.CatalogValidation, err, "catalog data validation failed")
 	}
 
 	// Generate ETag based on file content and modification time
@@ -918,80 +896,68 @@ func (c *Catalog) readCatalogData() (*CatalogData, string, error) {
 // validateCatalogData validates the integrity of catalog data
 func (c *Catalog) validateCatalogData(data *CatalogData) error {
 	if data.CatalogName == "" {
-		return &ValidationError{Field: "catalog_name", Message: "catalog name cannot be empty"}
+		return shared.NewCatalogValidation("catalog_name", "catalog name cannot be empty")
 	}
 
 	if data.Version <= 0 {
-		return &ValidationError{Field: "version", Message: "catalog version must be positive"}
+		return shared.NewCatalogValidation("version", "catalog version must be positive")
 	}
 
 	// Validate namespace consistency
 	for nsName, nsEntry := range data.Namespaces {
 		if nsName == "" {
-			return &ValidationError{Field: "namespace", Message: "namespace name cannot be empty"}
+			return shared.NewCatalogValidation("namespace", "namespace name cannot be empty")
 		}
 		if nsEntry.Properties == nil {
-			return &ValidationError{Field: "namespace.properties", Message: "namespace properties cannot be nil"}
+			return shared.NewCatalogValidation("namespace.properties", "namespace properties cannot be nil")
 		}
 	}
 
 	// Validate table consistency
 	for tableKey, tableEntry := range data.Tables {
 		if tableEntry.Namespace == "" {
-			return &ValidationError{Field: "table.namespace", Message: "table namespace cannot be empty"}
+			return shared.NewCatalogValidation("table.namespace", "table namespace cannot be empty")
 		}
 		if tableEntry.Name == "" {
-			return &ValidationError{Field: "table.name", Message: "table name cannot be empty"}
+			return shared.NewCatalogValidation("table.name", "table name cannot be empty")
 		}
 		if tableEntry.MetadataLocation == "" {
-			return &ValidationError{Field: "table.metadata_location", Message: "table metadata location cannot be empty"}
+			return shared.NewCatalogValidation("table.metadata_location", "table metadata location cannot be empty")
 		}
 
 		// Verify table key matches namespace.name format
 		expectedKey := fmt.Sprintf("%s.%s", tableEntry.Namespace, tableEntry.Name)
 		if tableKey != expectedKey {
-			return &ValidationError{
-				Field:   "table_key",
-				Message: fmt.Sprintf("table key '%s' doesn't match expected format '%s'", tableKey, expectedKey),
-			}
+			return shared.NewCatalogValidation("table_key", fmt.Sprintf("table key '%s' doesn't match expected format '%s'", tableKey, expectedKey))
 		}
 
 		// Verify namespace exists for table
 		if _, exists := data.Namespaces[tableEntry.Namespace]; !exists {
-			return &ValidationError{
-				Field:   "table.namespace",
-				Message: fmt.Sprintf("table references non-existent namespace '%s'", tableEntry.Namespace),
-			}
+			return shared.NewCatalogValidation("table.namespace", fmt.Sprintf("table references non-existent namespace '%s'", tableEntry.Namespace))
 		}
 	}
 
 	// Validate view consistency
 	for viewKey, viewEntry := range data.Views {
 		if viewEntry.Namespace == "" {
-			return &ValidationError{Field: "view.namespace", Message: "view namespace cannot be empty"}
+			return shared.NewCatalogValidation("view.namespace", "view namespace cannot be empty")
 		}
 		if viewEntry.Name == "" {
-			return &ValidationError{Field: "view.name", Message: "view name cannot be empty"}
+			return shared.NewCatalogValidation("view.name", "view name cannot be empty")
 		}
 		if viewEntry.MetadataLocation == "" {
-			return &ValidationError{Field: "view.metadata_location", Message: "view metadata location cannot be empty"}
+			return shared.NewCatalogValidation("view.metadata_location", "view metadata location cannot be empty")
 		}
 
 		// Verify view key matches namespace.name format
 		expectedKey := fmt.Sprintf("%s.%s", viewEntry.Namespace, viewEntry.Name)
 		if viewKey != expectedKey {
-			return &ValidationError{
-				Field:   "view_key",
-				Message: fmt.Sprintf("view key '%s' doesn't match expected format '%s'", viewKey, expectedKey),
-			}
+			return shared.NewCatalogValidation("view_key", fmt.Sprintf("view key '%s' doesn't match expected format '%s'", viewKey, expectedKey))
 		}
 
 		// Verify namespace exists for view
 		if _, exists := data.Namespaces[viewEntry.Namespace]; !exists {
-			return &ValidationError{
-				Field:   "view.namespace",
-				Message: fmt.Sprintf("view references non-existent namespace '%s'", viewEntry.Namespace),
-			}
+			return shared.NewCatalogValidation("view.namespace", fmt.Sprintf("view references non-existent namespace '%s'", viewEntry.Namespace))
 		}
 	}
 
@@ -1012,7 +978,7 @@ func (c *Catalog) writeCatalogDataAtomic(data *CatalogData, expectedETag string)
 
 		if err := c.writeCatalogDataOnce(data, expectedETag); err != nil {
 			lastErr = err
-			if _, isConcurrentError := err.(*ConcurrentModificationError); isConcurrentError {
+			if iceboxErr, ok := err.(*errors.Error); ok && iceboxErr.Code.Equals(shared.CatalogConcurrentMod) {
 				continue // Retry on concurrent modification
 			}
 			return err // Don't retry on other errors
@@ -1023,7 +989,7 @@ func (c *Catalog) writeCatalogDataAtomic(data *CatalogData, expectedETag string)
 		return nil
 	}
 
-	return fmt.Errorf("failed to write catalog after %d attempts: %w", MaxRetryAttempts, lastErr)
+	return errors.Wrapf(shared.CatalogInternal, lastErr, "failed to write catalog after %d attempts", MaxRetryAttempts)
 }
 
 // writeCatalogDataOnce performs a single atomic write attempt
@@ -1036,9 +1002,7 @@ func (c *Catalog) writeCatalogDataOnce(data *CatalogData, expectedETag string) e
 		if info, err := os.Stat(c.uri); err == nil {
 			currentETag := fmt.Sprintf("%d-%d", info.Size(), info.ModTime().UnixNano())
 			if currentETag != expectedETag {
-				return &ConcurrentModificationError{
-					message: fmt.Sprintf("catalog.json was modified concurrently (expected ETag: %s, current: %s)", expectedETag, currentETag),
-				}
+				return shared.NewCatalogConcurrentModification(fmt.Sprintf("catalog.json was modified concurrently (expected ETag: %s, current: %s)", expectedETag, currentETag))
 			}
 		}
 	}
@@ -1048,7 +1012,7 @@ func (c *Catalog) writeCatalogDataOnce(data *CatalogData, expectedETag string) e
 
 	// Ensure parent directory exists
 	if err := os.MkdirAll(filepath.Dir(c.uri), 0755); err != nil {
-		return fmt.Errorf("failed to create catalog directory: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to create catalog directory")
 	}
 
 	// Create temporary file for atomic write
@@ -1063,7 +1027,7 @@ func (c *Catalog) writeCatalogDataOnce(data *CatalogData, expectedETag string) e
 
 	file, err := os.OpenFile(tempFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, CatalogFilePermissions)
 	if err != nil {
-		return fmt.Errorf("failed to create temporary catalog file: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to create temporary catalog file")
 	}
 
 	encoder := json.NewEncoder(file)
@@ -1072,22 +1036,22 @@ func (c *Catalog) writeCatalogDataOnce(data *CatalogData, expectedETag string) e
 
 	if err := encoder.Encode(data); err != nil {
 		file.Close()
-		return fmt.Errorf("failed to encode catalog JSON: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to encode catalog JSON")
 	}
 
 	// Ensure data is written to disk
 	if err := file.Sync(); err != nil {
 		file.Close()
-		return fmt.Errorf("failed to sync catalog file: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to sync catalog file")
 	}
 
 	if err := file.Close(); err != nil {
-		return fmt.Errorf("failed to close catalog file: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to close catalog file")
 	}
 
 	// Atomic rename
 	if err := os.Rename(tempFile, c.uri); err != nil {
-		return fmt.Errorf("failed to atomically replace catalog file: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to atomically replace catalog file")
 	}
 
 	return nil
@@ -1189,46 +1153,31 @@ func (c *Catalog) viewKey(namespace table.Identifier, viewName string) string {
 // validateViewIdentifier validates a view identifier
 func (c *Catalog) validateViewIdentifier(identifier table.Identifier) error {
 	if len(identifier) == 0 {
-		return &ValidationError{
-			Field:   "view_identifier",
-			Message: "view identifier cannot be empty",
-		}
+		return shared.NewCatalogValidation("view_identifier", "view identifier cannot be empty")
 	}
 
 	if len(identifier) < 2 {
-		return &ValidationError{
-			Field:   "view_identifier",
-			Message: "view identifier must have at least namespace and view name",
-		}
+		return shared.NewCatalogValidation("view_identifier", "view identifier must have at least namespace and view name")
 	}
 
 	// Check for empty namespace parts
 	for i, part := range identifier[:len(identifier)-1] {
 		if part == "" {
-			return &ValidationError{
-				Field:   "view_identifier",
-				Message: fmt.Sprintf("namespace part %d cannot be empty", i),
-			}
+			return shared.NewCatalogValidation("view_identifier", fmt.Sprintf("namespace part %d cannot be empty", i))
 		}
 	}
 
 	// Check for empty view name
 	viewName := identifier[len(identifier)-1]
 	if viewName == "" {
-		return &ValidationError{
-			Field:   "view_identifier",
-			Message: "view name cannot be empty",
-		}
+		return shared.NewCatalogValidation("view_identifier", "view name cannot be empty")
 	}
 
 	// Check for invalid characters in view name
 	invalidChars := []string{"/", "\\", ":", "*", "?", "\"", "<", ">", "|"}
 	for _, char := range invalidChars {
 		if strings.Contains(viewName, char) {
-			return &ValidationError{
-				Field:   "view_identifier",
-				Message: fmt.Sprintf("invalid characters in view name: %s", char),
-			}
+			return shared.NewCatalogValidation("view_identifier", fmt.Sprintf("invalid characters in view name: %s", char))
 		}
 	}
 
@@ -1261,7 +1210,7 @@ func (c *Catalog) CreateNamespace(ctx context.Context, namespace table.Identifie
 	data, etag, err := c.readCatalogData()
 	if err != nil {
 		c.metrics.IncrementOperationErrors()
-		return fmt.Errorf("failed to read catalog: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	namespaceStr := namespaceToString(namespace)
@@ -1284,7 +1233,7 @@ func (c *Catalog) CreateNamespace(ctx context.Context, namespace table.Identifie
 	for key, value := range props {
 		if err := c.validateProperty(key, value); err != nil {
 			c.metrics.IncrementOperationErrors()
-			return fmt.Errorf("invalid property %s: %w", key, err)
+			return errors.Wrapf(shared.CatalogValidation, err, "invalid property %s", key)
 		}
 	}
 
@@ -1340,7 +1289,7 @@ func (c *Catalog) DropNamespace(ctx context.Context, namespace table.Identifier)
 	data, etag, err := c.readCatalogData()
 	if err != nil {
 		c.metrics.IncrementOperationErrors()
-		return fmt.Errorf("failed to read catalog: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	namespaceStr := namespaceToString(namespace)
@@ -1397,7 +1346,7 @@ func (c *Catalog) DropNamespace(ctx context.Context, namespace table.Identifier)
 func (c *Catalog) CheckNamespaceExists(ctx context.Context, namespace table.Identifier) (bool, error) {
 	data, _, err := c.readCatalogData()
 	if err != nil {
-		return false, fmt.Errorf("failed to read catalog: %w", err)
+		return false, errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	namespaceStr := namespaceToString(namespace)
@@ -1409,7 +1358,7 @@ func (c *Catalog) CheckNamespaceExists(ctx context.Context, namespace table.Iden
 func (c *Catalog) LoadNamespaceProperties(ctx context.Context, namespace table.Identifier) (iceberg.Properties, error) {
 	data, _, err := c.readCatalogData()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read catalog: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	namespaceStr := namespaceToString(namespace)
@@ -1426,7 +1375,7 @@ func (c *Catalog) UpdateNamespaceProperties(ctx context.Context, namespace table
 	data, etag, err := c.readCatalogData()
 	if err != nil {
 		c.metrics.IncrementOperationErrors()
-		return catalog.PropertiesUpdateSummary{}, fmt.Errorf("failed to read catalog: %w", err)
+		return catalog.PropertiesUpdateSummary{}, errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	namespaceStr := namespaceToString(namespace)
@@ -1465,7 +1414,7 @@ func (c *Catalog) UpdateNamespaceProperties(ctx context.Context, namespace table
 		// Validate property key and value
 		if err := c.validateProperty(key, value); err != nil {
 			c.metrics.IncrementOperationErrors()
-			return catalog.PropertiesUpdateSummary{}, fmt.Errorf("invalid property %s: %w", key, err)
+			return catalog.PropertiesUpdateSummary{}, errors.Wrapf(shared.CatalogValidation, err, "invalid property %s", key)
 		}
 
 		currentProperties[key] = value
@@ -1524,10 +1473,7 @@ func (c *Catalog) UpdateNamespaceProperties(ctx context.Context, namespace table
 func (c *Catalog) validateProperty(key string, value string) error {
 	// Basic validation rules
 	if key == "" {
-		return &ValidationError{
-			Field:   "property_key",
-			Message: "property key cannot be empty",
-		}
+		return shared.NewCatalogValidation("property_key", "property key cannot be empty")
 	}
 
 	// Check for reserved property names
@@ -1537,42 +1483,27 @@ func (c *Catalog) validateProperty(key string, value string) error {
 	}
 
 	if reservedProperties[key] {
-		return &ValidationError{
-			Field:   "property_key",
-			Message: fmt.Sprintf("property key '%s' is reserved", key),
-		}
+		return shared.NewCatalogValidation("property_key", fmt.Sprintf("property key '%s' is reserved", key))
 	}
 
 	// Validate key length
 	if len(key) > 255 {
-		return &ValidationError{
-			Field:   "property_key",
-			Message: "property key too long (max 255 characters)",
-		}
+		return shared.NewCatalogValidation("property_key", "property key too long (max 255 characters)")
 	}
 
 	// Validate value length
 	if len(value) > 4096 {
-		return &ValidationError{
-			Field:   "property_value",
-			Message: "property value too long (max 4096 characters)",
-		}
+		return shared.NewCatalogValidation("property_value", "property value too long (max 4096 characters)")
 	}
 
 	// Validate key format (no special characters that could cause issues)
 	if strings.ContainsAny(key, "\n\r\t\000") {
-		return &ValidationError{
-			Field:   "property_key",
-			Message: "property key contains invalid characters",
-		}
+		return shared.NewCatalogValidation("property_key", "property key contains invalid characters")
 	}
 
 	// Validate value (basic validation)
 	if strings.ContainsAny(value, "\000") {
-		return &ValidationError{
-			Field:   "property_value",
-			Message: "property value contains null characters",
-		}
+		return shared.NewCatalogValidation("property_value", "property value contains null characters")
 	}
 
 	return nil
@@ -1582,7 +1513,7 @@ func (c *Catalog) validateProperty(key string, value string) error {
 func (c *Catalog) ListNamespaces(ctx context.Context, parent table.Identifier) ([]table.Identifier, error) {
 	data, _, err := c.readCatalogData()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read catalog: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	var result []table.Identifier
@@ -1650,44 +1581,29 @@ func WithLocation(location string) CreateTableOpt {
 // validateTableIdentifier validates a table identifier
 func (c *Catalog) validateTableIdentifier(identifier table.Identifier) error {
 	if len(identifier) == 0 {
-		return &ValidationError{
-			Field:   "table_identifier",
-			Message: "table identifier cannot be empty",
-		}
+		return shared.NewCatalogValidation("table_identifier", "table identifier cannot be empty")
 	}
 
 	if len(identifier) < 2 {
-		return &ValidationError{
-			Field:   "table_identifier",
-			Message: "table identifier must have at least namespace and table name",
-		}
+		return shared.NewCatalogValidation("table_identifier", "table identifier must have at least namespace and table name")
 	}
 
 	// Check namespace parts
 	for i, part := range identifier[:len(identifier)-1] {
 		if part == "" {
-			return &ValidationError{
-				Field:   "namespace",
-				Message: fmt.Sprintf("namespace part %d cannot be empty", i),
-			}
+			return shared.NewCatalogValidation("namespace", fmt.Sprintf("namespace part %d cannot be empty", i))
 		}
 	}
 
 	// Check table name
 	tableName := identifier[len(identifier)-1]
 	if tableName == "" {
-		return &ValidationError{
-			Field:   "table_name",
-			Message: "table name cannot be empty",
-		}
+		return shared.NewCatalogValidation("table_name", "table name cannot be empty")
 	}
 
 	// Check for invalid characters in table name
 	if strings.ContainsAny(tableName, "/\\:*?\"<>|") {
-		return &ValidationError{
-			Field:   "table_name",
-			Message: "invalid characters in table name",
-		}
+		return shared.NewCatalogValidation("table_name", "invalid characters in table name")
 	}
 
 	return nil
@@ -1708,7 +1624,7 @@ func (c *Catalog) CreateTable(ctx context.Context, identifier table.Identifier, 
 	exists, err := c.CheckNamespaceExists(ctx, namespace)
 	if err != nil {
 		c.metrics.IncrementOperationErrors()
-		return nil, fmt.Errorf("failed to check namespace existence: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to check namespace existence")
 	}
 	if !exists {
 		return nil, catalog.ErrNoSuchNamespace
@@ -1717,7 +1633,7 @@ func (c *Catalog) CreateTable(ctx context.Context, identifier table.Identifier, 
 	data, etag, err := c.readCatalogData()
 	if err != nil {
 		c.metrics.IncrementOperationErrors()
-		return nil, fmt.Errorf("failed to read catalog: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	tableKey := c.tableKey(namespace, tableName)
@@ -1732,7 +1648,7 @@ func (c *Catalog) CreateTable(ctx context.Context, identifier table.Identifier, 
 	// Enhanced metadata creation with better support for Iceberg features
 	if err := c.writeEnhancedMetadata(schema, location, metadataLocation); err != nil {
 		c.metrics.IncrementOperationErrors()
-		return nil, fmt.Errorf("failed to write table metadata: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to write table metadata")
 	}
 
 	now := time.Now()
@@ -1774,7 +1690,7 @@ func (c *Catalog) CreateTable(ctx context.Context, identifier table.Identifier, 
 
 	if err := c.writeCatalogDataAtomic(dataCopy, etag); err != nil {
 		c.metrics.IncrementOperationErrors()
-		return nil, fmt.Errorf("failed to update catalog: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to update catalog")
 	}
 
 	c.metrics.IncrementTablesCreated()
@@ -1791,7 +1707,7 @@ func (c *Catalog) LoadTable(ctx context.Context, identifier table.Identifier, pr
 
 	data, _, err := c.readCatalogData()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read catalog: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	tableKey := c.tableKey(namespace, tableName)
@@ -1803,7 +1719,7 @@ func (c *Catalog) LoadTable(ctx context.Context, identifier table.Identifier, pr
 	// Load table using iceberg-go APIs
 	tbl, err := table.NewFromLocation(identifier, entry.MetadataLocation, c.fileIO, c)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load table: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to load table")
 	}
 
 	return tbl, nil
@@ -1816,7 +1732,7 @@ func (c *Catalog) DropTable(ctx context.Context, identifier table.Identifier) er
 
 	data, etag, err := c.readCatalogData()
 	if err != nil {
-		return fmt.Errorf("failed to read catalog: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	tableKey := c.tableKey(namespace, tableName)
@@ -1866,10 +1782,10 @@ func (c *Catalog) DropTable(ctx context.Context, identifier table.Identifier) er
 func (c *Catalog) RenameTable(ctx context.Context, from, to table.Identifier) (*table.Table, error) {
 	// Validate identifiers
 	if err := c.validateTableIdentifier(from); err != nil {
-		return nil, fmt.Errorf("invalid source identifier: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInvalidInput, err, "invalid source identifier")
 	}
 	if err := c.validateTableIdentifier(to); err != nil {
-		return nil, fmt.Errorf("invalid destination identifier: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInvalidInput, err, "invalid destination identifier")
 	}
 
 	fromNamespace := catalog.NamespaceFromIdent(from)
@@ -1879,31 +1795,25 @@ func (c *Catalog) RenameTable(ctx context.Context, from, to table.Identifier) (*
 
 	// Check if trying to rename to different namespace (not supported)
 	if namespaceToString(fromNamespace) != namespaceToString(toNamespace) {
-		return nil, &ValidationError{
-			Field:   "destination_namespace",
-			Message: "cannot rename table to different namespace",
-		}
+		return nil, shared.NewCatalogValidation("destination_namespace", "cannot rename table to different namespace")
 	}
 
 	data, etag, err := c.readCatalogData()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read catalog: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	// Check if source table exists
 	fromKey := c.tableKey(fromNamespace, fromTableName)
 	entry, exists := data.Tables[fromKey]
 	if !exists {
-		return nil, &ValidationError{
-			Field:   "source_table",
-			Message: fmt.Sprintf("table %s does not exist", fromKey),
-		}
+		return nil, shared.NewCatalogValidation("source_table", fmt.Sprintf("table %s does not exist", fromKey))
 	}
 
 	// Check if destination namespace exists
 	toExists, err := c.CheckNamespaceExists(ctx, toNamespace)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check destination namespace: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to check destination namespace")
 	}
 	if !toExists {
 		return nil, catalog.ErrNoSuchNamespace
@@ -1912,10 +1822,7 @@ func (c *Catalog) RenameTable(ctx context.Context, from, to table.Identifier) (*
 	// Check if destination table already exists
 	toKey := c.tableKey(toNamespace, toTableName)
 	if _, exists := data.Tables[toKey]; exists {
-		return nil, &ValidationError{
-			Field:   "destination_table",
-			Message: fmt.Sprintf("table %s already exists", toKey),
-		}
+		return nil, shared.NewCatalogValidation("destination_table", fmt.Sprintf("table %s already exists", toKey))
 	}
 
 	// Update table entry
@@ -1925,7 +1832,7 @@ func (c *Catalog) RenameTable(ctx context.Context, from, to table.Identifier) (*
 	delete(data.Tables, fromKey)
 
 	if err := c.writeCatalogDataAtomic(data, etag); err != nil {
-		return nil, fmt.Errorf("failed to update catalog: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to update catalog")
 	}
 
 	return c.LoadTable(ctx, to, nil)
@@ -1938,7 +1845,7 @@ func (c *Catalog) CheckTableExists(ctx context.Context, identifier table.Identif
 
 	data, _, err := c.readCatalogData()
 	if err != nil {
-		return false, fmt.Errorf("failed to read catalog: %w", err)
+		return false, errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	tableKey := c.tableKey(namespace, tableName)
@@ -1951,7 +1858,7 @@ func (c *Catalog) ListTables(ctx context.Context, namespace table.Identifier) it
 	return func(yield func(table.Identifier, error) bool) {
 		data, _, err := c.readCatalogData()
 		if err != nil {
-			yield(nil, fmt.Errorf("failed to read catalog: %w", err))
+			yield(nil, errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog"))
 			return
 		}
 
@@ -1986,7 +1893,7 @@ func (c *Catalog) CommitTable(ctx context.Context, tbl *table.Table, reqs []tabl
 	data, etag, err := c.readCatalogData()
 	if err != nil {
 		c.metrics.IncrementOperationErrors()
-		return nil, "", fmt.Errorf("failed to read catalog: %w", err)
+		return nil, "", errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	tableKey := c.tableKey(namespace, tableName)
@@ -1999,9 +1906,7 @@ func (c *Catalog) CommitTable(ctx context.Context, tbl *table.Table, reqs []tabl
 	currentMetadataLocation := tbl.MetadataLocation()
 	if entry.MetadataLocation != currentMetadataLocation {
 		c.metrics.IncrementOperationErrors()
-		return nil, "", &ConcurrentModificationError{
-			message: fmt.Sprintf("table %s has been updated by another process", tableKey),
-		}
+		return nil, "", shared.NewCatalogConcurrentModification(fmt.Sprintf("table %s has been updated by another process", tableKey))
 	}
 
 	// Validate requirements before applying updates
@@ -2009,7 +1914,7 @@ func (c *Catalog) CommitTable(ctx context.Context, tbl *table.Table, reqs []tabl
 	for _, req := range reqs {
 		if err := c.validateRequirement(req, currentMetadata); err != nil {
 			c.metrics.IncrementOperationErrors()
-			return nil, "", fmt.Errorf("requirement validation failed: %w", err)
+			return nil, "", errors.Wrapf(shared.CatalogValidation, err, "requirement validation failed")
 		}
 	}
 
@@ -2023,7 +1928,7 @@ func (c *Catalog) CommitTable(ctx context.Context, tbl *table.Table, reqs []tabl
 	stagedMetadataLocation, err := c.stageTableUpdates(identifier, currentMetadata, updates)
 	if err != nil {
 		c.metrics.IncrementOperationErrors()
-		return nil, "", fmt.Errorf("failed to stage table updates: %w", err)
+		return nil, "", errors.Wrapf(shared.CatalogInternal, err, "failed to stage table updates")
 	}
 
 	// Update the catalog entry with new metadata location
@@ -2037,7 +1942,7 @@ func (c *Catalog) CommitTable(ctx context.Context, tbl *table.Table, reqs []tabl
 		// Clean up staged metadata on failure
 		os.Remove(stagedMetadataLocation)
 		c.metrics.IncrementOperationErrors()
-		return nil, "", fmt.Errorf("failed to update catalog: %w", err)
+		return nil, "", errors.Wrapf(shared.CatalogInternal, err, "failed to update catalog")
 	}
 
 	c.logger.Printf("Successfully committed table changes for %s", tableKey)
@@ -2045,7 +1950,7 @@ func (c *Catalog) CommitTable(ctx context.Context, tbl *table.Table, reqs []tabl
 	// Load the updated table to get the new metadata
 	updatedTable, err := c.LoadTable(ctx, identifier, nil)
 	if err != nil {
-		return nil, stagedMetadataLocation, fmt.Errorf("failed to load updated table: %w", err)
+		return nil, stagedMetadataLocation, errors.Wrapf(shared.CatalogInternal, err, "failed to load updated table")
 	}
 
 	return updatedTable.Metadata(), stagedMetadataLocation, nil
@@ -2056,7 +1961,7 @@ func (c *Catalog) stageTableUpdates(identifier table.Identifier, currentMetadata
 	// Generate new metadata location
 	newVersion, err := c.getNextMetadataVersion(identifier)
 	if err != nil {
-		return "", fmt.Errorf("failed to get next metadata version: %w", err)
+		return "", errors.Wrapf(shared.CatalogInternal, err, "failed to get next metadata version")
 	}
 	newMetadataLocation := c.newMetadataLocation(identifier, newVersion)
 
@@ -2065,18 +1970,18 @@ func (c *Catalog) stageTableUpdates(identifier table.Identifier, currentMetadata
 	// Read current metadata file
 	currentMetadataBytes, err := os.ReadFile(currentMetadata.Location())
 	if err != nil {
-		return "", fmt.Errorf("failed to read current metadata: %w", err)
+		return "", errors.Wrapf(shared.CatalogInternal, err, "failed to read current metadata")
 	}
 
 	// Parse current metadata
 	var metadata map[string]interface{}
 	if err := json.Unmarshal(currentMetadataBytes, &metadata); err != nil {
-		return "", fmt.Errorf("failed to parse current metadata: %w", err)
+		return "", errors.Wrapf(shared.CatalogInternal, err, "failed to parse current metadata")
 	}
 
 	// Apply updates to metadata using generic approach
 	if err := c.applyUpdatesToMetadata(metadata, updates); err != nil {
-		return "", fmt.Errorf("failed to apply updates to metadata: %w", err)
+		return "", errors.Wrapf(shared.CatalogInternal, err, "failed to apply updates to metadata")
 	}
 
 	// Update metadata with new version info
@@ -2093,7 +1998,7 @@ func (c *Catalog) stageTableUpdates(identifier table.Identifier, currentMetadata
 
 	// Write new metadata file atomically
 	if err := c.writeMetadataFile(newMetadataLocation, metadata); err != nil {
-		return "", fmt.Errorf("failed to write new metadata file: %w", err)
+		return "", errors.Wrapf(shared.CatalogInternal, err, "failed to write new metadata file")
 	}
 
 	return newMetadataLocation, nil
@@ -2121,7 +2026,7 @@ func (c *Catalog) applyUpdatesToMetadata(metadata map[string]interface{}, update
 func (c *Catalog) writeMetadataFile(metadataLocation string, metadata map[string]interface{}) error {
 	// Ensure destination directory exists
 	if err := os.MkdirAll(filepath.Dir(metadataLocation), 0755); err != nil {
-		return fmt.Errorf("failed to create metadata directory: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to create metadata directory")
 	}
 
 	// Write metadata atomically
@@ -2130,7 +2035,7 @@ func (c *Catalog) writeMetadataFile(metadataLocation string, metadata map[string
 
 	file, err := os.OpenFile(tempFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, CatalogFilePermissions)
 	if err != nil {
-		return fmt.Errorf("failed to create temporary metadata file: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to create temporary metadata file")
 	}
 
 	encoder := json.NewEncoder(file)
@@ -2139,21 +2044,21 @@ func (c *Catalog) writeMetadataFile(metadataLocation string, metadata map[string
 
 	if err := encoder.Encode(metadata); err != nil {
 		file.Close()
-		return fmt.Errorf("failed to encode metadata JSON: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to encode metadata JSON")
 	}
 
 	if err := file.Sync(); err != nil {
 		file.Close()
-		return fmt.Errorf("failed to sync metadata file: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to sync metadata file")
 	}
 
 	if err := file.Close(); err != nil {
-		return fmt.Errorf("failed to close metadata file: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to close metadata file")
 	}
 
 	// Atomic rename
 	if err := os.Rename(tempFile, metadataLocation); err != nil {
-		return fmt.Errorf("failed to atomically write metadata file: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to atomically write metadata file")
 	}
 
 	return nil
@@ -2169,18 +2074,18 @@ func (c *Catalog) validateRequirement(req table.Requirement, metadata table.Meta
 
 	// Check basic metadata consistency
 	if metadata == nil {
-		return fmt.Errorf("metadata is nil, cannot validate requirement %s", requirementType)
+		return errors.Newf(shared.CatalogValidation, "metadata is nil, cannot validate requirement %s", requirementType)
 	}
 
 	// Validate that table location exists
 	if metadata.Location() == "" {
-		return fmt.Errorf("table location is empty, requirement validation failed for %s", requirementType)
+		return errors.Newf(shared.CatalogValidation, "table location is empty, requirement validation failed for %s", requirementType)
 	}
 
 	// Additional validation based on metadata state
 	currentSchemaID := metadata.CurrentSchema().ID
 	if currentSchemaID < 0 {
-		return fmt.Errorf("invalid current schema ID %d, requirement validation failed for %s", currentSchemaID, requirementType)
+		return errors.Newf(shared.CatalogValidation, "invalid current schema ID %d, requirement validation failed for %s", currentSchemaID, requirementType)
 	}
 
 	// Requirement validation passed
@@ -2198,7 +2103,7 @@ func (c *Catalog) RegisterTable(ctx context.Context, identifier table.Identifier
 	// Check if namespace exists
 	exists, err := c.CheckNamespaceExists(ctx, namespace)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check namespace existence: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to check namespace existence")
 	}
 	if !exists {
 		return nil, catalog.ErrNoSuchNamespace
@@ -2206,15 +2111,12 @@ func (c *Catalog) RegisterTable(ctx context.Context, identifier table.Identifier
 
 	// Validate that metadata file exists
 	if _, err := os.Stat(metadataLocation); os.IsNotExist(err) {
-		return nil, &ValidationError{
-			Field:   "metadata_location",
-			Message: fmt.Sprintf("metadata file does not exist at %s", metadataLocation),
-		}
+		return nil, shared.NewCatalogValidation("metadata_location", fmt.Sprintf("metadata file does not exist at %s", metadataLocation))
 	}
 
 	data, etag, err := c.readCatalogData()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read catalog: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to read catalog")
 	}
 
 	tableKey := c.tableKey(namespace, tableName)
@@ -2233,7 +2135,7 @@ func (c *Catalog) RegisterTable(ctx context.Context, identifier table.Identifier
 	}
 
 	if err := c.writeCatalogDataAtomic(data, etag); err != nil {
-		return nil, fmt.Errorf("failed to update catalog: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to update catalog")
 	}
 
 	c.logger.Printf("Successfully registered table %s", tableKey)
@@ -2281,7 +2183,7 @@ func (c *Catalog) newMetadataLocation(identifier table.Identifier, version int) 
 func (c *Catalog) writeEnhancedMetadata(schema *iceberg.Schema, location, metadataLocation string) error {
 	// Ensure metadata directory exists
 	if err := os.MkdirAll(filepath.Dir(metadataLocation), 0755); err != nil {
-		return fmt.Errorf("failed to create metadata directory: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to create metadata directory")
 	}
 
 	// Generate proper UUID
@@ -2353,7 +2255,7 @@ func (c *Catalog) writeEnhancedMetadata(schema *iceberg.Schema, location, metada
 
 	file, err := os.OpenFile(tempFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, CatalogFilePermissions)
 	if err != nil {
-		return fmt.Errorf("failed to create temporary metadata file: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to create temporary metadata file")
 	}
 
 	encoder := json.NewEncoder(file)
@@ -2362,21 +2264,21 @@ func (c *Catalog) writeEnhancedMetadata(schema *iceberg.Schema, location, metada
 
 	if err := encoder.Encode(metadata); err != nil {
 		file.Close()
-		return fmt.Errorf("failed to encode metadata JSON: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to encode metadata JSON")
 	}
 
 	if err := file.Sync(); err != nil {
 		file.Close()
-		return fmt.Errorf("failed to sync metadata file: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to sync metadata file")
 	}
 
 	if err := file.Close(); err != nil {
-		return fmt.Errorf("failed to close metadata file: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to close metadata file")
 	}
 
 	// Atomic rename
 	if err := os.Rename(tempFile, metadataLocation); err != nil {
-		return fmt.Errorf("failed to atomically write metadata file: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to atomically write metadata file")
 	}
 
 	c.logger.Printf("Created table metadata at %s", metadataLocation)
@@ -2458,25 +2360,25 @@ func (c *Catalog) convertIcebergSchemaToViewSchema(schema *iceberg.Schema, schem
 func (c *Catalog) writeViewMetadata(metadata *ViewMetadata, metadataLocation string) error {
 	// Ensure metadata directory exists
 	if err := os.MkdirAll(filepath.Dir(metadataLocation), 0755); err != nil {
-		return fmt.Errorf("failed to create metadata directory: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to create metadata directory")
 	}
 
 	// Marshal metadata to JSON
 	data, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal view metadata: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to marshal view metadata")
 	}
 
 	// Write to temporary file first for atomic operation
 	tempFile := metadataLocation + ".tmp"
 	if err := os.WriteFile(tempFile, data, 0644); err != nil {
-		return fmt.Errorf("failed to write temporary metadata file: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to write temporary metadata file")
 	}
 
 	// Atomic rename
 	if err := os.Rename(tempFile, metadataLocation); err != nil {
 		os.Remove(tempFile) // Clean up on failure
-		return fmt.Errorf("failed to rename metadata file: %w", err)
+		return errors.Wrapf(shared.CatalogInternal, err, "failed to rename metadata file")
 	}
 
 	return nil
@@ -2486,12 +2388,12 @@ func (c *Catalog) writeViewMetadata(metadata *ViewMetadata, metadataLocation str
 func (c *Catalog) loadViewMetadata(metadataLocation string) (*ViewMetadata, error) {
 	data, err := os.ReadFile(metadataLocation)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read view metadata file: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to read view metadata file")
 	}
 
 	var metadata ViewMetadata
 	if err := json.Unmarshal(data, &metadata); err != nil {
-		return nil, fmt.Errorf("failed to parse view metadata: %w", err)
+		return nil, errors.Wrapf(shared.CatalogInternal, err, "failed to parse view metadata")
 	}
 
 	return &metadata, nil

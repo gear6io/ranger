@@ -36,7 +36,7 @@ func NewCatalog(cfg *config.Config, pathManager shared.PathManager) (*Catalog, e
 	// Get catalog URI from path manager
 	catalogURI := pathManager.GetCatalogURI("sqlite")
 	if catalogURI == "" {
-		return nil, fmt.Errorf("catalog URI is required for SQLite catalog")
+		return nil, shared.NewCatalogValidation("catalog_uri", "catalog URI is required for SQLite catalog")
 	}
 
 	// Ensure the directory exists
@@ -129,7 +129,7 @@ func (c *Catalog) initializeDatabase() error {
 // CreateTable creates a new table in the catalog
 func (c *Catalog) CreateTable(ctx context.Context, identifier table.Identifier, schema *iceberg.Schema, opts ...catalog.CreateTableOpt) (*table.Table, error) {
 	if len(identifier) == 0 {
-		return nil, fmt.Errorf("table identifier cannot be empty")
+		return nil, shared.NewCatalogValidation("table_identifier", "table identifier cannot be empty")
 	}
 
 	namespace := catalog.NamespaceFromIdent(identifier)
@@ -280,7 +280,7 @@ func (c *Catalog) LoadTable(ctx context.Context, identifier table.Identifier, pr
 	}
 
 	if !metadataLocation.Valid {
-		return nil, fmt.Errorf("table metadata location is null")
+		return nil, shared.NewCatalogValidation("table_metadata_location", "table metadata location is null")
 	}
 
 	// Load table using iceberg-go APIs
