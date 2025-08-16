@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/TFMV/icebox/server/catalog/shared"
 	"github.com/TFMV/icebox/server/config"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/catalog"
@@ -22,17 +23,18 @@ import (
 
 // Catalog implements the iceberg-go catalog.Catalog interface using SQLite
 type Catalog struct {
-	name   string
-	dbPath string
-	db     *sql.DB
-	fileIO icebergio.IO
-	config *config.Config
+	name        string
+	dbPath      string
+	db          *sql.DB
+	fileIO      icebergio.IO
+	pathManager shared.PathManager
+	config      *config.Config
 }
 
 // NewCatalog creates a new SQLite-based catalog
-func NewCatalog(cfg *config.Config) (*Catalog, error) {
-	// Get catalog URI from config
-	catalogURI := cfg.GetCatalogURI()
+func NewCatalog(cfg *config.Config, pathManager shared.PathManager) (*Catalog, error) {
+	// Get catalog URI from path manager
+	catalogURI := pathManager.GetCatalogURI("sqlite")
 	if catalogURI == "" {
 		return nil, fmt.Errorf("catalog URI is required for SQLite catalog")
 	}
@@ -50,17 +52,18 @@ func NewCatalog(cfg *config.Config) (*Catalog, error) {
 	// Create a local FileIO implementation for iceberg-go compatibility
 	fileIO := icebergio.LocalFS{}
 
-	return NewCatalogWithIO("icebox-sqlite-catalog", catalogURI, db, fileIO, cfg)
+	return NewCatalogWithIO("icebox-sqlite-catalog", catalogURI, db, fileIO, pathManager, cfg)
 }
 
 // NewCatalogWithIO creates a new SQLite-based catalog with custom file IO
-func NewCatalogWithIO(name, dbPath string, db *sql.DB, fileIO icebergio.IO, cfg *config.Config) (*Catalog, error) {
+func NewCatalogWithIO(name, dbPath string, db *sql.DB, fileIO icebergio.IO, pathManager shared.PathManager, cfg *config.Config) (*Catalog, error) {
 	cat := &Catalog{
-		name:   name,
-		dbPath: dbPath,
-		db:     db,
-		fileIO: fileIO,
-		config: cfg,
+		name:        name,
+		dbPath:      dbPath,
+		db:          db,
+		fileIO:      fileIO,
+		pathManager: pathManager,
+		config:      cfg,
 	}
 
 	if err := cat.initializeDatabase(); err != nil {
@@ -696,26 +699,20 @@ func stringToNamespace(namespaceStr string) table.Identifier {
 }
 
 func (c *Catalog) defaultTableLocation(identifier table.Identifier) string {
-	// Return relative path since we don't manage warehouse storage
-	// The Storage package handles actual file operations
-	parts := make([]string, len(identifier))
-	for i, part := range identifier {
-		parts[i] = part
-	}
-	return filepath.Join("data", filepath.Join(parts...))
+	// Use PathManager for table location
+	namespace := identifier[:len(identifier)-1]
+	tableName := identifier[len(identifier)-1]
+	return c.pathManager.GetTableDataPath(namespace, tableName)
 }
 
 func (c *Catalog) newMetadataLocation(identifier table.Identifier, version int) string {
-	tableLocation := c.defaultTableLocation(identifier)
-	if tableLocation == "" {
-		return ""
-	}
+	// Use PathManager for metadata location
+	namespace := identifier[:len(identifier)-1]
+	tableName := identifier[len(identifier)-1]
 
-	// Build metadata path relative to table location
-	metadataPath := filepath.Join(tableLocation, "metadata", fmt.Sprintf("v%d.metadata.json", version))
-
-	// Return relative path since we don't manage warehouse storage
-	return metadataPath
+	metadataDir := c.pathManager.GetTableMetadataPath(namespace, tableName)
+	filename := fmt.Sprintf("v%d.metadata.json", version)
+	return filepath.Join(metadataDir, filename)
 }
 
 // getNextMetadataVersion determines the next version number for metadata files

@@ -6,6 +6,7 @@ import (
 	"iter"
 	"net/url"
 
+	"github.com/TFMV/icebox/server/catalog/shared"
 	"github.com/TFMV/icebox/server/config"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
@@ -19,19 +20,20 @@ type Catalog struct {
 	name        string
 	restCatalog *icebergrest.Catalog
 	fileIO      icebergio.IO
+	pathManager shared.PathManager
 	config      *config.Config
 }
 
 // NewCatalog creates a new REST catalog wrapper
-func NewCatalog(cfg *config.Config) (*Catalog, error) {
+func NewCatalog(cfg *config.Config, pathManager shared.PathManager) (*Catalog, error) {
 	// Validate catalog type
 	catalogType := cfg.GetCatalogType()
 	if catalogType != "rest" {
 		return nil, fmt.Errorf("expected catalog type 'rest', got '%s'", catalogType)
 	}
 
-	// Get catalog URI
-	catalogURI := cfg.GetCatalogURI()
+	// Get catalog URI from path manager
+	catalogURI := pathManager.GetCatalogURI("rest")
 	if catalogURI == "" {
 		return nil, fmt.Errorf("catalog URI is required for REST catalog")
 	}
@@ -58,6 +60,7 @@ func NewCatalog(cfg *config.Config) (*Catalog, error) {
 		name:        "icebox-rest-catalog",
 		restCatalog: restCatalog,
 		fileIO:      icebergio.LocalFS{},
+		pathManager: pathManager,
 		config:      cfg,
 	}, nil
 }
