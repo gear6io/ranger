@@ -4,16 +4,16 @@ import (
 	"github.com/TFMV/icebox/server/config"
 )
 
-// CreateTestConfig creates a test configuration for catalog testing
-func CreateTestConfig() *config.Config {
-	cfg := &config.Config{}
-	cfg.Storage.Catalog.Type = "json"
-	cfg.Storage.Config.Path = "/tmp/icebox_test"
+// getTestConfig returns a test configuration
+func getTestConfig() *config.Config {
+	cfg := config.LoadDefaultConfig()
+	cfg.Storage.DataPath = "/tmp/icebox_test"
+	cfg.Storage.Data.Type = "memory" // Use memory storage for testing
 	return cfg
 }
 
 // CreateTestCatalogAdapter creates a test catalog adapter
 func CreateTestCatalogAdapter() (CatalogAdapter, error) {
-	cfg := CreateTestConfig()
+	cfg := getTestConfig()
 	return NewIceboxCatalogAdapter(cfg)
 }

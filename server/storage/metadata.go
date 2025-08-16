@@ -34,9 +34,9 @@ type MetadataManager struct {
 }
 
 // NewMetadataManager creates a new metadata manager
-func NewMetadataManager(basePath string) *MetadataManager {
+func NewMetadataManager(metadataDBPath string) *MetadataManager {
 	return &MetadataManager{
-		BasePath: basePath,
+		BasePath: metadataDBPath,
 	}
 }
 
@@ -54,6 +54,12 @@ func (mm *MetadataManager) CreateTableMetadata(tableName string, schema []byte) 
 		Files:        []FileInfo{},
 	}
 
+	// For memory storage (empty base path), don't create files on disk
+	if mm.BasePath == "" {
+		// Store metadata in memory only
+		return metadata, nil
+	}
+
 	// Ensure table directory exists
 	tablePath := getTablePath(mm.BasePath, tableName)
 	if err := os.MkdirAll(tablePath, 0755); err != nil {
@@ -62,7 +68,7 @@ func (mm *MetadataManager) CreateTableMetadata(tableName string, schema []byte) 
 
 	// Save metadata
 	if err := mm.SaveTableMetadata(tableName, metadata); err != nil {
-		return nil, fmt.Errorf("failed to save table metadata: %w", err)
+		return nil, fmt.Errorf("failed to save metadata: %w", err)
 	}
 
 	return metadata, nil
@@ -70,6 +76,11 @@ func (mm *MetadataManager) CreateTableMetadata(tableName string, schema []byte) 
 
 // LoadTableMetadata loads metadata for a table
 func (mm *MetadataManager) LoadTableMetadata(tableName string) (*TableMetadata, error) {
+	// For memory storage (empty base path), metadata doesn't exist on disk
+	if mm.BasePath == "" {
+		return nil, fmt.Errorf("table metadata not found: %s (memory storage)", tableName)
+	}
+
 	metadataPath := getMetadataFilePath(mm.BasePath, tableName)
 
 	data, err := os.ReadFile(metadataPath)
@@ -90,6 +101,11 @@ func (mm *MetadataManager) LoadTableMetadata(tableName string) (*TableMetadata, 
 
 // SaveTableMetadata saves metadata for a table
 func (mm *MetadataManager) SaveTableMetadata(tableName string, metadata *TableMetadata) error {
+	// For memory storage (empty base path), don't write to disk
+	if mm.BasePath == "" {
+		return nil
+	}
+
 	metadataPath := getMetadataFilePath(mm.BasePath, tableName)
 
 	data, err := json.MarshalIndent(metadata, "", "  ")
@@ -106,6 +122,11 @@ func (mm *MetadataManager) SaveTableMetadata(tableName string, metadata *TableMe
 
 // AddFileToMetadata adds a file to table metadata
 func (mm *MetadataManager) AddFileToMetadata(tableName string, fileInfo FileInfo) error {
+	// For memory storage (empty base path), don't modify disk
+	if mm.BasePath == "" {
+		return nil
+	}
+
 	metadata, err := mm.LoadTableMetadata(tableName)
 	if err != nil {
 		return fmt.Errorf("failed to load metadata: %w", err)
@@ -133,6 +154,11 @@ func (mm *MetadataManager) AddFileToMetadata(tableName string, fileInfo FileInfo
 
 // RemoveFileFromMetadata removes a file from table metadata
 func (mm *MetadataManager) RemoveFileFromMetadata(tableName string, fileName string) error {
+	// For memory storage (empty base path), don't modify disk
+	if mm.BasePath == "" {
+		return nil
+	}
+
 	metadata, err := mm.LoadTableMetadata(tableName)
 	if err != nil {
 		return fmt.Errorf("failed to load metadata: %w", err)
@@ -155,6 +181,11 @@ func (mm *MetadataManager) RemoveFileFromMetadata(tableName string, fileName str
 
 // UpdateFileSize updates the size of a file in metadata
 func (mm *MetadataManager) UpdateFileSize(tableName string, fileName string, newSize int64) error {
+	// For memory storage (empty base path), don't modify disk
+	if mm.BasePath == "" {
+		return nil
+	}
+
 	metadata, err := mm.LoadTableMetadata(tableName)
 	if err != nil {
 		return fmt.Errorf("failed to load metadata: %w", err)
@@ -177,6 +208,11 @@ func (mm *MetadataManager) UpdateFileSize(tableName string, fileName string, new
 
 // ListTables returns a list of all tables
 func (mm *MetadataManager) ListTables() ([]string, error) {
+	// For memory storage (empty base path), no tables exist on disk
+	if mm.BasePath == "" {
+		return []string{}, nil
+	}
+
 	tablesPath := filepath.Join(mm.BasePath, "tables")
 
 	entries, err := os.ReadDir(tablesPath)
@@ -199,6 +235,11 @@ func (mm *MetadataManager) ListTables() ([]string, error) {
 
 // TableExists checks if a table exists
 func (mm *MetadataManager) TableExists(tableName string) bool {
+	// For memory storage (empty base path), tables don't exist on disk
+	if mm.BasePath == "" {
+		return false
+	}
+
 	metadataPath := getMetadataFilePath(mm.BasePath, tableName)
 	_, err := os.Stat(metadataPath)
 	return err == nil

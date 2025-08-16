@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
 	"iter"
 	"log"
 	"os"
@@ -13,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/TFMV/icebox/deprecated/fs/local"
 	"github.com/TFMV/icebox/server/config"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/catalog"
@@ -22,68 +20,47 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// FileSystemInterface abstracts file operations for different storage backends
-type FileSystemInterface interface {
-	Create(path string) (io.WriteCloser, error)
-}
-
 // Catalog implements the iceberg-go catalog.Catalog interface using SQLite
 type Catalog struct {
-	name       string
-	dbPath     string
-	db         *sql.DB
-	fileSystem FileSystemInterface
-	fileIO     icebergio.IO
-	warehouse  string
+	name   string
+	dbPath string
+	db     *sql.DB
+	fileIO icebergio.IO
+	config *config.Config
 }
 
 // NewCatalog creates a new SQLite-based catalog
 func NewCatalog(cfg *config.Config) (*Catalog, error) {
-	// Validate catalog type
-	catalogType := cfg.GetCatalogType()
-	if catalogType != "sqlite" {
-		return nil, fmt.Errorf("expected catalog type 'sqlite', got '%s'", catalogType)
-	}
-
-	// Use catalog URI as database path
-	dbPath := cfg.GetCatalogURI()
-	if dbPath == "" {
+	// Get catalog URI from config
+	catalogURI := cfg.GetCatalogURI()
+	if catalogURI == "" {
 		return nil, fmt.Errorf("catalog URI is required for SQLite catalog")
 	}
 
 	// Ensure the directory exists
-	if err := local.EnsureDir(filepath.Dir(dbPath)); err != nil {
+	if err := os.MkdirAll(filepath.Dir(catalogURI), 0755); err != nil {
 		return nil, fmt.Errorf("failed to create catalog directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on")
+	db, err := sql.Open("sqlite3", catalogURI+"?_foreign_keys=on")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open SQLite database: %w", err)
 	}
 
-	// Determine warehouse location and create FileIO
-	warehouse := cfg.GetStoragePath()
-	var fileSystem FileSystemInterface
-	var fileIO icebergio.IO
+	// Create a local FileIO implementation for iceberg-go compatibility
+	fileIO := icebergio.LocalFS{}
 
-	if warehouse != "" {
-		fileSystem = local.NewFileSystem(warehouse)
-		// Create a local FileIO implementation
-		fileIO = icebergio.LocalFS{}
-	}
-
-	return NewCatalogWithIO("icebox-sqlite-catalog", dbPath, db, fileSystem, fileIO, warehouse)
+	return NewCatalogWithIO("icebox-sqlite-catalog", catalogURI, db, fileIO, cfg)
 }
 
 // NewCatalogWithIO creates a new SQLite-based catalog with custom file IO
-func NewCatalogWithIO(name, dbPath string, db *sql.DB, fileSystem FileSystemInterface, fileIO icebergio.IO, warehouse string) (*Catalog, error) {
+func NewCatalogWithIO(name, dbPath string, db *sql.DB, fileIO icebergio.IO, cfg *config.Config) (*Catalog, error) {
 	cat := &Catalog{
-		name:       name,
-		dbPath:     dbPath,
-		db:         db,
-		fileSystem: fileSystem,
-		fileIO:     fileIO,
-		warehouse:  warehouse,
+		name:   name,
+		dbPath: dbPath,
+		db:     db,
+		fileIO: fileIO,
+		config: cfg,
 	}
 
 	if err := cat.initializeDatabase(); err != nil {
@@ -719,17 +696,13 @@ func stringToNamespace(namespaceStr string) table.Identifier {
 }
 
 func (c *Catalog) defaultTableLocation(identifier table.Identifier) string {
-	if c.warehouse == "" {
-		return ""
+	// Return relative path since we don't manage warehouse storage
+	// The Storage package handles actual file operations
+	parts := make([]string, len(identifier))
+	for i, part := range identifier {
+		parts[i] = part
 	}
-
-	// Build path: warehouse/namespace/table_name
-	path := c.warehouse
-	for _, part := range identifier {
-		path = filepath.Join(path, part)
-	}
-
-	return "file://" + filepath.ToSlash(path)
+	return filepath.Join("data", filepath.Join(parts...))
 }
 
 func (c *Catalog) newMetadataLocation(identifier table.Identifier, version int) string {
@@ -738,20 +711,11 @@ func (c *Catalog) newMetadataLocation(identifier table.Identifier, version int) 
 		return ""
 	}
 
-	// Handle file:// prefix by removing it
-	tableLocation = strings.TrimPrefix(tableLocation, "file://")
+	// Build metadata path relative to table location
+	metadataPath := filepath.Join(tableLocation, "metadata", fmt.Sprintf("v%d.metadata.json", version))
 
-	// Remove file:// prefix for path operations
-	path := tableLocation
-	metadataPath := filepath.Join(path, "metadata", fmt.Sprintf("v%d.metadata.json", version))
-
-	// Only add file:// prefix for local filesystem, not for custom file IO
-	if _, isLocalFS := c.fileIO.(icebergio.LocalFS); isLocalFS {
-		return "file://" + filepath.ToSlash(metadataPath)
-	}
-
-	// For custom file IO (like memory filesystem), return path without file:// prefix
-	return filepath.ToSlash(metadataPath)
+	// Return relative path since we don't manage warehouse storage
+	return metadataPath
 }
 
 // getNextMetadataVersion determines the next version number for metadata files
@@ -782,33 +746,16 @@ func (c *Catalog) writeMetadataFile(metadata table.Metadata, metadataLocation st
 		return fmt.Errorf("failed to serialize metadata: %w", err)
 	}
 
-	// Handle file:// prefix by removing it for file operations
-	filePath := strings.TrimPrefix(metadataLocation, "file://")
-
-	// Use the catalog's filesystem if available
-	if c.fileSystem != nil {
-		file, err := c.fileSystem.Create(filePath)
-		if err != nil {
-			return fmt.Errorf("failed to create file %s: %w", filePath, err)
-		}
-		defer file.Close()
-
-		_, err = file.Write(metadataJSON)
-		if err != nil {
-			return fmt.Errorf("failed to write metadata to file %s: %w", filePath, err)
-		}
-		return nil
-	}
-
-	// Fallback to local file operations
-	return writeFile(filePath, metadataJSON)
+	// Use local file operations for catalog metadata
+	// Note: This method is for catalog metadata files, not warehouse data
+	return writeFile(metadataLocation, metadataJSON)
 }
 
 // Helper methods for metadata operations
 
 // writeFile writes data to a file (helper function)
 func writeFile(path string, data []byte) error {
-	if err := local.EnsureDir(filepath.Dir(path)); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
 

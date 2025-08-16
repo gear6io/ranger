@@ -203,15 +203,15 @@ func (e *ValidationError) Error() string {
 }
 
 // Catalog implements the iceberg-go catalog.Catalog interface using JSON file storage
+// This catalog only manages Iceberg catalog and metadata files, not data storage
 type Catalog struct {
-	name      string
-	uri       string
-	warehouse string
-	fileIO    icebergio.IO
-	mutex     sync.RWMutex // For concurrent access protection
-	logger    *log.Logger
-	cache     *catalogCache   // Optional caching layer
-	metrics   *CatalogMetrics // Operation metrics
+	name    string
+	uri     string
+	fileIO  icebergio.IO
+	mutex   sync.RWMutex // For concurrent access protection
+	logger  *log.Logger
+	cache   *catalogCache   // Optional caching layer
+	metrics *CatalogMetrics // Operation metrics
 }
 
 // catalogCache provides basic caching for frequently accessed data
@@ -376,13 +376,12 @@ func NewCatalog(cfg *config.Config) (*Catalog, error) {
 
 	// Create catalog with validated settings
 	catalog := &Catalog{
-		name:      "icebox-json-catalog",
-		uri:       cfg.GetCatalogURI(),
-		warehouse: cfg.GetStoragePath(),
-		fileIO:    icebergio.LocalFS{},
-		logger:    log.New(os.Stdout, "[JSON-CATALOG] ", log.LstdFlags),
-		cache:     newCatalogCache(5 * time.Minute), // 5 minute cache TTL
-		metrics:   &CatalogMetrics{},
+		name:    "icebox-json-catalog",
+		uri:     cfg.GetCatalogURI(),
+		fileIO:  icebergio.LocalFS{},
+		logger:  log.New(os.Stdout, "[JSON-CATALOG] ", log.LstdFlags),
+		cache:   newCatalogCache(5 * time.Minute), // 5 minute cache TTL
+		metrics: &CatalogMetrics{},
 	}
 
 	// Ensure catalog directory exists
@@ -447,8 +446,9 @@ func isValidURI(uri string) bool {
 	case strings.HasPrefix(uri, "s3://"):
 		return true
 	}
-	// TODO: Add support for more URI schemes like gcs://, azure://, etc.
-	return false
+
+	// Check if it's an absolute path or relative path
+	return filepath.IsAbs(uri) || strings.HasPrefix(uri, "./") || strings.HasPrefix(uri, "../")
 }
 
 // Name returns the catalog name
@@ -483,12 +483,13 @@ func (c *Catalog) NamespaceExists(ctx context.Context, namespace table.Identifie
 	return c.CheckNamespaceExists(ctx, namespace)
 }
 
-// resolveTableLocation resolves the table location based on the provided location or default warehouse structure
+// resolveTableLocation resolves the table location based on the provided location
 func (c *Catalog) resolveTableLocation(location string, namespace table.Identifier, tableName string) string {
 	if location != "" {
 		return location
 	}
-	return c.defaultTableLocation(append(namespace, tableName))
+	// Return a relative path since we don't manage warehouse storage
+	return filepath.Join("data", filepath.Join(namespace...), tableName)
 }
 
 // newTableMetadataFileLocation generates a new metadata file location for a table
@@ -890,7 +891,7 @@ func (c *Catalog) readCatalogData() (*CatalogData, string, error) {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 
-	file, err := os.Open(c.uri)
+	file, err := c.fileIO.Open(c.uri)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Return empty catalog data if file doesn't exist
@@ -1263,7 +1264,8 @@ func (c *Catalog) defaultViewLocation(identifier table.Identifier) string {
 	viewName := identifier[len(identifier)-1]
 
 	namespacePath := strings.Join(namespace, string(filepath.Separator))
-	return filepath.Join(c.warehouse, namespacePath, viewName)
+	// Return a relative path since we don't manage warehouse storage
+	return filepath.Join("data", namespacePath, viewName)
 }
 
 // newViewMetadataLocation generates a new metadata file location for a view
@@ -2285,7 +2287,8 @@ func (c *Catalog) defaultTableLocation(identifier table.Identifier) string {
 	tableName := catalog.TableNameFromIdent(identifier)
 
 	parts := append(namespace, tableName)
-	return filepath.Join(c.warehouse, "data", filepath.Join(parts...))
+	// Return a relative path since we don't manage warehouse storage
+	return filepath.Join("data", filepath.Join(parts...))
 }
 
 // newMetadataLocation creates a new metadata location for a table
@@ -2294,7 +2297,8 @@ func (c *Catalog) newMetadataLocation(identifier table.Identifier, version int) 
 	tableName := catalog.TableNameFromIdent(identifier)
 
 	parts := append(namespace, tableName)
-	metadataDir := filepath.Join(c.warehouse, "metadata", filepath.Join(parts...))
+	// Return a relative path since we don't manage warehouse storage
+	metadataDir := filepath.Join("metadata", filepath.Join(parts...))
 	filename := fmt.Sprintf("v%d.metadata.json", version)
 	return filepath.Join(metadataDir, filename)
 }
@@ -2412,7 +2416,8 @@ func (c *Catalog) getNextMetadataVersion(identifier table.Identifier) (int, erro
 
 	// Construct metadata directory path
 	parts := append(namespace, tableName)
-	metadataDir := filepath.Join(c.warehouse, "metadata", filepath.Join(parts...))
+	// Use relative path since we don't manage warehouse storage
+	metadataDir := filepath.Join("metadata", filepath.Join(parts...))
 
 	// Check if metadata directory exists
 	if _, err := os.Stat(metadataDir); os.IsNotExist(err) {

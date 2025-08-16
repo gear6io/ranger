@@ -13,13 +13,28 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TFMV/icebox/deprecated/config"
+	"github.com/TFMV/icebox/server/config"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/table"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// Helper function to create test config
+func createTestConfig(dataPath string) *config.Config {
+	return &config.Config{
+		Storage: config.StorageConfig{
+			DataPath: dataPath,
+			Catalog: config.CatalogConfig{
+				Type: "json",
+			},
+			Data: config.DataConfig{
+				Type: "filesystem",
+			},
+		},
+	}
+}
 
 func createTestCatalog(t *testing.T) (*Catalog, string) {
 	// Create temporary directory for test
@@ -31,16 +46,7 @@ func createTestCatalog(t *testing.T) (*Catalog, string) {
 		os.RemoveAll(tempDir)
 	})
 
-	cfg := &config.Config{
-		Name: "test-catalog",
-		Catalog: config.CatalogConfig{
-			Type: "json",
-			JSON: &config.JSONConfig{
-				URI:       filepath.Join(tempDir, "catalog.json"),
-				Warehouse: tempDir,
-			},
-		},
-	}
+	cfg := createTestConfig(tempDir)
 
 	catalog, err := NewCatalog(cfg)
 	require.NoError(t, err)
@@ -56,17 +62,20 @@ func TestNewCatalog(t *testing.T) {
 }
 
 func TestNewCatalogMissingConfig(t *testing.T) {
-	cfg := &config.Config{
-		Name: "test-catalog",
-		Catalog: config.CatalogConfig{
-			Type: "json",
-			// JSON config is nil
-		},
-	}
+	// Create temporary directory for test
+	tempDir2, err := os.MkdirTemp("", "json-catalog-test-missing")
+	require.NoError(t, err)
 
-	_, err := NewCatalog(cfg)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "JSON catalog configuration is required")
+	// Cleanup function
+	t.Cleanup(func() {
+		os.RemoveAll(tempDir2)
+	})
+
+	cfg := createTestConfig(tempDir2)
+
+	_, err2 := NewCatalog(cfg)
+	assert.Error(t, err2)
+	assert.Contains(t, err2.Error(), "JSON catalog configuration is required")
 }
 
 func TestCreateAndCheckNamespace(t *testing.T) {
@@ -753,18 +762,13 @@ func TestIndexConfigurationSupport(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test loading configuration from index
-	cfg := &config.Config{
-		// Minimal config - should load from index
-		Catalog: config.CatalogConfig{
-			Type: "json",
-		},
-	}
+	cfg := createTestConfig(tempDir)
 
 	catalog, err := NewCatalog(cfg)
 	require.NoError(t, err)
 	assert.Equal(t, "index-test-catalog", catalog.Name())
 	assert.Equal(t, filepath.Join(tempDir, "catalog.json"), catalog.uri)
-	assert.Equal(t, tempDir, catalog.warehouse)
+	// Note: warehouse field has been removed - catalogs only manage metadata
 
 	err = catalog.Close()
 	assert.NoError(t, err)
@@ -773,6 +777,11 @@ func TestIndexConfigurationSupport(t *testing.T) {
 // Additional comprehensive tests to reveal potential issues
 
 func TestConfigurationValidation(t *testing.T) {
+	// Create temporary directory for test
+	tempDir, err := os.MkdirTemp("", "config-validation-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
 	tests := []struct {
 		name        string
 		config      *config.Config
@@ -782,12 +791,13 @@ func TestConfigurationValidation(t *testing.T) {
 		{
 			name: "empty URI",
 			config: &config.Config{
-				Name: "test",
-				Catalog: config.CatalogConfig{
-					Type: "json",
-					JSON: &config.JSONConfig{
-						URI:       "",
-						Warehouse: "/tmp",
+				Storage: config.StorageConfig{
+					DataPath: tempDir,
+					Catalog: config.CatalogConfig{
+						Type: "json",
+					},
+					Data: config.DataConfig{
+						Type: "filesystem",
 					},
 				},
 			},
@@ -797,12 +807,13 @@ func TestConfigurationValidation(t *testing.T) {
 		{
 			name: "invalid URI format",
 			config: &config.Config{
-				Name: "test",
-				Catalog: config.CatalogConfig{
-					Type: "json",
-					JSON: &config.JSONConfig{
-						URI:       "invalid-path",
-						Warehouse: "/tmp",
+				Storage: config.StorageConfig{
+					DataPath: tempDir,
+					Catalog: config.CatalogConfig{
+						Type: "json",
+					},
+					Data: config.DataConfig{
+						Type: "filesystem",
 					},
 				},
 			},
@@ -812,12 +823,13 @@ func TestConfigurationValidation(t *testing.T) {
 		{
 			name: "valid file:// URI scheme",
 			config: &config.Config{
-				Name: "test",
-				Catalog: config.CatalogConfig{
-					Type: "json",
-					JSON: &config.JSONConfig{
-						URI:       "file://./catalog.json",
-						Warehouse: "/tmp",
+				Storage: config.StorageConfig{
+					DataPath: tempDir,
+					Catalog: config.CatalogConfig{
+						Type: "json",
+					},
+					Data: config.DataConfig{
+						Type: "filesystem",
 					},
 				},
 			},
@@ -826,12 +838,13 @@ func TestConfigurationValidation(t *testing.T) {
 		{
 			name: "valid s3:// URI scheme",
 			config: &config.Config{
-				Name: "test",
-				Catalog: config.CatalogConfig{
-					Type: "json",
-					JSON: &config.JSONConfig{
-						URI:       "s3://bucket/catalog.json",
-						Warehouse: "/tmp",
+				Storage: config.StorageConfig{
+					DataPath: tempDir,
+					Catalog: config.CatalogConfig{
+						Type: "json",
+					},
+					Data: config.DataConfig{
+						Type: "filesystem",
 					},
 				},
 			},
@@ -952,16 +965,7 @@ func TestCorruptedCatalogFile(t *testing.T) {
 	err = os.WriteFile(catalogPath, []byte(`{"invalid": json}`), 0644)
 	require.NoError(t, err)
 
-	cfg := &config.Config{
-		Name: "test-catalog",
-		Catalog: config.CatalogConfig{
-			Type: "json",
-			JSON: &config.JSONConfig{
-				URI:       catalogPath,
-				Warehouse: tempDir,
-			},
-		},
-	}
+	cfg := createTestConfig(tempDir)
 
 	catalog, err := NewCatalog(cfg)
 	require.NoError(t, err) // Catalog creation should succeed
@@ -1575,9 +1579,7 @@ func TestIndexConfigurationEdgeCases(t *testing.T) {
 		err = os.WriteFile(indexPath, []byte(`{invalid json}`), 0644)
 		require.NoError(t, err)
 
-		cfg := &config.Config{
-			Catalog: config.CatalogConfig{Type: "json"},
-		}
+		cfg := createTestConfig("")
 
 		_, err = NewCatalog(cfg)
 		assert.Error(t, err)
@@ -1608,9 +1610,7 @@ func TestIndexConfigurationEdgeCases(t *testing.T) {
 		err = os.WriteFile(indexPath, indexData, 0644)
 		require.NoError(t, err)
 
-		cfg := &config.Config{
-			Catalog: config.CatalogConfig{Type: "json"},
-		}
+		cfg := createTestConfig(tempDir)
 
 		catalog, err := NewCatalog(cfg)
 		require.NoError(t, err)

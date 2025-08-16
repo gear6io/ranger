@@ -9,30 +9,24 @@ import (
 	"github.com/TFMV/icebox/server/config"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewCatalog(t *testing.T) {
-	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
+	// Create test configuration
+	cfg := config.LoadDefaultConfig()
+	cfg.Storage.DataPath = "/tmp/icebox_test"
+	cfg.Storage.Catalog.Type = "rest"
 
-	cfg := createTestConfig(t)
-
+	// Create catalog
 	catalog, err := NewCatalog(cfg)
-	if err != nil {
-		t.Fatalf("Failed to create catalog: %v", err)
-	}
+	require.NoError(t, err)
 	defer catalog.Close()
 
-	if catalog.name != "icebox-rest-catalog" {
-		t.Errorf("Expected catalog name 'icebox-rest-catalog', got %s", catalog.name)
-	}
-
-	if catalog.restCatalog == nil {
-		t.Error("Expected REST catalog to be initialized")
-	}
-
-	if catalog.fileIO == nil {
-		t.Error("Expected FileIO to be initialized")
-	}
+	// Verify catalog properties
+	assert.Equal(t, "icebox-rest-catalog", catalog.Name())
+	assert.Equal(t, "rest", catalog.CatalogType().String())
 }
 
 func TestNewCatalogWithInvalidConfig(t *testing.T) {

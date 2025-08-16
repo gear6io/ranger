@@ -14,10 +14,18 @@ log:
 
 # Storage Configuration
 storage:
+  # Single data path for all storage
+  data_path: "./data"
+  
   # Catalog configuration
   catalog:
-    type: "json"           # Catalog type: file, sqlite, rest, etc.
-    uri: "file://./my-lakehouse/catalog.json"  # Catalog URI
+    type: "json"           # Catalog type: json, sqlite, rest
+    # Catalog will be automatically created at {data_path}/catalog/
   
-  config:
-    type: "memory"         # Storage type: memory, filesystem, s3 (path required only for filesystem and s3) 
+  # Data storage configuration
+  data:
+    type: "filesystem"     # Storage type: memory, filesystem, s3
+    # Data will be automatically stored at {data_path}/data/
+  
+  # Internal metadata is always SQLite (not configurable)
+  # Internal metadata will be automatically stored at {data_path}/.icebox/metadata.db 

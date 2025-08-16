@@ -17,9 +17,11 @@ type CatalogInterface interface {
 	Close() error
 }
 
-// NewCatalog creates a new catalog based on the configuration type
+// NewCatalog creates a new catalog based on the configuration
 func NewCatalog(cfg *config.Config) (CatalogInterface, error) {
-	switch cfg.GetCatalogType() {
+	catalogType := cfg.GetCatalogType()
+
+	switch catalogType {
 	case "sqlite":
 		return sqlite.NewCatalog(cfg)
 	case "rest":
@@ -27,6 +29,6 @@ func NewCatalog(cfg *config.Config) (CatalogInterface, error) {
 	case "json":
 		return json.NewCatalog(cfg)
 	default:
-		return nil, fmt.Errorf("unsupported catalog type: %s", cfg.GetCatalogType())
+		return nil, fmt.Errorf("unsupported catalog type: %s", catalogType)
 	}
 }

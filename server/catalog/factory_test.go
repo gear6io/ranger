@@ -3,10 +3,9 @@ package catalog
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"testing"
 
-	"github.com/TFMV/icebox/deprecated/config"
+	"github.com/TFMV/icebox/server/config"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/table"
@@ -14,8 +13,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Helper function to create test config
+func createTestConfig(catalogType, dataPath string) *config.Config {
+	return &config.Config{
+		Storage: config.StorageConfig{
+			DataPath: dataPath,
+			Catalog: config.CatalogConfig{
+				Type: catalogType,
+			},
+			Data: config.DataConfig{
+				Type: "filesystem",
+			},
+		},
+	}
+}
+
 func TestNewCatalogSQLite(t *testing.T) {
-	cfg := createTestSQLiteConfig(t)
+	// Create temporary directory for test
+	tempDir, err := os.MkdirTemp("", "sqlite-catalog-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	cfg := createTestConfig("sqlite", tempDir)
 
 	catalog, err := NewCatalog(cfg)
 	if err != nil {
@@ -23,11 +42,11 @@ func TestNewCatalogSQLite(t *testing.T) {
 	}
 	defer catalog.Close()
 
-	if catalog.Name() != cfg.Name {
-		t.Errorf("Expected catalog name %s, got %s", cfg.Name, catalog.Name())
+	if catalog.Name() != "icebox-sqlite-catalog" {
+		t.Errorf("Expected catalog name 'icebox-sqlite-catalog', got %s", catalog.Name())
 	}
 
-	if catalog.CatalogType() != "sql" {
+	if catalog.CatalogType() != icebergcatalog.SQL {
 		t.Errorf("Expected catalog type 'sql', got %s", catalog.CatalogType())
 	}
 }
@@ -35,7 +54,12 @@ func TestNewCatalogSQLite(t *testing.T) {
 func TestNewCatalogREST(t *testing.T) {
 	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
 
-	cfg := createTestRESTConfig(t)
+	// Create temporary directory for test
+	tempDir, err := os.MkdirTemp("", "rest-catalog-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	cfg := createTestConfig("rest", tempDir)
 
 	catalog, err := NewCatalog(cfg)
 	if err != nil {
@@ -43,24 +67,24 @@ func TestNewCatalogREST(t *testing.T) {
 	}
 	defer catalog.Close()
 
-	if catalog.Name() != cfg.Name {
-		t.Errorf("Expected catalog name %s, got %s", cfg.Name, catalog.Name())
+	if catalog.Name() != "icebox-rest-catalog" {
+		t.Errorf("Expected catalog name 'icebox-rest-catalog', got %s", catalog.Name())
 	}
 
-	if catalog.CatalogType() != "rest" {
+	if catalog.CatalogType() != icebergcatalog.REST {
 		t.Errorf("Expected catalog type 'rest', got %s", catalog.CatalogType())
 	}
 }
 
 func TestNewCatalogUnsupportedType(t *testing.T) {
-	cfg := &config.Config{
-		Name: "test-catalog",
-		Catalog: config.CatalogConfig{
-			Type: "unsupported",
-		},
-	}
+	// Create temporary directory for test
+	tempDir, err := os.MkdirTemp("", "unsupported-catalog-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
 
-	_, err := NewCatalog(cfg)
+	cfg := createTestConfig("unsupported", tempDir)
+
+	_, err = NewCatalog(cfg)
 	if err == nil {
 		t.Error("Expected error for unsupported catalog type")
 	}
@@ -73,13 +97,7 @@ func TestNewCatalogUnsupportedType(t *testing.T) {
 
 func TestNewCatalogWithMissingConfig(t *testing.T) {
 	// Test SQLite catalog with missing config
-	sqliteConfig := &config.Config{
-		Name: "test-catalog",
-		Catalog: config.CatalogConfig{
-			Type: "sqlite",
-			// No SQLite config provided
-		},
-	}
+	sqliteConfig := createTestConfig("sqlite", "")
 
 	_, err := NewCatalog(sqliteConfig)
 	if err == nil {
@@ -87,13 +105,7 @@ func TestNewCatalogWithMissingConfig(t *testing.T) {
 	}
 
 	// Test REST catalog with missing config
-	restConfig := &config.Config{
-		Name: "test-catalog",
-		Catalog: config.CatalogConfig{
-			Type: "rest",
-			// No REST config provided
-		},
-	}
+	restConfig := createTestConfig("rest", "")
 
 	_, err = NewCatalog(restConfig)
 	if err == nil {
@@ -107,21 +119,12 @@ func TestNewCatalogJSON(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
-	cfg := &config.Config{
-		Name: "test-json-catalog",
-		Catalog: config.CatalogConfig{
-			Type: "json",
-			JSON: &config.JSONConfig{
-				URI:       filepath.Join(tempDir, "catalog.json"),
-				Warehouse: tempDir,
-			},
-		},
-	}
+	cfg := createTestConfig("json", tempDir)
 
 	catalog, err := NewCatalog(cfg)
 	require.NoError(t, err)
 	assert.NotNil(t, catalog)
-	assert.Equal(t, "test-json-catalog", catalog.Name())
+	assert.Equal(t, "icebox-json-catalog", catalog.Name())
 	assert.Equal(t, icebergcatalog.Hive, catalog.CatalogType())
 
 	// Test basic functionality
@@ -138,66 +141,4 @@ func TestNewCatalogJSON(t *testing.T) {
 	// Cleanup
 	err = catalog.Close()
 	assert.NoError(t, err)
-}
-
-// Helper functions
-
-func createTestSQLiteConfig(t *testing.T) *config.Config {
-	tempDir, err := os.MkdirTemp("", "icebox-catalog-factory-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-
-	cfg := &config.Config{
-		Name: "test-sqlite-catalog",
-		Catalog: config.CatalogConfig{
-			Type: "sqlite",
-			SQLite: &config.SQLiteConfig{
-				Path: filepath.Join(tempDir, "catalog.db"),
-			},
-		},
-		Storage: config.StorageConfig{
-			Type: "fs",
-			FileSystem: &config.FileSystemConfig{
-				RootPath: filepath.Join(tempDir, "data"),
-			},
-		},
-	}
-
-	// Set up cleanup
-	t.Cleanup(func() {
-		os.RemoveAll(tempDir)
-	})
-
-	return cfg
-}
-
-func createTestRESTConfig(t *testing.T) *config.Config {
-	tempDir, err := os.MkdirTemp("", "icebox-catalog-factory-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-
-	cfg := &config.Config{
-		Name: "test-rest-catalog",
-		Catalog: config.CatalogConfig{
-			Type: "rest",
-			REST: &config.RESTConfig{
-				URI: "http://localhost:8181",
-			},
-		},
-		Storage: config.StorageConfig{
-			Type: "fs",
-			FileSystem: &config.FileSystemConfig{
-				RootPath: filepath.Join(tempDir, "data"),
-			},
-		},
-	}
-
-	// Set up cleanup
-	t.Cleanup(func() {
-		os.RemoveAll(tempDir)
-	})
-
-	return cfg
 }

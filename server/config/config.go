@@ -27,20 +27,19 @@ type LogConfig struct {
 
 // StorageConfig represents storage configuration
 type StorageConfig struct {
-	Catalog CatalogConfig `yaml:"catalog"`
-	Config  DataConfig    `yaml:"config"`
+	DataPath string        `yaml:"data_path"`
+	Catalog  CatalogConfig `yaml:"catalog"`
+	Data     DataConfig    `yaml:"data"`
 }
 
 // CatalogConfig represents catalog configuration
 type CatalogConfig struct {
 	Type string `yaml:"type"`
-	URI  string `yaml:"uri"`
 }
 
 // DataConfig represents data storage configuration
 type DataConfig struct {
-	Type string `yaml:"type"`           // memory, filesystem, s3
-	Path string `yaml:"path,omitempty"` // optional, only required for filesystem and s3
+	Type string `yaml:"type"` // memory, filesystem, s3
 }
 
 // LoadDefaultConfig returns a default configuration
@@ -57,12 +56,12 @@ func LoadDefaultConfig() *Config {
 			Cleanup:    true, // Cleanup log file on startup by default
 		},
 		Storage: StorageConfig{
+			DataPath: "./data", // Default data path
 			Catalog: CatalogConfig{
-				Type: "file",
-				URI:  "file:///var/lib/icebox/catalog",
+				Type: "json",
 			},
-			Config: DataConfig{
-				Type: "memory", // Default to memory storage
+			Data: DataConfig{
+				Type: "filesystem", // Default to filesystem storage
 			},
 		},
 	}
@@ -84,6 +83,11 @@ func LoadConfig(filename string) (*Config, error) {
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
+
+	// Log the data path being used
+	fmt.Printf("📁 Using data path: %s\n", config.GetStoragePath())
+	fmt.Printf("🗄️  Catalog type: %s\n", config.GetCatalogType())
+	fmt.Printf("💾 Storage type: %s\n", config.GetStorageType())
 
 	return &config, nil
 }
@@ -122,8 +126,13 @@ func (s *StorageConfig) Validate() error {
 	}
 
 	// Validate data storage configuration
-	if err := s.Config.Validate(); err != nil {
+	if err := s.Data.Validate(); err != nil {
 		return fmt.Errorf("data storage validation failed: %w", err)
+	}
+
+	// Validate data_path
+	if s.DataPath == "" {
+		return fmt.Errorf("data_path is required in storage configuration")
 	}
 
 	return nil
@@ -135,10 +144,6 @@ func (c *CatalogConfig) Validate() error {
 		return fmt.Errorf("catalog type is required")
 	}
 
-	if c.URI == "" {
-		return fmt.Errorf("catalog URI is required")
-	}
-
 	return nil
 }
 
@@ -148,11 +153,12 @@ func (d *DataConfig) Validate() error {
 		return fmt.Errorf("storage type is required")
 	}
 
-	// Path is required for filesystem and S3 storage types
-	if d.Type == "filesystem" || d.Type == "s3" {
-		if d.Path == "" {
-			return fmt.Errorf("path is required for %s storage type", d.Type)
-		}
+	// Validate storage type
+	switch d.Type {
+	case "memory", "filesystem", "s3":
+		// All valid types
+	default:
+		return fmt.Errorf("unsupported storage type: %s", d.Type)
 	}
 
 	return nil
@@ -215,20 +221,35 @@ func (c *Config) IsNativeServerEnabled() bool {
 
 // GetStorageType returns the storage type
 func (c *Config) GetStorageType() string {
-	return c.Storage.Config.Type
+	if c.Storage.Data.Type == "" {
+		return "filesystem" // Default to filesystem
+	}
+	return c.Storage.Data.Type
+}
+
+// GetCatalogURI returns the catalog URI based on data path and catalog type
+func (c *Config) GetCatalogURI() string {
+	dataPath := c.GetStoragePath()
+	if dataPath == "" {
+		return ""
+	}
+
+	switch c.GetCatalogType() {
+	case "json":
+		return fmt.Sprintf("file://%s/catalog/catalog.json", dataPath)
+	case "sqlite":
+		return fmt.Sprintf("file://%s/catalog/catalog.db", dataPath)
+	default:
+		return ""
+	}
 }
 
 // GetStoragePath returns the storage path
 func (c *Config) GetStoragePath() string {
-	return c.Storage.Config.Path
+	return c.Storage.DataPath
 }
 
 // GetCatalogType returns the catalog type
 func (c *Config) GetCatalogType() string {
 	return c.Storage.Catalog.Type
-}
-
-// GetCatalogURI returns the catalog URI
-func (c *Config) GetCatalogURI() string {
-	return c.Storage.Catalog.URI
 }

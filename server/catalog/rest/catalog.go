@@ -45,11 +45,8 @@ func NewCatalog(cfg *config.Config) (*Catalog, error) {
 	// Build options for the iceberg-go REST catalog
 	var opts []icebergrest.Option
 
-	// Add warehouse location if storage path is provided
-	storagePath := cfg.GetStoragePath()
-	if storagePath != "" {
-		opts = append(opts, icebergrest.WithWarehouseLocation(storagePath))
-	}
+	// Note: Warehouse location is managed by the Storage package, not the catalog
+	// The catalog only manages Iceberg catalog and metadata files
 
 	// Create the REST catalog with required parameters
 	restCatalog, err := icebergrest.NewCatalog(context.Background(), "icebox-rest-catalog", baseURL.String(), opts...)

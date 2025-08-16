@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -333,9 +334,37 @@ func (e *Engine) buildInsertSQL(tableName string, data [][]interface{}) string {
 
 // serializeTableSchema converts TableSchema to JSON bytes
 func (e *Engine) serializeTableSchema(schema *parser.TableSchema) []byte {
-	// Convert to a simple JSON format
-	jsonStr := fmt.Sprintf(`{"columns":%d}`, len(schema.ColumnDefinitions))
-	return []byte(jsonStr)
+	// Create proper schema metadata
+	schemaData := map[string]interface{}{
+		"type":   "struct",
+		"fields": []map[string]interface{}{},
+	}
+
+	// Add column definitions
+	for colName, colDef := range schema.ColumnDefinitions {
+		field := map[string]interface{}{
+			"name":     colName,
+			"type":     colDef.DataType,
+			"nullable": colDef.Nullable,
+		}
+
+		// Add length if specified
+		if colDef.Length > 0 {
+			field["length"] = colDef.Length
+		}
+
+		schemaData["fields"] = append(schemaData["fields"].([]map[string]interface{}), field)
+	}
+
+	// Convert to JSON
+	jsonData, err := json.Marshal(schemaData)
+	if err != nil {
+		// Fallback to simple format if marshaling fails
+		jsonStr := fmt.Sprintf(`{"columns":%d}`, len(schema.ColumnDefinitions))
+		return []byte(jsonStr)
+	}
+
+	return jsonData
 }
 
 // deserializeTableSchema converts JSON bytes to TableSchema

@@ -14,8 +14,9 @@ import (
 func TestEngineWithStorage(t *testing.T) {
 	// Create test configuration
 	cfg := config.LoadDefaultConfig()
-	cfg.Storage.Config.Type = "memory" // Use memory storage for testing
-	cfg.Storage.Catalog.Type = "json"  // Use JSON catalog for testing
+	cfg.Storage.DataPath = "/tmp/icebox_test"
+	cfg.Storage.Data.Type = "memory"  // Use memory storage for testing
+	cfg.Storage.Catalog.Type = "json" // Use JSON catalog for testing
 
 	// Create logger
 	logger := zerolog.New(zerolog.NewConsoleWriter())
@@ -99,7 +100,8 @@ func TestEngineWithStorage(t *testing.T) {
 func TestEngineClose(t *testing.T) {
 	// Create test configuration
 	cfg := config.LoadDefaultConfig()
-	cfg.Storage.Config.Type = "memory"
+	cfg.Storage.DataPath = "/tmp/icebox_test"
+	cfg.Storage.Data.Type = "memory"
 	cfg.Storage.Catalog.Type = "json"
 
 	// Create logger
