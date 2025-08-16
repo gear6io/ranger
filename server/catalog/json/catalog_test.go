@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TFMV/icebox/server/catalog/shared"
 	"github.com/TFMV/icebox/server/config"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
@@ -20,6 +21,45 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// MockPathManager implements shared.PathManager for testing
+var _ shared.PathManager = (*MockPathManager)(nil)
+
+type MockPathManager struct {
+	basePath string
+}
+
+func (m *MockPathManager) GetCatalogURI(catalogType string) string {
+	return filepath.Join(m.basePath, "catalog", "catalog.json")
+}
+
+func (m *MockPathManager) GetTableMetadataPath(namespace []string, tableName string) string {
+	nsPath := strings.Join(namespace, "/")
+	return filepath.Join(m.basePath, "tables", nsPath, tableName, "metadata")
+}
+
+func (m *MockPathManager) GetTableDataPath(namespace []string, tableName string) string {
+	nsPath := strings.Join(namespace, "/")
+	return filepath.Join(m.basePath, "tables", nsPath, tableName, "data")
+}
+
+func (m *MockPathManager) GetViewMetadataPath(namespace []string, viewName string) string {
+	nsPath := strings.Join(namespace, "/")
+	return filepath.Join(m.basePath, "views", nsPath, viewName, "metadata")
+}
+
+func (m *MockPathManager) GetNamespacePath(namespace []string) string {
+	nsPath := strings.Join(namespace, "/")
+	return filepath.Join(m.basePath, "namespaces", nsPath)
+}
+
+func (m *MockPathManager) GetMetadataDir() string {
+	return filepath.Join(m.basePath, "metadata")
+}
+
+func (m *MockPathManager) GetDataDir() string {
+	return filepath.Join(m.basePath, "data")
+}
 
 // Helper function to create test config
 func createTestConfig(dataPath string) *config.Config {
@@ -47,8 +87,9 @@ func createTestCatalog(t *testing.T) (*Catalog, string) {
 	})
 
 	cfg := createTestConfig(tempDir)
+	pathManager := &MockPathManager{basePath: tempDir}
 
-	catalog, err := NewCatalog(cfg)
+	catalog, err := NewCatalog(cfg, pathManager)
 	require.NoError(t, err)
 
 	return catalog, tempDir
@@ -57,7 +98,7 @@ func createTestCatalog(t *testing.T) (*Catalog, string) {
 func TestNewCatalog(t *testing.T) {
 	catalog, _ := createTestCatalog(t)
 	assert.NotNil(t, catalog)
-	assert.Equal(t, "test-catalog", catalog.Name())
+	assert.Equal(t, "icebox-json-catalog", catalog.Name())
 	assert.Equal(t, icebergcatalog.Hive, catalog.CatalogType())
 }
 
@@ -71,11 +112,23 @@ func TestNewCatalogMissingConfig(t *testing.T) {
 		os.RemoveAll(tempDir2)
 	})
 
-	cfg := createTestConfig(tempDir2)
+	// Create config with invalid catalog type
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			DataPath: tempDir2,
+			Catalog: config.CatalogConfig{
+				Type: "invalid", // Invalid catalog type
+			},
+			Data: config.DataConfig{
+				Type: "filesystem",
+			},
+		},
+	}
+	pathManager := &MockPathManager{basePath: tempDir2}
 
-	_, err2 := NewCatalog(cfg)
+	_, err2 := NewCatalog(cfg, pathManager)
 	assert.Error(t, err2)
-	assert.Contains(t, err2.Error(), "JSON catalog configuration is required")
+	assert.Contains(t, err2.Error(), "expected catalog type 'json', got 'invalid'")
 }
 
 func TestCreateAndCheckNamespace(t *testing.T) {
@@ -480,14 +533,14 @@ func TestCatalogFileStructure(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify catalog.json was created
-	catalogPath := filepath.Join(tempDir, "catalog.json")
+	catalogPath := filepath.Join(tempDir, "catalog", "catalog.json")
 	assert.FileExists(t, catalogPath)
 
 	// Read and verify the JSON structure
 	data, _, err := catalog.readCatalogData()
 	require.NoError(t, err)
 
-	assert.Equal(t, "test-catalog", data.CatalogName)
+	assert.Equal(t, "icebox-json-catalog", data.CatalogName)
 	assert.Contains(t, data.Namespaces, "test_namespace")
 	assert.Equal(t, "test", data.Namespaces["test_namespace"].Properties["description"])
 	assert.Contains(t, data.Tables, "test_namespace.test_table")
@@ -763,11 +816,12 @@ func TestIndexConfigurationSupport(t *testing.T) {
 
 	// Test loading configuration from index
 	cfg := createTestConfig(tempDir)
+	pathManager := &MockPathManager{basePath: tempDir}
 
-	catalog, err := NewCatalog(cfg)
+	catalog, err := NewCatalog(cfg, pathManager)
 	require.NoError(t, err)
-	assert.Equal(t, "index-test-catalog", catalog.Name())
-	assert.Equal(t, filepath.Join(tempDir, "catalog.json"), catalog.uri)
+	assert.Equal(t, "icebox-json-catalog", catalog.Name())
+	assert.Equal(t, filepath.Join(tempDir, "catalog", "catalog.json"), catalog.uri)
 	// Note: warehouse field has been removed - catalogs only manage metadata
 
 	err = catalog.Close()
@@ -789,39 +843,7 @@ func TestConfigurationValidation(t *testing.T) {
 		errorMsg    string
 	}{
 		{
-			name: "empty URI",
-			config: &config.Config{
-				Storage: config.StorageConfig{
-					DataPath: tempDir,
-					Catalog: config.CatalogConfig{
-						Type: "json",
-					},
-					Data: config.DataConfig{
-						Type: "filesystem",
-					},
-				},
-			},
-			expectError: true,
-			errorMsg:    "catalog URI is required",
-		},
-		{
-			name: "invalid URI format",
-			config: &config.Config{
-				Storage: config.StorageConfig{
-					DataPath: tempDir,
-					Catalog: config.CatalogConfig{
-						Type: "json",
-					},
-					Data: config.DataConfig{
-						Type: "filesystem",
-					},
-				},
-			},
-			expectError: true,
-			errorMsg:    "catalog URI must be a valid URI scheme (file://, s3://), absolute path, or relative path",
-		},
-		{
-			name: "valid file:// URI scheme",
+			name: "valid json catalog",
 			config: &config.Config{
 				Storage: config.StorageConfig{
 					DataPath: tempDir,
@@ -836,54 +858,27 @@ func TestConfigurationValidation(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "valid s3:// URI scheme",
+			name: "invalid catalog type",
 			config: &config.Config{
 				Storage: config.StorageConfig{
 					DataPath: tempDir,
 					Catalog: config.CatalogConfig{
-						Type: "json",
+						Type: "invalid",
 					},
 					Data: config.DataConfig{
 						Type: "filesystem",
 					},
 				},
 			},
-			expectError: false,
-		},
-		{
-			name: "invalid warehouse path",
-			config: &config.Config{
-				Name: "test",
-				Catalog: config.CatalogConfig{
-					Type: "json",
-					JSON: &config.JSONConfig{
-						URI:       "./catalog.json",
-						Warehouse: "invalid-warehouse",
-					},
-				},
-			},
 			expectError: true,
-			errorMsg:    "warehouse path must be an absolute path or relative path",
-		},
-		{
-			name: "valid relative paths",
-			config: &config.Config{
-				Name: "test",
-				Catalog: config.CatalogConfig{
-					Type: "json",
-					JSON: &config.JSONConfig{
-						URI:       "./catalog.json",
-						Warehouse: "./warehouse",
-					},
-				},
-			},
-			expectError: false,
+			errorMsg:    "expected catalog type 'json', got 'invalid'",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewCatalog(tt.config)
+			pathManager := &MockPathManager{basePath: tempDir}
+			_, err := NewCatalog(tt.config, pathManager)
 			if tt.expectError {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errorMsg)
@@ -959,15 +954,21 @@ func TestCorruptedCatalogFile(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
-	catalogPath := filepath.Join(tempDir, "catalog.json")
+	// Create the catalog directory structure
+	catalogDir := filepath.Join(tempDir, "catalog")
+	err = os.MkdirAll(catalogDir, 0755)
+	require.NoError(t, err)
+
+	catalogPath := filepath.Join(catalogDir, "catalog.json")
 
 	// Create corrupted JSON file
 	err = os.WriteFile(catalogPath, []byte(`{"invalid": json}`), 0644)
 	require.NoError(t, err)
 
 	cfg := createTestConfig(tempDir)
+	pathManager := &MockPathManager{basePath: tempDir}
 
-	catalog, err := NewCatalog(cfg)
+	catalog, err := NewCatalog(cfg, pathManager)
 	require.NoError(t, err) // Catalog creation should succeed
 
 	// Reading corrupted data should fail
@@ -1568,53 +1569,31 @@ func TestErrorRecovery(t *testing.T) {
 }
 
 func TestIndexConfigurationEdgeCases(t *testing.T) {
-	// Test with malformed index file
-	t.Run("malformed index file", func(t *testing.T) {
-		iceboxDir := filepath.Join(".", ".icebox")
-		err := os.MkdirAll(iceboxDir, 0755)
-		require.NoError(t, err)
-		defer os.RemoveAll(iceboxDir)
-
-		indexPath := filepath.Join(iceboxDir, "index")
-		err = os.WriteFile(indexPath, []byte(`{invalid json}`), 0644)
-		require.NoError(t, err)
-
+	// Test catalog creation with empty base path (should still work)
+	t.Run("empty base path", func(t *testing.T) {
 		cfg := createTestConfig("")
+		pathManager := &MockPathManager{basePath: ""}
 
-		_, err = NewCatalog(cfg)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to parse .icebox/index")
+		catalog, err := NewCatalog(cfg, pathManager)
+		require.NoError(t, err)
+		assert.Equal(t, "icebox-json-catalog", catalog.Name())
+
+		err = catalog.Close()
+		assert.NoError(t, err)
 	})
 
-	// Test with missing properties in index
-	t.Run("missing properties in index", func(t *testing.T) {
-		iceboxDir := filepath.Join(".", ".icebox")
-		err := os.MkdirAll(iceboxDir, 0755)
-		require.NoError(t, err)
-		defer os.RemoveAll(iceboxDir)
-
-		tempDir, err := os.MkdirTemp("", "index-missing-props-test")
+	// Test catalog creation with relative base path
+	t.Run("relative base path", func(t *testing.T) {
+		tempDir, err := os.MkdirTemp("", "relative-path-test")
 		require.NoError(t, err)
 		defer os.RemoveAll(tempDir)
 
-		indexConfig := map[string]interface{}{
-			"catalog_name": "test-catalog",
-			"catalog_uri":  filepath.Join(tempDir, "catalog.json"),
-			// Missing properties
-		}
-
-		indexData, err := json.Marshal(indexConfig)
-		require.NoError(t, err)
-
-		indexPath := filepath.Join(iceboxDir, "index")
-		err = os.WriteFile(indexPath, indexData, 0644)
-		require.NoError(t, err)
-
 		cfg := createTestConfig(tempDir)
+		pathManager := &MockPathManager{basePath: tempDir}
 
-		catalog, err := NewCatalog(cfg)
+		catalog, err := NewCatalog(cfg, pathManager)
 		require.NoError(t, err)
-		assert.Equal(t, "test-catalog", catalog.Name())
+		assert.Equal(t, "icebox-json-catalog", catalog.Name())
 
 		err = catalog.Close()
 		assert.NoError(t, err)

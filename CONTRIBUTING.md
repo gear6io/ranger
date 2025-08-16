@@ -83,6 +83,33 @@ go build -o icebox cmd/icebox/main.go
 go test ./...
 ```
 
+### Pre-commit Hook
+
+To ensure code quality, we provide a pre-commit hook that runs automatically before each commit. The hook performs the following checks:
+
+- **Code formatting**: Ensures Go code is properly formatted
+- **Code quality**: Runs `go vet` to catch common mistakes
+- **Linting**: Runs `golangci-lint` if available
+- **Dependencies**: Verifies `go.mod` and `go.sum` are clean
+
+**Note**: The hook focuses on code quality and formatting. Full testing is handled by the CI pipeline to keep commits fast and focused.
+
+#### Installation
+
+Install the pre-commit hook using the Makefile:
+```bash
+make install-hooks
+```
+
+#### Usage
+
+Once installed, the hook runs automatically on every commit. If any checks fail, the commit will be blocked until the issues are resolved.
+
+To manually run the same checks:
+```bash
+make pre-commit
+```
+
 ## Coding Standards
 
 ### Go

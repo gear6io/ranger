@@ -225,6 +225,11 @@ quick-test: build-server run-native-client ## Build server and test with native 
 dev-setup: deps mod-tidy fmt vet ## Setup development environment
 	@echo "✅ Development environment ready"
 
+.PHONY: install-hooks
+install-hooks: ## Install git pre-commit hooks
+	@echo "Installing git pre-commit hooks..."
+	@./scripts/install-hooks.sh
+
 .PHONY: pre-commit
 pre-commit: fmt vet test mod-tidy ## Run pre-commit checks
 	@echo "✅ Pre-commit checks passed"
