@@ -1,0 +1,153 @@
+name: Conventional Commits Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: ["master"]
+
+jobs:
+  validate-commits:
+    name: Validate Commit Messages
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history for commit validation
+
+      - name: Validate PR title
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "Validating PR title: ${{ github.event.pull_request.title }}"
+          
+          # Check if PR title follows conventional commit format
+          if ! echo "${{ github.event.pull_request.title }}" | grep -qE "^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?: .+"; then
+            echo "❌ PR title must follow conventional commit format:"
+            echo "   Format: <type>(<scope>): <description>"
+            echo "   Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+            echo "   Examples:"
+            echo "     feat: add new user authentication"
+            echo "     fix(auth): resolve login issue"
+            echo "     chore: update dependencies"
+            echo "     docs: update README"
+            echo ""
+            echo "   Current title: '${{ github.event.pull_request.title }}'"
+            exit 1
+          fi
+          
+          echo "✅ PR title follows conventional commit format"
+
+      - name: Validate commit messages
+        run: |
+          echo "Validating commit messages..."
+          
+          # Get commits to validate
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # For PRs, validate commits since base branch
+            COMMITS=$(git log --oneline ${{ github.event.pull_request.base.sha }..HEAD)
+            echo "Validating commits in PR..."
+          else
+            # For pushes, validate the latest commit
+            COMMITS=$(git log --oneline -1)
+            echo "Validating latest commit..."
+          fi
+          
+          # Conventional commit regex pattern
+          PATTERN="^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?: .+"
+          
+          # Check each commit
+          INVALID_COMMITS=""
+          while IFS= read -r commit; do
+            # Extract commit message (skip hash)
+            MESSAGE=$(echo "$commit" | sed 's/^[a-f0-9]* //')
+            
+            if ! echo "$MESSAGE" | grep -qE "$PATTERN"; then
+              INVALID_COMMITS="$INVALID_COMMITS\n$commit"
+            fi
+          done <<< "$COMMITS"
+          
+          if [ -n "$INVALID_COMMITS" ]; then
+            echo "❌ Found commits that don't follow conventional commit format:"
+            echo -e "$INVALID_COMMITS"
+            echo ""
+            echo "All commits must follow the format: <type>(<scope>): <description>"
+            echo "Valid types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+            echo ""
+            echo "Examples:"
+            echo "  feat: add new feature"
+            echo "  fix(auth): resolve authentication bug"
+            echo "  chore: update dependencies"
+            echo "  docs: update documentation"
+            echo "  test: add unit tests"
+            echo "  ci: update GitHub Actions"
+            echo "  style: format code"
+            echo "  refactor: restructure code"
+            echo "  perf: improve performance"
+            echo "  build: update build configuration"
+            echo "  revert: revert previous change"
+            exit 1
+          fi
+          
+          echo "✅ All commit messages follow conventional commit format"
+
+      - name: Check commit message length
+        run: |
+          echo "Checking commit message length..."
+          
+          # Get commits to validate
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            COMMITS=$(git log --oneline ${{ github.event.pull_request.base.sha }..HEAD)
+          else
+            COMMITS=$(git log --oneline -1)
+          fi
+          
+          # Check each commit message length
+          LONG_COMMITS=""
+          while IFS= read -r commit; do
+            MESSAGE=$(echo "$commit" | sed 's/^[a-f0-9]* //')
+            
+            # Check if message is too long (GitHub recommends < 72 chars for first line)
+            if [ ${#MESSAGE} -gt 72 ]; then
+              LONG_COMMITS="$LONG_COMMITS\n$commit (${#MESSAGE} chars)"
+            fi
+          done <<< "$COMMITS"
+          
+          if [ -n "$LONG_COMMITS" ]; then
+            echo "⚠️  Found commits with long messages (>72 chars):"
+            echo -e "$LONG_COMMITS"
+            echo ""
+            echo "Consider breaking long commit messages into multiple lines:"
+            echo "  <type>(<scope>): <short description>"
+            echo "  "
+            echo "  <detailed description if needed>"
+            echo ""
+            echo "Note: This is a warning, not an error."
+          else
+            echo "✅ All commit messages are appropriately sized"
+          fi
+
+      - name: Validate merge commits
+        run: |
+          echo "Checking for merge commits..."
+          
+          # Get commits to validate
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            COMMITS=$(git log --oneline ${{ github.event_pull_request.base.sha }..HEAD)
+          else
+            COMMITS=$(git log --oneline -1)
+          fi
+          
+          # Check for merge commits
+          MERGE_COMMITS=$(echo "$COMMITS" | grep "^[a-f0-9]* Merge")
+          
+          if [ -n "$MERGE_COMMITS" ]; then
+            echo "⚠️  Found merge commits:"
+            echo "$MERGE_COMMITS"
+            echo ""
+            echo "Note: Merge commits are allowed but should be used sparingly."
+            echo "Consider using squash and merge for cleaner history."
+          else
+            echo "✅ No merge commits found"
+          fi

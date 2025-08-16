@@ -83,6 +83,8 @@ go build -o icebox cmd/icebox/main.go
 go test ./...
 ```
 
+## Git Hooks
+
 ### Pre-commit Hook
 
 To ensure code quality, we provide a pre-commit hook that runs automatically before each commit. The hook performs the following checks:
@@ -94,20 +96,66 @@ To ensure code quality, we provide a pre-commit hook that runs automatically bef
 
 **Note**: The hook focuses on code quality and formatting. Full testing is handled by the CI pipeline to keep commits fast and focused.
 
+### Commit Message Hook
+
+We enforce conventional commit format to maintain a clean and consistent commit history. The commit-msg hook validates:
+
+- **Conventional commit format**: Must start with `feat:`, `fix:`, `docs:`, etc.
+- **Message length**: First line should be under 72 characters
+- **Scope support**: Optional scope in parentheses like `feat(auth):`
+
 #### Installation
 
-Install the pre-commit hook using the Makefile:
+Install the git hooks using the Makefile:
 ```bash
 make install-hooks
 ```
 
 #### Usage
 
-Once installed, the hook runs automatically on every commit. If any checks fail, the commit will be blocked until the issues are resolved.
+Once installed, both hooks run automatically:
+- **pre-commit**: Before each commit (code quality checks)
+- **commit-msg**: When writing commit messages (format validation)
+
+If any checks fail, the commit will be blocked until the issues are resolved.
 
 To manually run the same checks:
 ```bash
 make pre-commit
+```
+
+### Conventional Commit Format
+
+All commits must follow this format:
+```
+<type>(<scope>): <description>
+
+[optional body]
+
+[optional footer]
+```
+
+**Types:**
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation changes
+- `style`: Code style changes (formatting, etc.)
+- `refactor`: Code refactoring
+- `perf`: Performance improvements
+- `test`: Adding or updating tests
+- `build`: Build system changes
+- `ci`: CI/CD changes
+- `chore`: Maintenance tasks
+- `revert`: Revert previous commit
+
+**Examples:**
+```bash
+feat: add user authentication system
+fix(auth): resolve login timeout issue
+docs: update API documentation
+chore: update dependencies
+ci: add conventional commit validation
+test: add unit tests for auth module
 ```
 
 ## Coding Standards
