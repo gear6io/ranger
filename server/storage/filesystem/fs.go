@@ -12,11 +12,19 @@ import (
 	"time"
 )
 
+// StorageType constant for this storage engine
+const Type = "FILESYSTEM"
+
 // FileStorage implements an in-memory file system for testing and CI
 type FileStorage struct {
 	files map[string]*file
 	dirs  map[string]bool
 	mu    sync.RWMutex
+}
+
+// GetStorageType returns the storage type identifier
+func (fs *FileStorage) GetStorageType() string {
+	return Type
 }
 
 // memoryFile represents a file stored in memory

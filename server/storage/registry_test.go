@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/TFMV/icebox/server/config"
+	"github.com/TFMV/icebox/server/storage/filesystem"
+	"github.com/TFMV/icebox/server/storage/memory"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,12 +26,12 @@ func TestStorageEngineRegistry(t *testing.T) {
 	assert.GreaterOrEqual(t, len(engines), 2, "Should have at least filesystem and memory engines")
 
 	// Test filesystem engine
-	fsEngine, err := registry.GetEngine(FILESYSTEM)
+	fsEngine, err := registry.GetEngine(filesystem.Type)
 	require.NoError(t, err)
 	assert.NotNil(t, fsEngine)
 
 	// Test memory engine
-	memEngine, err := registry.GetEngine(MEMORY)
+	memEngine, err := registry.GetEngine(memory.Type)
 	require.NoError(t, err)
 	assert.NotNil(t, memEngine)
 
@@ -39,8 +41,8 @@ func TestStorageEngineRegistry(t *testing.T) {
 	assert.NotNil(t, defaultEngine)
 
 	// Test engine existence
-	assert.True(t, registry.EngineExists(FILESYSTEM))
-	assert.True(t, registry.EngineExists(MEMORY))
+	assert.True(t, registry.EngineExists(filesystem.Type))
+	assert.True(t, registry.EngineExists(memory.Type))
 	assert.False(t, registry.EngineExists("nonexistent"))
 
 	// Test engine status
@@ -61,7 +63,7 @@ func TestStorageEngineRegistryWithInvalidEngine(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test getting non-existent engine
-	engine, err := registry.GetEngine(EngineType("nonexistent"))
+	engine, err := registry.GetEngine("nonexistent")
 	assert.Error(t, err)
 	assert.Nil(t, engine)
 	assert.Contains(t, err.Error(), "storage engine 'nonexistent' not found")

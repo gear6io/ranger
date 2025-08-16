@@ -26,6 +26,7 @@ import (
 
 // Constants for configuration and limits
 const (
+	Type                       = "S3"
 	DefaultPort                = 9000
 	DefaultAddress             = "localhost"
 	DefaultRegion              = "us-east-1"
@@ -220,6 +221,11 @@ type S3FileSystem struct {
 	metrics     *FileSystemMetrics
 	logger      *log.Logger
 	mu          sync.RWMutex
+}
+
+// GetStorageType returns the storage type identifier
+func (s3fs *S3FileSystem) GetStorageType() string {
+	return Type
 }
 
 // FileSystemConfig represents configuration for the MinIO filesystem

@@ -3,11 +3,13 @@ package internal
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/TFMV/icebox/server/metadata/types"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -283,4 +285,141 @@ func (sm *Store) TableExists(ctx context.Context, dbName, tableName string) bool
 	var exists int
 	err := sm.db.QueryRowContext(ctx, query, dbName, tableName).Scan(&exists)
 	return err == nil
+}
+
+// CreateTableMetadata creates detailed metadata for a table (for storage operations)
+func (sm *Store) CreateTableMetadata(ctx context.Context, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*types.TableMetadata, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Serialize engine config to JSON
+	engineConfigJSON := "{}"
+	if engineConfig != nil {
+		configBytes, err := json.Marshal(engineConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal engine config: %w", err)
+		}
+		engineConfigJSON = string(configBytes)
+	}
+
+	// Insert table metadata record
+	insertSQL := `INSERT INTO table_metadata (table_name, schema, storage_engine, engine_config, file_count, total_size, last_modified, created) VALUES (?, ?, ?, ?, 0, 0, ?, ?)`
+	_, err := sm.db.ExecContext(ctx, insertSQL, tableName, schema, storageEngine, engineConfigJSON, now, now)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create table metadata for %s: %w", tableName, err)
+	}
+
+	// Create metadata object
+	tableMetadata := &types.TableMetadata{
+		Name:          tableName,
+		Schema:        schema,
+		StorageEngine: storageEngine,
+		EngineConfig:  engineConfig,
+		FileCount:     0,
+		TotalSize:     0,
+		LastModified:  now,
+		Created:       now,
+		Files:         []types.FileInfo{},
+	}
+
+	return tableMetadata, nil
+}
+
+// LoadTableMetadata loads detailed metadata for a table
+func (sm *Store) LoadTableMetadata(ctx context.Context, tableName string) (*types.TableMetadata, error) {
+	query := `SELECT table_name, schema, storage_engine, engine_config, file_count, total_size, last_modified, created FROM table_metadata WHERE table_name = ?`
+
+	var tableNameStr, storageEngine, engineConfigJSON, lastModified, created string
+	var schema []byte
+	var fileCount int
+	var totalSize int64
+
+	err := sm.db.QueryRowContext(ctx, query, tableName).Scan(
+		&tableNameStr, &schema, &storageEngine, &engineConfigJSON,
+		&fileCount, &totalSize, &lastModified, &created)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("table metadata not found: %s", tableName)
+		}
+		return nil, fmt.Errorf("failed to load table metadata: %w", err)
+	}
+
+	// Parse engine config JSON
+	var engineConfig map[string]interface{}
+	if engineConfigJSON != "{}" {
+		if err := json.Unmarshal([]byte(engineConfigJSON), &engineConfig); err != nil {
+			return nil, fmt.Errorf("failed to parse engine config: %w", err)
+		}
+	}
+
+	// Load files for this table
+	files, err := sm.loadTableFiles(ctx, tableName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load table files: %w", err)
+	}
+
+	tableMetadata := &types.TableMetadata{
+		Name:          tableNameStr,
+		Schema:        schema,
+		StorageEngine: storageEngine,
+		EngineConfig:  engineConfig,
+		FileCount:     fileCount,
+		TotalSize:     totalSize,
+		LastModified:  lastModified,
+		Created:       created,
+		Files:         files,
+	}
+
+	return tableMetadata, nil
+}
+
+// ListAllTables returns a list of all tables across all databases (for storage manager)
+func (sm *Store) ListAllTables(ctx context.Context) ([]string, error) {
+	query := `SELECT DISTINCT table_name FROM tables ORDER BY table_name`
+	rows, err := sm.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query all tables: %w", err)
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var tableName string
+		if err := rows.Scan(&tableName); err != nil {
+			return nil, fmt.Errorf("failed to scan table name: %w", err)
+		}
+		tables = append(tables, tableName)
+	}
+
+	return tables, nil
+}
+
+// loadTableFiles loads file information for a table
+func (sm *Store) loadTableFiles(ctx context.Context, tableName string) ([]types.FileInfo, error) {
+	query := `SELECT file_name, file_size, created, modified, date FROM table_files WHERE table_name = ? ORDER BY file_name`
+	rows, err := sm.db.QueryContext(ctx, query, tableName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query table files: %w", err)
+	}
+	defer rows.Close()
+
+	var files []types.FileInfo
+	for rows.Next() {
+		var fileName, created, modified, date string
+		var fileSize int64
+
+		if err := rows.Scan(&fileName, &fileSize, &created, &modified, &date); err != nil {
+			return nil, fmt.Errorf("failed to scan file info: %w", err)
+		}
+
+		fileInfo := types.FileInfo{
+			Name:     fileName,
+			Size:     fileSize,
+			Created:  created,
+			Modified: modified,
+			Date:     date,
+		}
+		files = append(files, fileInfo)
+	}
+
+	return files, nil
 }

@@ -24,20 +24,14 @@ type Loader struct {
 
 // NewLoader creates a new Loader instance
 func NewLoader(cfg *config.Config, logger zerolog.Logger) (*Loader, error) {
-	// Initialize catalog based on configuration
-	catalogInstance, err := catalog.NewCatalog(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create catalog: %w", err)
-	}
-
 	// Initialize storage manager based on configuration
 	storageManager, err := storage.NewManager(cfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage manager: %w", err)
 	}
 
-	// Initialize QueryEngine with catalog
-	queryEngine, err := query.NewEngine(cfg, logger)
+	// Initialize QueryEngine with storage manager (which provides catalog)
+	queryEngine, err := query.NewEngine(cfg, storageManager, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create query engine: %w", err)
 	}
@@ -50,7 +44,7 @@ func NewLoader(cfg *config.Config, logger zerolog.Logger) (*Loader, error) {
 
 	return &Loader{
 		config:      cfg,
-		catalog:     catalogInstance,
+		catalog:     storageManager.GetCatalog(), // Get catalog from storage manager
 		queryEngine: queryEngine,
 		gateway:     gatewayInstance,
 		storage:     storageManager,

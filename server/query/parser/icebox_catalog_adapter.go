@@ -21,17 +21,23 @@ type IceboxCatalogAdapter struct {
 
 // NewIceboxCatalogAdapter creates a new catalog adapter for Icebox
 func NewIceboxCatalogAdapter(cfg *config.Config) (*IceboxCatalogAdapter, error) {
-	catalogInstance, err := catalog.NewCatalog(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create catalog: %w", err)
-	}
+	// TODO: This function is not used in the main server flow
+	// The Query Engine now gets catalog from StorageManager
+	// Commented out to avoid pathManager dependency issues
+	/*
+		catalogInstance, err := catalog.NewCatalog(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create catalog: %w", err)
+		}
 
-	return &IceboxCatalogAdapter{
-		catalog:         catalogInstance,
-		config:          cfg,
-		currentDatabase: "default",
-		currentUser:     "default",
-	}, nil
+		return &IceboxCatalogAdapter{
+			catalog:         catalogInstance,
+			config:          cfg,
+			currentDatabase: "default",
+			currentUser:     "default",
+		}, nil
+	*/
+	return nil, fmt.Errorf("NewIceboxCatalogAdapter is deprecated - use StorageManager.GetCatalog() instead")
 }
 
 // ValidateTable checks if a table exists in the catalog
@@ -103,7 +109,7 @@ func (ica *IceboxCatalogAdapter) ValidateDatabase(ctx context.Context, dbName st
 func (ica *IceboxCatalogAdapter) GetTableSchema(ctx context.Context, tableName string) (*TableSchema, error) {
 	// Create table identifier
 	identifier := table.Identifier{ica.currentDatabase, tableName}
-	
+
 	// Load the table from catalog
 	tbl, err := ica.catalog.LoadTable(ctx, identifier, nil)
 	if err != nil {
@@ -427,7 +433,7 @@ func (ica *IceboxCatalogAdapter) convertIcebergSchemaToTableSchema(icebergSchema
 			Sequence:   nil, // TODO: Extract from Iceberg field if available
 			NotNull:    field.Required,
 			Unique:     false, // TODO: Extract from Iceberg field if available
-			Check:      nil, // TODO: Extract from Iceberg field if available
+			Check:      nil,   // TODO: Extract from Iceberg field if available
 		}
 
 		tableSchema.ColumnDefinitions[field.Name] = colDef

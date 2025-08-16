@@ -9,11 +9,19 @@ import (
 	"github.com/TFMV/icebox/pkg/errors"
 )
 
+// StorageType constant for this storage engine
+const Type = "MEMORY"
+
 // MemoryStorage implements a simple in-memory data store
 type MemoryStorage struct {
 	data   map[string][]byte
 	tables map[string]*TableData
 	mu     sync.RWMutex
+}
+
+// GetStorageType returns the storage type identifier
+func (ms *MemoryStorage) GetStorageType() string {
+	return Type
 }
 
 // TableData represents a table in memory storage

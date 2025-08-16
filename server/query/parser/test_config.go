@@ -8,7 +8,8 @@ import (
 func getTestConfig() *config.Config {
 	cfg := config.LoadDefaultConfig()
 	cfg.Storage.DataPath = "/tmp/icebox_test"
-	cfg.Storage.Data.Type = "memory" // Use memory storage for testing
+	// Note: Storage engine is now specified per-table, not globally
+	// All storage engines are available at runtime
 	return cfg
 }
 

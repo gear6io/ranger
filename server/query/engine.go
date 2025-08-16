@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/TFMV/icebox/server/catalog"
 	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/query/duckdb"
 	"github.com/TFMV/icebox/server/query/parser"
@@ -32,12 +31,9 @@ type QueryResult struct {
 }
 
 // NewEngine creates a new shared query engine service with storage
-func NewEngine(cfg *config.Config, logger zerolog.Logger) (*Engine, error) {
-	// Initialize catalog based on configuration
-	catalogInstance, err := catalog.NewCatalog(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create catalog: %w", err)
-	}
+func NewEngine(cfg *config.Config, storageMgr *storage.Manager, logger zerolog.Logger) (*Engine, error) {
+	// Get catalog from storage manager instead of creating a new one
+	catalogInstance := storageMgr.GetCatalog()
 
 	// Initialize DuckDB engine with the catalog and permissive config
 	duckdbConfig := &duckdb.EngineConfig{
@@ -63,12 +59,6 @@ func NewEngine(cfg *config.Config, logger zerolog.Logger) (*Engine, error) {
 	duckdbEngine, err := duckdb.NewEngineWithConfig(catalogInstance, duckdbConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create DuckDB engine: %w", err)
-	}
-
-	// Initialize storage manager
-	storageMgr, err := storage.NewManager(cfg, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create storage manager: %w", err)
 	}
 
 	return &Engine{
@@ -158,7 +148,7 @@ func (e *Engine) executeDDLQuery(ctx context.Context, query string) (*QueryResul
 	case *parser.CreateTableStmt:
 		// Create table using our storage manager
 		schemaData := e.serializeTableSchema(stmt.TableSchema)
-		if err := e.storageMgr.CreateTable(stmt.TableName.Value, schemaData); err != nil {
+		if err := e.storageMgr.CreateTable(ctx, stmt.TableName.Value, schemaData, "default", nil); err != nil {
 			return nil, fmt.Errorf("failed to create table in storage: %w", err)
 		}
 
@@ -191,7 +181,7 @@ func (e *Engine) CreateTable(ctx context.Context, tableName string, schema *pars
 
 	// Store table schema in storage using Storage Manager
 	schemaData := e.serializeTableSchema(schema)
-	if err := e.storageMgr.CreateTable(tableName, schemaData); err != nil {
+	if err := e.storageMgr.CreateTable(ctx, tableName, schemaData, "default", nil); err != nil {
 		return fmt.Errorf("failed to create table in storage: %w", err)
 	}
 
@@ -204,7 +194,7 @@ func (e *Engine) InsertData(ctx context.Context, tableName string, data [][]inte
 	e.logger.Info().Str("table", tableName).Int("rows", len(data)).Msg("Inserting data")
 
 	// Store data in storage using Storage Manager
-	if err := e.storageMgr.InsertData(tableName, data); err != nil {
+	if err := e.storageMgr.InsertData(ctx, tableName, data); err != nil {
 		return fmt.Errorf("failed to store data in storage: %w", err)
 	}
 
@@ -217,7 +207,7 @@ func (e *Engine) GetTableData(ctx context.Context, tableName string, limit int) 
 	e.logger.Info().Str("table", tableName).Int("limit", limit).Msg("Retrieving table data")
 
 	// Get data from storage using Storage Manager
-	data, err := e.storageMgr.GetTableData(tableName)
+	data, err := e.storageMgr.GetTableData(ctx, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve data from storage: %w", err)
 	}
@@ -236,7 +226,7 @@ func (e *Engine) GetTableSchema(ctx context.Context, tableName string) (*parser.
 	e.logger.Info().Str("table", tableName).Msg("Retrieving table schema")
 
 	// Get schema from storage using Storage Manager
-	schemaData, err := e.storageMgr.GetTableSchema(tableName)
+	schemaData, err := e.storageMgr.GetTableSchema(ctx, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve schema from storage: %w", err)
 	}

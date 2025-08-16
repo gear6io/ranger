@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TFMV/icebox/deprecated/engine/duckdb"
+	"github.com/TFMV/icebox/server/query/duckdb"
 	"github.com/rs/zerolog"
 )
 

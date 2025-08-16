@@ -13,8 +13,8 @@ import (
 
 // StorageEngineRegistry manages multiple storage engines
 type StorageEngineRegistry struct {
-	engines       map[EngineType]FileSystem
-	defaultEngine EngineType
+	engines       map[string]FileSystem
+	defaultEngine string
 	mu            sync.RWMutex
 	logger        zerolog.Logger
 }
@@ -22,8 +22,8 @@ type StorageEngineRegistry struct {
 // NewStorageEngineRegistry creates a new storage engine registry
 func NewStorageEngineRegistry(cfg *config.Config, logger zerolog.Logger) (*StorageEngineRegistry, error) {
 	registry := &StorageEngineRegistry{
-		engines:       make(map[EngineType]FileSystem),
-		defaultEngine: FILESYSTEM, // Default fallback
+		engines:       make(map[string]FileSystem),
+		defaultEngine: filesystem.Type, // Default fallback
 		logger:        logger,
 	}
 
@@ -33,7 +33,7 @@ func NewStorageEngineRegistry(cfg *config.Config, logger zerolog.Logger) (*Stora
 	}
 
 	logger.Info().
-		Str("default_engine", registry.defaultEngine.String()).
+		Str("default_engine", registry.defaultEngine).
 		Int("total_engines", len(registry.engines)).
 		Msg("Storage engine registry initialized")
 
@@ -44,28 +44,28 @@ func NewStorageEngineRegistry(cfg *config.Config, logger zerolog.Logger) (*Stora
 func (r *StorageEngineRegistry) initializeEngines(cfg *config.Config) error {
 	// Initialize filesystem engine
 	fsEngine := filesystem.NewFileStorage()
-	r.RegisterEngine(FILESYSTEM, fsEngine)
+	r.RegisterEngine(filesystem.Type, fsEngine)
 
 	// Initialize memory engine
 	memEngine, err := memory.NewMemoryStorage()
 	if err != nil {
 		return fmt.Errorf("failed to initialize memory engine: %w", err)
 	}
-	r.RegisterEngine(MEMORY, memEngine)
+	r.RegisterEngine(memory.Type, memEngine)
 
 	// Initialize S3 engine (if credentials are available)
 	if s3Engine, err := s3.NewS3FileSystem(cfg); err == nil {
-		r.RegisterEngine(S3, s3Engine)
+		r.RegisterEngine(s3.Type, s3Engine)
 		r.logger.Info().Msg("S3 storage engine initialized successfully")
 	} else {
 		r.logger.Warn().Err(err).Msg("S3 storage engine not available (credentials missing or invalid)")
 	}
 
 	// Set default engine based on available engines
-	if _, exists := r.engines[FILESYSTEM]; exists {
-		r.defaultEngine = FILESYSTEM
-	} else if _, exists := r.engines[MEMORY]; exists {
-		r.defaultEngine = MEMORY
+	if _, exists := r.engines[filesystem.Type]; exists {
+		r.defaultEngine = filesystem.Type
+	} else if _, exists := r.engines[memory.Type]; exists {
+		r.defaultEngine = memory.Type
 	} else {
 		return fmt.Errorf("no storage engines available")
 	}
@@ -74,14 +74,14 @@ func (r *StorageEngineRegistry) initializeEngines(cfg *config.Config) error {
 }
 
 // RegisterEngine registers a storage engine with the registry
-func (r *StorageEngineRegistry) RegisterEngine(name EngineType, engine FileSystem) {
+func (r *StorageEngineRegistry) RegisterEngine(name string, engine FileSystem) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.engines[name] = engine
 }
 
 // GetEngine returns a storage engine by name
-func (r *StorageEngineRegistry) GetEngine(engineName EngineType) (FileSystem, error) {
+func (r *StorageEngineRegistry) GetEngine(engineName string) (FileSystem, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -98,11 +98,11 @@ func (r *StorageEngineRegistry) GetDefaultEngine() (FileSystem, error) {
 }
 
 // ListEngines returns a list of all available engine names
-func (r *StorageEngineRegistry) ListEngines() []EngineType {
+func (r *StorageEngineRegistry) ListEngines() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	engines := make([]EngineType, 0, len(r.engines))
+	engines := make([]string, 0, len(r.engines))
 	for name := range r.engines {
 		engines = append(engines, name)
 	}
@@ -110,7 +110,7 @@ func (r *StorageEngineRegistry) ListEngines() []EngineType {
 }
 
 // EngineExists checks if a storage engine exists
-func (r *StorageEngineRegistry) EngineExists(engineName EngineType) bool {
+func (r *StorageEngineRegistry) EngineExists(engineName string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	_, exists := r.engines[engineName]
@@ -124,13 +124,13 @@ func (r *StorageEngineRegistry) GetEngineStatus() map[string]interface{} {
 
 	status := make(map[string]interface{})
 	for name, engine := range r.engines {
-		status[name.String()] = map[string]interface{}{
+		status[name] = map[string]interface{}{
 			"available": true,
 			"type":      fmt.Sprintf("%T", engine),
 		}
 	}
 
-	status["default_engine"] = r.defaultEngine.String()
+	status["default_engine"] = r.defaultEngine
 	status["total_engines"] = len(r.engines)
 
 	return status

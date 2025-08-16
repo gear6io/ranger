@@ -7,6 +7,7 @@ import (
 
 	"github.com/TFMV/icebox/server/catalog"
 	"github.com/TFMV/icebox/server/metadata/internal"
+	"github.com/TFMV/icebox/server/metadata/types"
 	"github.com/uptrace/bun"
 )
 
@@ -156,4 +157,19 @@ func (mm *MetadataManager) GetBunDB() *bun.DB {
 		return mm.hybrid.GetBunDB()
 	}
 	return nil
+}
+
+// CreateTableMetadata creates detailed metadata for a table (for storage operations)
+func (mm *MetadataManager) CreateTableMetadata(ctx context.Context, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*types.TableMetadata, error) {
+	return mm.storage.CreateTableMetadata(ctx, tableName, schema, storageEngine, engineConfig)
+}
+
+// LoadTableMetadata loads detailed metadata for a table
+func (mm *MetadataManager) LoadTableMetadata(ctx context.Context, tableName string) (*types.TableMetadata, error) {
+	return mm.storage.LoadTableMetadata(ctx, tableName)
+}
+
+// ListAllTables returns a list of all tables across all databases (for storage manager)
+func (mm *MetadataManager) ListAllTables(ctx context.Context) ([]string, error) {
+	return mm.storage.ListAllTables(ctx)
 }

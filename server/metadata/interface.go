@@ -2,6 +2,8 @@ package metadata
 
 import (
 	"context"
+
+	"github.com/TFMV/icebox/server/metadata/types"
 )
 
 // MetadataManagerInterface defines the interface for the metadata manager
@@ -17,6 +19,11 @@ type MetadataManagerInterface interface {
 	DropTable(ctx context.Context, dbName, tableName string) error
 	ListTables(ctx context.Context, dbName string) ([]string, error)
 	TableExists(ctx context.Context, dbName, tableName string) bool
+
+	// Table metadata operations (for storage manager) - these work with table identifiers
+	CreateTableMetadata(ctx context.Context, tableIdentifier string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*types.TableMetadata, error)
+	LoadTableMetadata(ctx context.Context, tableIdentifier string) (*types.TableMetadata, error)
+	ListAllTables(ctx context.Context) ([]string, error)
 
 	// Close releases resources
 	Close() error

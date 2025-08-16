@@ -85,6 +85,43 @@ func (bmm *BunMigrationManager) createInitialSchema(ctx context.Context) error {
 		return fmt.Errorf("failed to create tables table: %w", err)
 	}
 
+	// Create table_metadata table for detailed table information
+	_, err = bmm.db.NewCreateTable().
+		Model(&struct {
+			bun.BaseModel `bun:"table:table_metadata"`
+			TableName     string `bun:"table_name,pk,type:text"`
+			Schema        []byte `bun:"schema,type:blob"`
+			StorageEngine string `bun:"storage_engine,type:text,notnull"`
+			EngineConfig  string `bun:"engine_config,type:text,default:'{}'"`
+			FileCount     int    `bun:"file_count,type:integer,default:0"`
+			TotalSize     int64  `bun:"total_size,type:integer,default:0"`
+			LastModified  string `bun:"last_modified,type:text,notnull"`
+			Created       string `bun:"created,type:text,notnull"`
+		}{}).
+		IfNotExists().
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create table_metadata table: %w", err)
+	}
+
+	// Create table_files table for file tracking
+	_, err = bmm.db.NewCreateTable().
+		Model(&struct {
+			bun.BaseModel `bun:"table:table_files"`
+			TableName     string `bun:"table_name,type:text,notnull"`
+			FileName      string `bun:"file_name,type:text,notnull"`
+			FileSize      int64  `bun:"file_size,type:integer,notnull"`
+			Created       string `bun:"created,type:text,notnull"`
+			Modified      string `bun:"modified,type:text,notnull"`
+			Date          string `bun:"date,type:text,notnull"`
+		}{}).
+		ForeignKey(`("table_name") REFERENCES "table_metadata" ("table_name") ON DELETE CASCADE`).
+		IfNotExists().
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create table_files table: %w", err)
+	}
+
 	// Create migrations table for tracking
 	_, err = bmm.db.NewCreateTable().
 		Model(&struct {
@@ -180,7 +217,7 @@ func (bmm *BunMigrationManager) GetMigrationStatus(ctx context.Context) ([]Migra
 // VerifySchema verifies that the current schema matches expectations
 func (bmm *BunMigrationManager) VerifySchema(ctx context.Context) error {
 	// Check if expected tables exist
-	expectedTables := []string{"bun_migrations", "databases", "tables"}
+	expectedTables := []string{"bun_migrations", "databases", "tables", "table_metadata", "table_files"}
 
 	for _, tableName := range expectedTables {
 		exists, err := bmm.tableExists(ctx, tableName)
