@@ -841,14 +841,12 @@ func createTestTableForBatch(t *testing.T, conn *sdk.Client) error {
 	t.Log("Creating test table with query...")
 
 	// Create a simple test table (skip DROP for now to isolate the issue)
-	query := `
-		CREATE TABLE IF NOT EXISTS test_batch_users (
-			id UInt32,
-			name String,
-			email String,
-			created_at DateTime
-		) ENGINE = Memory
-	`
+	query := `CREATE TABLE test_batch_users (
+			id INT,
+			name VARCHAR(255),
+			email VARCHAR(255),
+			created_at TIMESTAMP
+		);`
 
 	t.Log("Executing CREATE TABLE query...")
 	if err := conn.Exec(timeoutCtx, query); err != nil {

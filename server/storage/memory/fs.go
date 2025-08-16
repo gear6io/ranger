@@ -2,20 +2,29 @@ package memory
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"sync"
 )
 
 // MemoryStorage implements a simple in-memory data store
 type MemoryStorage struct {
-	data map[string][]byte
-	mu   sync.RWMutex
+	data   map[string][]byte
+	tables map[string]*TableData
+	mu     sync.RWMutex
+}
+
+// TableData represents a table in memory storage
+type TableData struct {
+	Schema []byte
+	Rows   [][]interface{}
 }
 
 // NewMemoryStorage creates a new in-memory data store
 func NewMemoryStorage() (*MemoryStorage, error) {
 	return &MemoryStorage{
-		data: make(map[string][]byte),
+		data:   make(map[string][]byte),
+		tables: make(map[string]*TableData),
 	}, nil
 }
 
@@ -122,4 +131,58 @@ func (fsa *MemoryStorage) OpenForWrite(path string) (io.WriteCloser, error) {
 		path:    path,
 		buf:     bytes.NewBuffer(nil),
 	}, nil
+}
+
+// ============================================================================
+// STORAGE ENVIRONMENT PREPARATION METHODS
+// ============================================================================
+
+// PrepareTableEnvironment creates the storage environment for a table
+func (fsa *MemoryStorage) PrepareTableEnvironment(tableName string) error {
+	fsa.mu.Lock()
+	defer fsa.mu.Unlock()
+
+	// Create in-memory table data structure
+	fsa.tables[tableName] = &TableData{
+		Schema: []byte{},
+		Rows:   make([][]interface{}, 0),
+	}
+	return nil
+}
+
+// StoreTableData stores data for a table
+func (fsa *MemoryStorage) StoreTableData(tableName string, data []byte) error {
+	fsa.mu.Lock()
+	defer fsa.mu.Unlock()
+
+	// Store data in the table
+	fsa.data[fmt.Sprintf("tables/%s/data", tableName)] = data
+	return nil
+}
+
+// GetTableData retrieves data for a table
+func (fsa *MemoryStorage) GetTableData(tableName string) ([]byte, error) {
+	fsa.mu.RLock()
+	defer fsa.mu.RUnlock()
+
+	data, exists := fsa.data[fmt.Sprintf("tables/%s/data", tableName)]
+	if !exists {
+		return nil, fmt.Errorf("table data not found: %s", tableName)
+	}
+
+	return data, nil
+}
+
+// RemoveTableEnvironment removes the storage environment for a table
+func (fsa *MemoryStorage) RemoveTableEnvironment(tableName string) error {
+	fsa.mu.Lock()
+	defer fsa.mu.Unlock()
+
+	// Remove table data structure
+	delete(fsa.tables, tableName)
+
+	// Remove table data
+	delete(fsa.data, fmt.Sprintf("tables/%s/data", tableName))
+
+	return nil
 }

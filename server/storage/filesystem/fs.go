@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,19 +27,32 @@ type file struct {
 	mu       sync.RWMutex
 }
 
-// memoryWriteFile represents a file open for writing
-type fileWriter struct {
-	fs   *FileStorage
-	path string
-	buf  *bytes.Buffer
-}
-
 // memoryFileInfo implements os.FileInfo for memory files
 type memoryFileInfo struct {
 	name    string
 	size    int64
 	modTime time.Time
 	isDir   bool
+}
+
+// memoryFileInfo methods
+func (mfi *memoryFileInfo) Name() string { return mfi.name }
+func (mfi *memoryFileInfo) Size() int64  { return mfi.size }
+func (mfi *memoryFileInfo) Mode() os.FileMode {
+	if mfi.isDir {
+		return os.ModeDir | 0755
+	}
+	return 0644
+}
+func (mfi *memoryFileInfo) ModTime() time.Time { return mfi.modTime }
+func (mfi *memoryFileInfo) IsDir() bool        { return mfi.isDir }
+func (mfi *memoryFileInfo) Sys() interface{}   { return nil }
+
+// memoryWriteFile represents a file open for writing
+type fileWriter struct {
+	fs   *FileStorage
+	path string
+	buf  *bytes.Buffer
 }
 
 // NewFileStorage creates a new in-memory file system
@@ -421,12 +433,13 @@ func (mrf *fileReader) Stat() (os.FileInfo, error) {
 	mrf.file.mu.RLock()
 	defer mrf.file.mu.RUnlock()
 
-	return &memoryFileInfo{
-		name:    filepath.Base(mrf.path),
-		size:    int64(len(mrf.file.data)),
-		modTime: mrf.file.modTime,
-		isDir:   false,
-	}, nil
+	return os.Stat(filepath.Base(mrf.path))
+	// return &memoryFileInfo{
+	// 	name:    filepath.Base(mrf.path),
+	// 	size:    int64(len(mrf.file.data)),
+	// 	modTime: mrf.file.modTime,
+	// 	isDir:   false,
+	// }, nil
 }
 
 func (mrf *fileReader) Close() error {
@@ -451,12 +464,8 @@ func (mwf *fileWriter) Seek(offset int64, whence int) (int64, error) {
 }
 
 func (mwf *fileWriter) Stat() (os.FileInfo, error) {
-	return &memoryFileInfo{
-		name:    filepath.Base(mwf.path),
-		size:    int64(mwf.buf.Len()),
-		modTime: time.Now(),
-		isDir:   false,
-	}, nil
+	return os.Stat(filepath.Base(mwf.path))
+
 }
 
 func (mwf *fileWriter) Close() error {
@@ -472,15 +481,93 @@ func (mwf *fileWriter) Close() error {
 	return nil
 }
 
-// memoryFileInfo methods
-func (mfi *memoryFileInfo) Name() string { return mfi.name }
-func (mfi *memoryFileInfo) Size() int64  { return mfi.size }
-func (mfi *memoryFileInfo) Mode() fs.FileMode {
-	if mfi.isDir {
-		return fs.ModeDir | 0755
+// ============================================================================
+// STORAGE ENVIRONMENT PREPARATION METHODS
+// ============================================================================
+
+// PrepareTableEnvironment creates the storage environment for a table
+func (mfs *FileStorage) PrepareTableEnvironment(tableName string) error {
+	mfs.mu.Lock()
+	defer mfs.mu.Unlock()
+
+	// Create table directory structure
+	tablePath := filepath.Join("tables", tableName)
+	if err := mfs.MkdirAll(tablePath); err != nil {
+		return fmt.Errorf("failed to create table directory: %w", err)
 	}
-	return 0644
+
+	// Create data subdirectory
+	dataPath := filepath.Join(tablePath, "data")
+	if err := mfs.MkdirAll(dataPath); err != nil {
+		return fmt.Errorf("failed to create data directory: %w", err)
+	}
+
+	// Create empty data file
+	emptyData := []byte("[]")
+	dataFilePath := filepath.Join(dataPath, "data.json")
+	if err := mfs.WriteFile(dataFilePath, emptyData); err != nil {
+		return fmt.Errorf("failed to create data file: %w", err)
+	}
+
+	return nil
 }
-func (mfi *memoryFileInfo) ModTime() time.Time { return mfi.modTime }
-func (mfi *memoryFileInfo) IsDir() bool        { return mfi.isDir }
-func (mfi *memoryFileInfo) Sys() interface{}   { return nil }
+
+// StoreTableData stores data for a table
+func (mfs *FileStorage) StoreTableData(tableName string, data []byte) error {
+	mfs.mu.Lock()
+	defer mfs.mu.Unlock()
+
+	// Store data in the data file
+	dataPath := filepath.Join("tables", tableName, "data", "data.json")
+	if err := mfs.WriteFile(dataPath, data); err != nil {
+		return fmt.Errorf("failed to write data file: %w", err)
+	}
+
+	return nil
+}
+
+// GetTableData retrieves data for a table
+func (mfs *FileStorage) GetTableData(tableName string) ([]byte, error) {
+	mfs.mu.RLock()
+	defer mfs.mu.RUnlock()
+
+	// Read data from the data file
+	dataPath := filepath.Join("tables", tableName, "data", "data.json")
+	data, err := mfs.ReadFile(dataPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read data file: %w", err)
+	}
+
+	return data, nil
+}
+
+// RemoveTableEnvironment removes the storage environment for a table
+func (mfs *FileStorage) RemoveTableEnvironment(tableName string) error {
+	mfs.mu.Lock()
+	defer mfs.mu.Unlock()
+
+	// Remove table directory and all files
+	tablePath := filepath.Join("tables", tableName)
+
+	// Remove data file
+	dataPath := filepath.Join(tablePath, "data", "data.json")
+	if err := mfs.Remove(dataPath); err != nil {
+		// Log warning but continue
+		fmt.Printf("Warning: failed to remove data file %s: %v\n", dataPath, err)
+	}
+
+	// Remove data directory
+	dataDir := filepath.Join(tablePath, "data")
+	if err := mfs.Remove(dataDir); err != nil {
+		// Log warning but continue
+		fmt.Printf("Warning: failed to remove data directory %s: %v\n", dataDir, err)
+	}
+
+	// Remove table directory
+	if err := mfs.Remove(tablePath); err != nil {
+		// Log warning but continue
+		fmt.Printf("Warning: failed to remove table directory %s: %v\n", tablePath, err)
+	}
+
+	return nil
+}

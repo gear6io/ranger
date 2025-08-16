@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"time"
@@ -10,7 +11,6 @@ import (
 	"github.com/TFMV/icebox/server/storage/filesystem"
 	"github.com/TFMV/icebox/server/storage/memory"
 	"github.com/TFMV/icebox/server/storage/s3"
-	"github.com/TFMV/icebox/utils"
 	"github.com/rs/zerolog"
 )
 
@@ -30,7 +30,7 @@ type Config struct {
 
 // FileSystem interface for data storage operations
 type FileSystem interface {
-	// Core operations for table management
+	// Core file operations
 	WriteFile(path string, data []byte) error
 	ReadFile(path string) ([]byte, error)
 	MkdirAll(path string) error // No perm parameter, always succeeds
@@ -42,6 +42,12 @@ type FileSystem interface {
 	// Utility operations
 	Remove(path string) error
 	Exists(path string) (bool, error)
+
+	// Storage environment preparation
+	PrepareTableEnvironment(tableName string) error
+	StoreTableData(tableName string, data []byte) error
+	GetTableData(tableName string) ([]byte, error)
+	RemoveTableEnvironment(tableName string) error
 }
 
 // NewManager creates a new data storage manager
@@ -144,74 +150,52 @@ func generateTableFileName(tableName string, date time.Time, ulid string) string
 func (m *Manager) CreateTable(tableName string, schema []byte) error {
 	m.logger.Info().Str("table", tableName).Msg("Creating new table")
 
-	// Create table metadata
+	// First create table metadata
 	_, err := m.meta.CreateTableMetadata(tableName, schema)
 	if err != nil {
 		return fmt.Errorf("failed to create table metadata: %w", err)
 	}
 
-	// Save schema file
-	schemaPath := getSchemaFilePath(m.config.Path, tableName)
-	if err := m.fs.WriteFile(schemaPath, schema); err != nil {
-		return fmt.Errorf("failed to save schema file: %w", err)
+	// Then prepare storage environment
+	if err := m.fs.PrepareTableEnvironment(tableName); err != nil {
+		// Clean up metadata if storage preparation fails
+		// TODO: Add RemoveTableMetadata method to MetadataManager
+		return fmt.Errorf("failed to prepare table storage environment: %w", err)
 	}
 
 	m.logger.Info().
 		Str("table", tableName).
-		Str("schema_path", schemaPath).
 		Msg("Table created successfully")
 
 	return nil
 }
 
-// InsertData inserts data into a table with automatic file management
+// InsertData inserts data into a table
 func (m *Manager) InsertData(tableName string, data [][]interface{}) error {
 	m.logger.Info().
 		Str("table", tableName).
 		Int("rows", len(data)).
 		Msg("Inserting data into table")
 
-	// Check if table exists
+	// Check if table exists in metadata
 	if !m.meta.TableExists(tableName) {
 		return fmt.Errorf("table does not exist: %s", tableName)
 	}
 
-	// TODO: Convert data to Parquet format
-	// For now, just serialize as JSON for demonstration
-	// In production, this would use a proper Parquet writer
-
-	// Generate filename with current date and ULID
-	now := time.Now()
-	fileName := generateTableFileName(tableName, now, utils.GenerateULIDString())
-
-	// Create file path
-	filePath := getDataFilePath(m.config.Path, tableName, fileName)
-
-	// TODO: Convert data to proper format and write
-	// For now, create a placeholder file
-	placeholderData := []byte(fmt.Sprintf("Data for table %s, %d rows", tableName, len(data)))
-
-	if err := m.fs.WriteFile(filePath, placeholderData); err != nil {
-		return fmt.Errorf("failed to write data file: %w", err)
+	// Serialize data to bytes
+	dataBytes, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("failed to serialize data: %w", err)
 	}
 
-	// Update metadata
-	fileInfo := FileInfo{
-		Name:     fileName,
-		Size:     int64(len(placeholderData)),
-		Created:  now,
-		Modified: now,
-		Date:     now,
-	}
-
-	if err := m.meta.AddFileToMetadata(tableName, fileInfo); err != nil {
-		return fmt.Errorf("failed to update metadata: %w", err)
+	// Store data in storage
+	if err := m.fs.StoreTableData(tableName, dataBytes); err != nil {
+		return fmt.Errorf("failed to store data in storage: %w", err)
 	}
 
 	m.logger.Info().
 		Str("table", tableName).
-		Str("file", fileName).
-		Str("path", filePath).
+		Int("rows", len(data)).
 		Msg("Data inserted successfully")
 
 	return nil
@@ -237,59 +221,60 @@ func (m *Manager) ListTableFiles(tableName string) ([]string, error) {
 	return files, nil
 }
 
-// GetTableData returns data from a table (placeholder for now)
+// GetTableData returns data from a table
 func (m *Manager) GetTableData(tableName string) ([][]interface{}, error) {
-	// TODO: Implement actual data reading from Parquet files
-	// This is a placeholder that would be implemented based on the actual data format
-
-	_, err := m.meta.LoadTableMetadata(tableName)
-	if err != nil {
-		return nil, err
+	// Check if table exists in metadata
+	if !m.meta.TableExists(tableName) {
+		return nil, fmt.Errorf("table does not exist: %s", tableName)
 	}
 
-	// For now, return empty data
-	// In production, this would read from all data files and combine results
-	return [][]interface{}{}, nil
+	// Get data from storage
+	dataBytes, err := m.fs.GetTableData(tableName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get data from storage: %w", err)
+	}
+
+	// Deserialize data
+	var data [][]interface{}
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		return nil, fmt.Errorf("failed to deserialize data: %w", err)
+	}
+
+	return data, nil
+}
+
+// GetTableSchema returns schema for a table
+func (m *Manager) GetTableSchema(tableName string) ([]byte, error) {
+	// Check if table exists in metadata
+	if !m.meta.TableExists(tableName) {
+		return nil, fmt.Errorf("table does not exist: %s", tableName)
+	}
+
+	// Get schema from metadata
+	metadata, err := m.meta.LoadTableMetadata(tableName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load table metadata: %w", err)
+	}
+
+	return metadata.Schema, nil
 }
 
 // RemoveTable removes a table and all its data
 func (m *Manager) RemoveTable(tableName string) error {
 	m.logger.Info().Str("table", tableName).Msg("Removing table")
 
-	// Get table metadata to find all files
-	metadata, err := m.meta.LoadTableMetadata(tableName)
-	if err != nil {
-		return fmt.Errorf("failed to load table metadata: %w", err)
+	// Check if table exists in metadata
+	if !m.meta.TableExists(tableName) {
+		return fmt.Errorf("table does not exist: %s", tableName)
 	}
 
-	// Remove all data files
-	for _, file := range metadata.Files {
-		filePath := getDataFilePath(m.config.Path, tableName, file.Name)
-		if err := m.fs.Remove(filePath); err != nil {
-			m.logger.Warn().
-				Str("file", file.Name).
-				Err(err).
-				Msg("Failed to remove data file")
-		}
+	// Remove storage environment
+	if err := m.fs.RemoveTableEnvironment(tableName); err != nil {
+		return fmt.Errorf("failed to remove table storage environment: %w", err)
 	}
 
-	// Remove schema and metadata files
-	schemaPath := getSchemaFilePath(m.config.Path, tableName)
-	metadataPath := getMetadataFilePath(m.config.Path, tableName)
-
-	if err := m.fs.Remove(schemaPath); err != nil {
-		m.logger.Warn().Err(err).Msg("Failed to remove schema file")
-	}
-
-	if err := m.fs.Remove(metadataPath); err != nil {
-		m.logger.Warn().Err(err).Msg("Failed to remove metadata file")
-	}
-
-	// Remove table directory
-	tablePath := getTablePath(m.config.Path, tableName)
-	if err := m.fs.Remove(tablePath); err != nil {
-		m.logger.Warn().Err(err).Msg("Failed to remove table directory")
-	}
+	// Remove metadata (if method exists)
+	// TODO: Add RemoveTableMetadata method to MetadataManager if needed
 
 	m.logger.Info().Str("table", tableName).Msg("Table removed successfully")
 	return nil

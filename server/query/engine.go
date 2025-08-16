@@ -143,42 +143,55 @@ func (e *Engine) executeInsertQuery(ctx context.Context, query string) (*QueryRe
 func (e *Engine) executeDDLQuery(ctx context.Context, query string) (*QueryResult, error) {
 	e.logger.Debug().Str("query", query).Msg("Executing DDL query")
 
-	// Route to DuckDB for DDL
-	result, err := e.duckdbEngine.ExecuteQuery(ctx, query)
+	// Parse the query to determine the statement type
+	catalogAdapter := parser.NewDefaultCatalogAdapter()
+	enhancedParser := parser.NewEnhancedParser(catalogAdapter)
+
+	stmt, err := enhancedParser.ParseAndValidate(ctx, query, catalogAdapter)
 	if err != nil {
-		return nil, fmt.Errorf("DDL execution failed: %w", err)
+		return nil, fmt.Errorf("failed to parse DDL query: %w", err)
 	}
 
-	return &QueryResult{
-		Data:     result.Rows,
-		RowCount: result.RowCount,
-		Columns:  result.Columns,
-		Message:  "OK",
-	}, nil
+	// Handle different DDL statement types
+	switch stmt := stmt.(type) {
+	case *parser.CreateTableStmt:
+		// Create table using our storage manager
+		schemaData := e.serializeTableSchema(stmt.TableSchema)
+		if err := e.storageMgr.CreateTable(stmt.TableName.Value, schemaData); err != nil {
+			return nil, fmt.Errorf("failed to create table in storage: %w", err)
+		}
+
+		return &QueryResult{
+			Data:     [][]interface{}{},
+			RowCount: 0,
+			Columns:  []string{},
+			Message:  "Table created successfully",
+		}, nil
+
+	default:
+		// For other DDL operations, route to DuckDB for now
+		result, err := e.duckdbEngine.ExecuteQuery(ctx, query)
+		if err != nil {
+			return nil, fmt.Errorf("DDL execution failed: %w", err)
+		}
+
+		return &QueryResult{
+			Data:     result.Rows,
+			RowCount: result.RowCount,
+			Columns:  result.Columns,
+			Message:  "OK",
+		}, nil
+	}
 }
 
 // CreateTable creates a new table with the given schema
 func (e *Engine) CreateTable(ctx context.Context, tableName string, schema *parser.TableSchema) error {
 	e.logger.Info().Str("table", tableName).Msg("Creating table")
 
-	// Create table in DuckDB first
-	createSQL := e.buildCreateTableSQL(tableName, schema)
-	_, err := e.duckdbEngine.ExecuteQuery(ctx, createSQL)
-	if err != nil {
-		return fmt.Errorf("failed to create table in DuckDB: %w", err)
-	}
-
-	// Create table directory in storage
-	tablePath := fmt.Sprintf("tables/%s", tableName)
-	if err := e.storageMgr.GetFileSystem().MkdirAll(tablePath); err != nil {
-		return fmt.Errorf("failed to create table directory in storage: %w", err)
-	}
-
-	// Store table schema metadata
+	// Store table schema in storage using Storage Manager
 	schemaData := e.serializeTableSchema(schema)
-	schemaPath := fmt.Sprintf("%s/schema.json", tablePath)
-	if err := e.storageMgr.GetFileSystem().WriteFile(schemaPath, schemaData); err != nil {
-		return fmt.Errorf("failed to store table schema: %w", err)
+	if err := e.storageMgr.CreateTable(tableName, schemaData); err != nil {
+		return fmt.Errorf("failed to create table in storage: %w", err)
 	}
 
 	e.logger.Info().Str("table", tableName).Msg("Table created successfully")
@@ -189,20 +202,12 @@ func (e *Engine) CreateTable(ctx context.Context, tableName string, schema *pars
 func (e *Engine) InsertData(ctx context.Context, tableName string, data [][]interface{}) error {
 	e.logger.Info().Str("table", tableName).Int("rows", len(data)).Msg("Inserting data")
 
-	// Insert into DuckDB
-	insertSQL := e.buildInsertSQL(tableName, data)
-	result, err := e.duckdbEngine.ExecuteQuery(ctx, insertSQL)
-	if err != nil {
-		return fmt.Errorf("failed to insert data into DuckDB: %w", err)
+	// Store data in storage using Storage Manager
+	if err := e.storageMgr.InsertData(tableName, data); err != nil {
+		return fmt.Errorf("failed to store data in storage: %w", err)
 	}
 
-	// Store data in storage (append to data file)
-	dataPath := fmt.Sprintf("tables/%s/data.parquet", tableName)
-	// TODO: Implement actual data storage in Parquet format
-	// For now, just log the operation
-	e.logger.Debug().Str("path", dataPath).Msg("Data would be stored in storage")
-
-	e.logger.Info().Str("table", tableName).Int64("inserted", result.RowCount).Msg("Data inserted successfully")
+	e.logger.Info().Str("table", tableName).Int("inserted", len(data)).Msg("Data inserted successfully")
 	return nil
 }
 
@@ -210,21 +215,18 @@ func (e *Engine) InsertData(ctx context.Context, tableName string, data [][]inte
 func (e *Engine) GetTableData(ctx context.Context, tableName string, limit int) ([][]interface{}, error) {
 	e.logger.Info().Str("table", tableName).Int("limit", limit).Msg("Retrieving table data")
 
-	// Query from DuckDB
-	selectSQL := fmt.Sprintf("SELECT * FROM %s LIMIT %d", tableName, limit)
-	result, err := e.duckdbEngine.ExecuteQuery(ctx, selectSQL)
+	// Get data from storage using Storage Manager
+	data, err := e.storageMgr.GetTableData(tableName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve data from DuckDB: %w", err)
+		return nil, fmt.Errorf("failed to retrieve data from storage: %w", err)
 	}
 
-	// Convert result to [][]interface{}
-	var data [][]interface{}
-	if result.Rows != nil {
-		// result.Rows is already [][]interface{} from DuckDB
-		data = result.Rows
+	// Apply limit if needed
+	if limit > 0 && len(data) > limit {
+		data = data[:limit]
 	}
 
-	e.logger.Info().Str("table", tableName).Int("rows", len(data)).Msg("Data retrieved successfully")
+	e.logger.Info().Str("table", tableName).Int("rows", len(data)).Msg("Data retrieved from storage")
 	return data, nil
 }
 
@@ -232,31 +234,19 @@ func (e *Engine) GetTableData(ctx context.Context, tableName string, limit int) 
 func (e *Engine) GetTableSchema(ctx context.Context, tableName string) (*parser.TableSchema, error) {
 	e.logger.Info().Str("table", tableName).Msg("Retrieving table schema")
 
-	// Try to get from storage first
-	schemaPath := fmt.Sprintf("tables/%s/schema.json", tableName)
-	schemaData, err := e.storageMgr.GetFileSystem().ReadFile(schemaPath)
-	if err == nil {
-		// Parse schema from storage
-		schema, err := e.deserializeTableSchema(schemaData)
-		if err == nil {
-			e.logger.Debug().Str("table", tableName).Msg("Retrieved schema from storage")
-			return schema, nil
-		}
-	}
-
-	// Fallback to DuckDB schema query
-	describeSQL := fmt.Sprintf("DESCRIBE %s", tableName)
-	e.logger.Debug().Str("sql", describeSQL).Msg("Querying DuckDB for table schema")
-	result, err := e.duckdbEngine.ExecuteQuery(ctx, describeSQL)
+	// Get schema from storage using Storage Manager
+	schemaData, err := e.storageMgr.GetTableSchema(tableName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe table: %w", err)
+		return nil, fmt.Errorf("failed to retrieve schema from storage: %w", err)
 	}
 
-	e.logger.Debug().Interface("result", result).Msg("DuckDB describe result")
+	// Parse schema from storage
+	schema, err := e.deserializeTableSchema(schemaData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deserialize schema: %w", err)
+	}
 
-	// Convert DuckDB schema to our TableSchema format
-	schema := e.convertDuckDBSchemaToTableSchema(result)
-	e.logger.Debug().Interface("converted_schema", schema).Msg("Converted schema")
+	e.logger.Info().Str("table", tableName).Msg("Schema retrieved from storage")
 	return schema, nil
 }
 

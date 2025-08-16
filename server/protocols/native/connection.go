@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/TFMV/icebox/server/query"
 	"github.com/rs/zerolog"
@@ -25,6 +27,11 @@ type ConnectionHandler struct {
 	// In-memory storage for tables (fallback)
 	tables map[string][][]interface{}
 	mu     sync.RWMutex
+
+	// Execution tracking
+	executionStart   time.Time
+	currentOperation string
+	isExecuting      bool
 }
 
 // NewConnectionHandler creates a new connection handler
@@ -39,9 +46,65 @@ func NewConnectionHandler(conn net.Conn, queryEngine *query.Engine, logger zerol
 	}
 }
 
+// startExecution tracks the start of an operation
+func (h *ConnectionHandler) startExecution(operation string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.executionStart = time.Now()
+	h.currentOperation = operation
+	h.isExecuting = true
+
+	if h.logger.GetLevel() <= zerolog.DebugLevel {
+		h.logger.Debug().
+			Str("client", h.conn.RemoteAddr().String()).
+			Str("operation", operation).
+			Time("start_time", h.executionStart).
+			Msg("Operation started")
+	}
+}
+
+// endExecution marks the completion of an operation
+func (h *ConnectionHandler) endExecution() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.isExecuting {
+		duration := time.Since(h.executionStart)
+		h.isExecuting = false
+
+		if h.logger.GetLevel() <= zerolog.DebugLevel {
+			h.logger.Debug().
+				Str("client", h.conn.RemoteAddr().String()).
+				Str("operation", h.currentOperation).
+				Dur("duration", duration).
+				Msg("Operation completed")
+		}
+	}
+}
+
+// logAbruptDisconnection logs when a connection closes during execution
+func (h *ConnectionHandler) logAbruptDisconnection() {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	if h.isExecuting && h.logger.GetLevel() <= zerolog.DebugLevel {
+		duration := time.Since(h.executionStart)
+		h.logger.Error().
+			Str("client", h.conn.RemoteAddr().String()).
+			Str("operation", h.currentOperation).
+			Dur("duration", duration).
+			Str("stack_trace", string(debug.Stack())).
+			Msg("Client disconnected during operation execution")
+	}
+}
+
 // Handle handles the client connection
 func (h *ConnectionHandler) Handle() error {
-	defer h.conn.Close()
+	defer func() {
+		h.logAbruptDisconnection()
+		h.conn.Close()
+	}()
 	h.logger.Debug().Str("client", h.conn.RemoteAddr().String()).Msg("New client connected")
 
 	for {
@@ -98,16 +161,22 @@ func (h *ConnectionHandler) Handle() error {
 			}
 		case ClientQuery:
 			h.logger.Debug().Msg("Handling ClientQuery message")
+			h.startExecution("ClientQuery")
 			if err := h.handleClientQuery(payload); err != nil {
+				h.endExecution()
 				h.logger.Error().Err(err).Msg("Failed to handle client query")
 				return err
 			}
+			h.endExecution()
 		case ClientData:
 			h.logger.Debug().Msg("Handling ClientData message")
+			h.startExecution("ClientData")
 			if err := h.handleClientData(payload); err != nil {
+				h.endExecution()
 				h.logger.Error().Err(err).Msg("Failed to handle client data")
 				return err
 			}
+			h.endExecution()
 		case ClientPing:
 			h.logger.Debug().Msg("Handling ClientPing message")
 			if err := h.handleClientPing(); err != nil {
@@ -117,6 +186,7 @@ func (h *ConnectionHandler) Handle() error {
 		default:
 			h.logger.Warn().Uint8("message_type", messageType).Msg("Unknown message type")
 			if err := h.sendException(fmt.Sprintf("Unknown message type: %d", messageType)); err != nil {
+				h.logger.Error().Err(err).Msg("Failed to send exception for unknown message type")
 				return err
 			}
 		}
@@ -359,13 +429,16 @@ func (h *ConnectionHandler) executeSelectQuery(query string) error {
 
 	h.logger.Debug().Str("table", tableName).Msg("Extracted table name from query")
 
-	// Get data from memory
-	h.mu.RLock()
-	rows, exists := h.tables[tableName]
-	h.mu.RUnlock()
+	// Get data from Query Engine (which will route to Storage Manager)
+	rows, err := h.queryEngine.GetTableData(context.Background(), tableName, 0) // 0 = no limit
+	if err != nil {
+		h.logger.Warn().Err(err).Str("table", tableName).Msg("Failed to get table data from Query Engine")
+		// Return empty result set
+		return h.sendEmptyResultSet()
+	}
 
-	if !exists {
-		h.logger.Warn().Str("table", tableName).Msg("Table not found")
+	if len(rows) == 0 {
+		h.logger.Debug().Str("table", tableName).Msg("No data found in table")
 		// Return empty result set
 		return h.sendEmptyResultSet()
 	}
@@ -485,15 +558,18 @@ func (h *ConnectionHandler) sendEmptyResultSet() error {
 	h.logger.Debug().Msg("Sending empty result set")
 
 	// Create payload for empty result set
-	// Format: columnCount (uvarint) + columnName (string) + columnType (string) + dataBlock (uvarint) + rowCount (uvarint) + data (string)
+	// Format: blockInfo (1 byte) + columnCount (uvarint) + dataBlock (uvarint) + rowCount (uvarint) + data (string)
 	payload := make([]byte, 0, 64)
+
+	// Block info (optional) - for now, send empty block info
+	// In ClickHouse protocol, this is typically 0x00 for no special info
+	payload = append(payload, 0x00)
 
 	// Column count = 0 (as uvarint)
 	columnCountBytes := make([]byte, binary.MaxVarintLen64)
 	n := binary.PutUvarint(columnCountBytes, 0)
 	payload = append(payload, columnCountBytes[:n]...)
 
-	// No column name or type for empty result set
 	// Data block = 0 (as uvarint)
 	dataBlockBytes := make([]byte, binary.MaxVarintLen64)
 	n2 := binary.PutUvarint(dataBlockBytes, 0)
@@ -532,17 +608,19 @@ func (h *ConnectionHandler) sendQueryResults(tableName string, rows [][]interfac
 	columnNames := []string{"id", "name", "email", "created_at"}
 	columnTypes := []string{"UInt32", "String", "String", "DateTime"}
 
-	// Create one ServerData packet with all column data
-	payload := make([]byte, 0, 1024)
+	// Send data in the format the client expects:
+	// For each column, send a separate ServerData packet with:
+	// columnCount (uvarint) + columnName (string) + columnType (string) + dataBlock (uvarint) + rowCount (uvarint) + data (string)
 
-	// Column count (uvarint) - total number of columns
-	columnCount := uint64(len(columnNames))
-	columnCountBytes := make([]byte, binary.MaxVarintLen64)
-	n := binary.PutUvarint(columnCountBytes, columnCount)
-	payload = append(payload, columnCountBytes[:n]...)
-
-	// Add all column names and types
 	for i, columnName := range columnNames {
+		// Create payload for this column
+		payload := make([]byte, 0, 256)
+
+		// Column count = 1 (as uvarint)
+		columnCountBytes := make([]byte, binary.MaxVarintLen64)
+		n := binary.PutUvarint(columnCountBytes, 1)
+		payload = append(payload, columnCountBytes[:n]...)
+
 		// Column name (4-byte big-endian length + string content)
 		columnNameLength := uint32(len(columnName))
 		columnNameLengthBytes := make([]byte, 4)
@@ -557,54 +635,49 @@ func (h *ConnectionHandler) sendQueryResults(tableName string, rows [][]interfac
 		binary.BigEndian.PutUint32(columnTypeLengthBytes, columnTypeLength)
 		payload = append(payload, columnTypeLengthBytes...)
 		payload = append(payload, []byte(columnType)...)
-	}
 
-	// Data block (uvarint) - placeholder for now
-	dataBlock := uint64(1)
-	dataBlockBytes := make([]byte, binary.MaxVarintLen64)
-	n = binary.PutUvarint(dataBlockBytes, dataBlock)
-	payload = append(payload, dataBlockBytes[:n]...)
+		// Data block (uvarint) - placeholder for now
+		dataBlock := uint64(1)
+		dataBlockBytes := make([]byte, binary.MaxVarintLen64)
+		n2 := binary.PutUvarint(dataBlockBytes, dataBlock)
+		payload = append(payload, dataBlockBytes[:n2]...)
 
-	// Row count (uvarint)
-	rowCount := uint64(len(rows))
-	rowCountBytes := make([]byte, binary.MaxVarintLen64)
-	n = binary.PutUvarint(rowCountBytes, rowCount)
-	payload = append(payload, rowCountBytes[:n]...)
+		// Row count (uvarint)
+		rowCount := uint64(len(rows))
+		rowCountBytes := make([]byte, binary.MaxVarintLen64)
+		n3 := binary.PutUvarint(rowCountBytes, rowCount)
+		payload = append(payload, rowCountBytes[:n3]...)
 
-	// Data (string) - serialize all rows as tab-separated values
-	var dataBuilder strings.Builder
-	for i, row := range rows {
-		for j, val := range row {
+		// Data (string) - serialize this column's data as comma-separated values
+		var dataBuilder strings.Builder
+		for j, row := range rows {
 			if j > 0 {
-				dataBuilder.WriteString("\t")
+				dataBuilder.WriteString(",")
 			}
-			dataBuilder.WriteString(fmt.Sprintf("%v", val))
+			dataBuilder.WriteString(fmt.Sprintf("%v", row[i]))
 		}
-		if i < len(rows)-1 {
-			dataBuilder.WriteString("\n")
+		data := dataBuilder.String()
+		dataLength := uint32(len(data))
+		dataLengthBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(dataLengthBytes, dataLength)
+		payload = append(payload, dataLengthBytes...)
+		payload = append(payload, []byte(data)...)
+
+		h.logger.Debug().
+			Str("column", columnName).
+			Int("rows", len(rows)).
+			Str("data", data).
+			Msg("Sending ServerData for column")
+
+		// Send ServerData packet for this column
+		if err := h.writer.WriteMessage(ServerData, payload); err != nil {
+			h.logger.Error().Err(err).Msg("Failed to write ServerData message")
+			return err
 		}
 	}
-	data := dataBuilder.String()
-	dataLength := uint32(len(data))
-	dataLengthBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(dataLengthBytes, dataLength)
-	payload = append(payload, dataLengthBytes...)
-	payload = append(payload, []byte(data)...)
 
-	h.logger.Debug().
-		Int("columns", len(columnNames)).
-		Int("rows", len(rows)).
-		Str("data", data).
-		Msg("Sending ServerData with all column data")
-
-	// Send the result as one ServerData packet
-	if err := h.writer.WriteMessage(ServerData, payload); err != nil {
-		h.logger.Error().Err(err).Msg("Failed to write ServerData message")
-		return err
-	}
-
-	h.logger.Debug().Msg("Sending ServerEndOfStream after data")
-	// Send EndOfStream after data
+	h.logger.Debug().Msg("Sending ServerEndOfStream after all columns")
+	// Send EndOfStream after all columns
 	return h.writer.WriteMessage(ServerEndOfStream, nil)
 }
 
@@ -710,22 +783,16 @@ func (h *ConnectionHandler) processDataBlock(block *DataBlock) error {
 		Interface("rows", len(block.Rows)).
 		Msg("Processing data block")
 
-	// Store the data in memory
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	// Initialize table if it doesn't exist
-	if h.tables[block.TableName] == nil {
-		h.tables[block.TableName] = make([][]interface{}, 0)
+	// Use Query Engine to store the data
+	if err := h.queryEngine.InsertData(context.Background(), block.TableName, block.Rows); err != nil {
+		h.logger.Error().Err(err).Str("table", block.TableName).Msg("Failed to store data via Query Engine")
+		return err
 	}
-
-	// Append the new rows
-	h.tables[block.TableName] = append(h.tables[block.TableName], block.Rows...)
 
 	h.logger.Info().
 		Str("table", block.TableName).
-		Int("total_rows", len(h.tables[block.TableName])).
-		Msg("Data stored successfully")
+		Int("total_rows", len(block.Rows)).
+		Msg("Data stored successfully via Query Engine")
 
 	return nil
 }
