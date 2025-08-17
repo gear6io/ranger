@@ -40,7 +40,6 @@ jobs:
         run: |
           echo "Running tests for all packages..."
           go test -v -race ./... 2>&1 | tee test-output.log
-        continue-on-error: true
 
       - name: Generate test summary
         run: |
@@ -48,7 +47,6 @@ jobs:
           echo "Packages with test failures:"
           go test ./... 2>&1 | grep -E "(FAIL|exit status)" | head -20 || echo "No test failures found"
           echo "==================="
-        continue-on-error: true
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -151,7 +149,6 @@ jobs:
 
       - name: Run integration tests
         run: make test-integration
-        continue-on-error: true
         env:
           ICEBOX_INTEGRATION_TESTS: "true"
 
