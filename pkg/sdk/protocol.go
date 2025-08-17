@@ -859,13 +859,17 @@ func (c *connection) readQueryResponse(query string) (*Rows, error) {
 			if len(allData) == 0 {
 				allData = make([][]interface{}, len(rowValues))
 				for i := range allData {
-					allData[i] = make([]interface{}, 0, 4) // 4 columns: id, name, email, created_at
+					allData[i] = make([]interface{}, 0, 10) // Start with capacity for 10 columns, will grow as needed
 				}
 			}
 
 			// Add the values for this column to each row
 			for i, value := range rowValues {
 				if i < len(allData) {
+					allData[i] = append(allData[i], strings.TrimSpace(value))
+				} else {
+					// If we have more values than expected rows, extend allData
+					allData = append(allData, make([]interface{}, 0, 10))
 					allData[i] = append(allData[i], strings.TrimSpace(value))
 				}
 			}

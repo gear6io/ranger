@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/TFMV/icebox/client"
+	"github.com/TFMV/icebox/server/query/parser"
 	"github.com/rs/zerolog"
 )
 
@@ -29,7 +30,26 @@ func (q *QueryCommand) Execute(ctx context.Context, query string) error {
 		return fmt.Errorf("query cannot be empty")
 	}
 
+	// Auto-append semicolon if missing (internal only)
+	originalQuery := query
+	if !strings.HasSuffix(strings.TrimSpace(query), ";") {
+		query = strings.TrimSpace(query) + ";"
+		q.logger.Debug().Str("original_input", originalQuery).Str("modified_query", query).Msg("Auto-appended semicolon internally")
+	}
+
 	q.logger.Debug().Str("query", query).Msg("Executing SQL query")
+
+	// Parse and format the query to show what will be executed
+	formattedQuery, err := q.parseAndFormatQuery(query)
+	if err != nil {
+		q.logger.Warn().Err(err).Msg("Failed to parse/format query, proceeding with original")
+		formattedQuery = query
+	}
+
+	// Show the formatted query that will be executed
+	if formattedQuery != query {
+		fmt.Printf("   %s\n\n", formattedQuery)
+	}
 
 	// Execute query via client
 	result, err := q.client.ExecuteQuery(ctx, query)
@@ -84,6 +104,23 @@ func (q *QueryCommand) displayResults(result *client.QueryResult) error {
 	}
 
 	return nil
+}
+
+// parseAndFormatQuery parses the query and returns a formatted version
+func (q *QueryCommand) parseAndFormatQuery(query string) (string, error) {
+	// Parse the query
+	ast, err := parser.Parse(query)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse query: %w", err)
+	}
+
+	// Format the query
+	formatted := parser.FormatQuery(ast)
+	if formatted == "" {
+		return "", fmt.Errorf("formatter returned empty string")
+	}
+
+	return formatted, nil
 }
 
 // Explain shows query execution plan

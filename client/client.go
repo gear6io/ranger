@@ -121,11 +121,14 @@ func (c *Client) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 	var data [][]interface{}
 	for rows.Next() {
 		// Get the current row data from the rows
-		// Note: rows.Current is already advanced by Next(), so we use Current-1
+		// rows.Current is 1-indexed and gets advanced by Next()
 		if rows.Current > 0 && rows.Current <= len(rows.Data) {
 			rowData := rows.Data[rows.Current-1]
 			if rowData != nil {
-				data = append(data, rowData)
+				// Create a copy of the row data to avoid reference issues
+				rowCopy := make([]interface{}, len(rowData))
+				copy(rowCopy, rowData)
+				data = append(data, rowCopy)
 			}
 		}
 	}

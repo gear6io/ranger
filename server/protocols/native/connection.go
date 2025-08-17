@@ -823,15 +823,90 @@ func (h *ConnectionHandler) sendQueryEngineResults(result *query.QueryResult) er
 		Int("column_count", len(result.Columns)).
 		Msg("Sending QueryEngine results")
 
-	// Send the data rows
-	if result.Data != nil {
-		if rows, ok := result.Data.([][]interface{}); ok {
-			for _, row := range rows {
-				if err := h.writer.WriteMessage(ServerData, h.serializeRow(row)); err != nil {
-					h.logger.Error().Err(err).Msg("Failed to send data row")
-					return err
-				}
+	// Check if we have data to send
+	if result.Data == nil || len(result.Columns) == 0 {
+		h.logger.Debug().Msg("No data or columns to send, sending empty result set")
+		return h.sendEmptyResultSet()
+	}
+
+	// Extract rows from the result
+	var rows [][]interface{}
+	if dataRows, ok := result.Data.([][]interface{}); ok {
+		rows = dataRows
+	} else {
+		h.logger.Warn().Msg("Result data is not in expected format, sending empty result set")
+		return h.sendEmptyResultSet()
+	}
+
+	if len(rows) == 0 {
+		h.logger.Debug().Msg("No rows to send, sending empty result set")
+		return h.sendEmptyResultSet()
+	}
+
+	// Send data in the format the client expects:
+	// For each column, send a separate ServerData packet with:
+	// columnCount (uvarint) + columnName (string) + columnType (string) + dataBlock (uvarint) + rowCount (uvarint) + data (string)
+
+	for i, columnName := range result.Columns {
+		// Determine column type (for now, use String as default)
+		columnType := "String"
+
+		// Extract values for this column from all rows
+		var columnValues []string
+		for _, row := range rows {
+			if i < len(row) {
+				// Convert the value to string
+				value := fmt.Sprintf("%v", row[i])
+				columnValues = append(columnValues, value)
+			} else {
+				// If row doesn't have enough columns, add NULL
+				columnValues = append(columnValues, "NULL")
 			}
+		}
+
+		// Join all values for this column with commas
+		dataString := strings.Join(columnValues, ",")
+
+		// Create payload for this column
+		payload := make([]byte, 0, 256)
+
+		// Column count = 1 (as uvarint)
+		columnCountBytes := make([]byte, binary.MaxVarintLen64)
+		n := binary.PutUvarint(columnCountBytes, 1)
+		payload = append(payload, columnCountBytes[:n]...)
+
+		// Column name (4-byte big-endian length + content)
+		nameLen := make([]byte, 4)
+		binary.BigEndian.PutUint32(nameLen, uint32(len(columnName)))
+		payload = append(payload, nameLen...)
+		payload = append(payload, []byte(columnName)...)
+
+		// Column type (4-byte big-endian length + content)
+		typeLen := make([]byte, 4)
+		binary.BigEndian.PutUint32(typeLen, uint32(len(columnType)))
+		payload = append(payload, typeLen...)
+		payload = append(payload, []byte(columnType)...)
+
+		// Data block = 0 (as uvarint)
+		dataBlockBytes := make([]byte, binary.MaxVarintLen64)
+		n2 := binary.PutUvarint(dataBlockBytes, 0)
+		payload = append(payload, dataBlockBytes[:n2]...)
+
+		// Row count (as uvarint)
+		rowCountBytes := make([]byte, binary.MaxVarintLen64)
+		n3 := binary.PutUvarint(rowCountBytes, uint64(len(rows)))
+		payload = append(payload, rowCountBytes[:n3]...)
+
+		// Data (4-byte big-endian length + string content)
+		dataLen := make([]byte, 4)
+		binary.BigEndian.PutUint32(dataLen, uint32(len(dataString)))
+		payload = append(payload, dataLen...)
+		payload = append(payload, []byte(dataString)...)
+
+		// Send ServerData for this column
+		if err := h.writer.WriteMessage(ServerData, payload); err != nil {
+			h.logger.Error().Err(err).Msg("Failed to send ServerData for column")
+			return err
 		}
 	}
 

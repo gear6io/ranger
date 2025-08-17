@@ -10,6 +10,7 @@ import (
 
 	"github.com/TFMV/icebox/client"
 	"github.com/TFMV/icebox/client/config"
+	"github.com/TFMV/icebox/server/query/parser"
 	"github.com/c-bata/go-prompt"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
@@ -298,11 +299,6 @@ func executor(client *client.Client, history *[]string, sigChan chan os.Signal) 
 			return
 		}
 
-		// Add to history (avoid duplicates)
-		if len(*history) == 0 || (*history)[len(*history)-1] != input {
-			*history = append(*history, input)
-		}
-
 		// Handle special commands
 		switch strings.ToLower(input) {
 		case "exit", "quit":
@@ -328,6 +324,17 @@ func executor(client *client.Client, history *[]string, sigChan chan os.Signal) 
 			return
 		}
 
+		// Auto-append semicolon if missing for SQL queries (internal only)
+		query := input
+		if !strings.HasSuffix(strings.TrimSpace(input), ";") {
+			query = strings.TrimSpace(input) + ";"
+		}
+
+		// Add to history (avoid duplicates) - store the original user input
+		if len(*history) == 0 || (*history)[len(*history)-1] != input {
+			*history = append(*history, input)
+		}
+
 		// Create a cancellable context for the query (no timeout)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -343,8 +350,21 @@ func executor(client *client.Client, history *[]string, sigChan chan os.Signal) 
 			}
 		}()
 
+		// Parse and format the query to show what will be executed
+		formattedQuery, err := parseAndFormatQuery(query)
+		if err != nil {
+			// Log warning but continue with original query
+			fmt.Printf("⚠️  Warning: Could not format query (%v)\n", err)
+			formattedQuery = query
+		}
+
+		// Show the formatted query that will be executed
+		if formattedQuery != query {
+			fmt.Printf("   %s\n\n", formattedQuery)
+		}
+
 		// Execute SQL query with context
-		result, err := client.ExecuteQuery(ctx, input)
+		result, err := client.ExecuteQuery(ctx, query)
 		if err != nil {
 			if ctx.Err() == context.Canceled {
 				fmt.Println("❌ Query cancelled")
@@ -531,4 +551,21 @@ func createCatalogCommand(client *client.Client) *cobra.Command {
 	)
 
 	return cmd
+}
+
+// parseAndFormatQuery parses the query and returns a formatted version
+func parseAndFormatQuery(query string) (string, error) {
+	// Parse the query
+	ast, err := parser.Parse(query)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse query: %w", err)
+	}
+
+	// Format the query
+	formatted := parser.FormatQuery(ast)
+	if formatted == "" {
+		return "", fmt.Errorf("formatter returned empty string")
+	}
+
+	return formatted, nil
 }
