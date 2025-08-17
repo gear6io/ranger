@@ -6,7 +6,7 @@ import (
 	"log"
 
 	"github.com/TFMV/icebox/server/catalog"
-	"github.com/TFMV/icebox/server/metadata/internal"
+	"github.com/TFMV/icebox/server/metadata/registry"
 	"github.com/TFMV/icebox/server/metadata/types"
 	"github.com/uptrace/bun"
 )
@@ -14,14 +14,14 @@ import (
 // MetadataManager coordinates between Iceberg catalog and personal metadata storage
 type MetadataManager struct {
 	iceberg catalog.CatalogInterface
-	storage *internal.Store
-	hybrid  *internal.HybridDeploymentManager
+	storage *registry.Store
+	hybrid  *registry.HybridDeploymentManager
 }
 
 // NewMetadataManager creates a new metadata manager with bun migrations
 func NewMetadataManager(catalog catalog.CatalogInterface, dbPath, basePath string) (*MetadataManager, error) {
 	// Create storage with bun migrations
-	storage, err := internal.NewStore(dbPath, basePath)
+	storage, err := registry.NewStore(dbPath, basePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage: %w", err)
 	}
@@ -36,7 +36,7 @@ func NewMetadataManager(catalog catalog.CatalogInterface, dbPath, basePath strin
 	if bunMigrator == nil {
 		return nil, fmt.Errorf("bun migrator not available")
 	}
-	manager.hybrid = internal.NewHybridDeploymentManager(storage, bunMigrator)
+	manager.hybrid = registry.NewHybridDeploymentManager(storage, bunMigrator)
 
 	return manager, nil
 }
@@ -137,12 +137,12 @@ func (mm *MetadataManager) GetCatalog() catalog.CatalogInterface {
 }
 
 // GetStorage returns the personal metadata storage
-func (mm *MetadataManager) GetStorage() *internal.Store {
+func (mm *MetadataManager) GetStorage() *registry.Store {
 	return mm.storage
 }
 
 // GetHybridManager returns the hybrid deployment manager
-func (mm *MetadataManager) GetHybridManager() *internal.HybridDeploymentManager {
+func (mm *MetadataManager) GetHybridManager() *registry.HybridDeploymentManager {
 	return mm.hybrid
 }
 

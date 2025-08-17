@@ -174,7 +174,7 @@ server/metadata/
 ├── manager_test.go       # Manager tests
 ├── README.md            # Main documentation
 ├── MIGRATION_SYSTEM.md  # This document
-└── internal/             # SQLite implementation with migrations
+└── registry/             # SQLite implementation with migrations
     ├── sqlite.go         # Main Store implementation
     ├── migration.go      # Migration manager
     ├── migrations.go     # Migration implementations
