@@ -291,23 +291,18 @@ func TestProductionSchemaConstraintsInStore(t *testing.T) {
 
 	t.Run("UniqueConstraints", func(t *testing.T) {
 		// Test that unique constraints are enforced
-		// Get system user ID
-		var userID int64
-		err := store.GetBunMigrationManager().GetDB().NewSelect().Column("id").Table("users").Where("username = ?", "system").Scan(ctx, &userID)
-		require.NoError(t, err)
-
 		// Insert first database
 		_, err = store.GetBunMigrationManager().GetDB().ExecContext(ctx, `
-			INSERT INTO databases (name, description, owner_id, is_system, is_read_only, table_count, total_size, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, "uniquetest", "test", userID, false, false, 0, 0, "2023-01-01T00:00:00Z", "2023-01-01T00:00:00Z")
+			INSERT INTO databases (name, description, is_system, is_read_only, table_count, total_size, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, "uniquetest", "test", false, false, 0, 0, "2023-01-01T00:00:00Z", "2023-01-01T00:00:00Z")
 		require.NoError(t, err)
 
 		// Try to insert duplicate database name
 		_, err = store.GetBunMigrationManager().GetDB().ExecContext(ctx, `
-			INSERT INTO databases (name, description, owner_id, is_system, is_read_only, table_count, total_size, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, "uniquetest", "test2", userID, false, false, 0, 0, "2023-01-01T00:00:00Z", "2023-01-01T00:00:00Z")
+			INSERT INTO databases (name, description, is_system, is_read_only, table_count, total_size, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, "uniquetest", "test2", false, false, 0, 0, "2023-01-01T00:00:00Z", "2023-01-01T00:00:00Z")
 
 		// This should fail due to unique constraint
 		assert.Error(t, err)

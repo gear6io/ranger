@@ -133,7 +133,6 @@ func (m *Migration001) createDatabasesTable(ctx context.Context, tx bun.Tx) erro
 			ID            int64  `bun:"id,pk,autoincrement"`
 			Name          string `bun:"name,unique,notnull,type:text"`
 			Description   string `bun:"description,type:text"`
-			OwnerID       int64  `bun:"owner_id,notnull"`
 			IsSystem      bool   `bun:"is_system,notnull,default:false"`
 			IsReadOnly    bool   `bun:"is_read_only,notnull,default:false"`
 			TableCount    int    `bun:"table_count,notnull,default:0"`
@@ -142,7 +141,6 @@ func (m *Migration001) createDatabasesTable(ctx context.Context, tx bun.Tx) erro
 			UpdatedAt     string `bun:"updated_at,notnull,type:text"`
 			DeletedAt     string `bun:"deleted_at,type:text"`
 		}{}).
-		ForeignKey(`("owner_id") REFERENCES "users" ("id") ON DELETE RESTRICT`).
 		IfNotExists().
 		Exec(ctx)
 	return err
@@ -386,15 +384,12 @@ func (m *Migration001) createSchemaVersionsTable(ctx context.Context, tx bun.Tx)
 
 // createPerformanceIndexes creates performance optimization indexes
 func (m *Migration001) createPerformanceIndexes(ctx context.Context, tx bun.Tx) error {
+	var err error
+
 	// Database indexes
-	_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_databases_name ON databases(name)`)
+	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_databases_name ON databases(name)`)
 	if err != nil {
 		return fmt.Errorf("failed to create databases name index: %w", err)
-	}
-
-	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_databases_owner ON databases(owner_id)`)
-	if err != nil {
-		return fmt.Errorf("failed to create databases owner index: %w", err)
 	}
 
 	// Table indexes
@@ -477,8 +472,8 @@ func (m *Migration001) insertDefaultUser(ctx context.Context, tx bun.Tx) error {
 
 	_, err := tx.ExecContext(ctx, `
 		INSERT OR IGNORE INTO users (username, email, full_name, role, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, "system", "system@icebox.local", "System User", "admin", true, now, now)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, "system", "system@icebox.local", "System User", "admin", true, now, now)
 
 	return err
 }

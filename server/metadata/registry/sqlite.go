@@ -95,9 +95,9 @@ func (sm *Store) IsUsingBun() bool {
 func (sm *Store) CreateDatabase(ctx context.Context, dbName string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	// Insert database record using new production schema
-	insertSQL := `INSERT INTO databases (name, description, owner_id, is_system, is_read_only, table_count, total_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err := sm.db.ExecContext(ctx, insertSQL, dbName, "", 1, false, false, 0, 0, now, now)
+	// Insert database record using new production schema (no ownership tracking)
+	insertSQL := `INSERT INTO databases (name, description, is_system, is_read_only, table_count, total_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err := sm.db.ExecContext(ctx, insertSQL, dbName, "", false, false, 0, 0, now, now)
 	if err != nil {
 		return fmt.Errorf("failed to create database %s: %w", dbName, err)
 	}
