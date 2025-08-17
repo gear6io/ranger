@@ -42,7 +42,8 @@ type Literal struct {
 
 // CreateDatabaseStmt represents a CREATE DATABASE statement
 type CreateDatabaseStmt struct {
-	Name *Identifier
+	Name        *Identifier
+	IfNotExists bool
 }
 
 // DropDatabaseStmt represents a DROP DATABASE statement
@@ -71,6 +72,8 @@ type CreateTableStmt struct {
 	Compress    bool
 	Encrypt     bool
 	EncryptKey  *Literal
+	Engine      *Identifier // Storage engine (e.g., MEMORY, FILESYSTEM, S3)
+	IfNotExists bool
 }
 
 // DropTableStmt represents a DROP TABLE statement

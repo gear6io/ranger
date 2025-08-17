@@ -5,11 +5,21 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"time"
 
+	"github.com/TFMV/icebox/server/metadata/registry/migrations"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/sqlitedialect"
 )
+
+// Migration interface that all migration files must implement
+type Migration interface {
+	Version() int
+	Name() string
+	Description() string
+	Up(ctx context.Context, tx bun.Tx) error
+}
 
 // MigrationStatus represents the status of a migration
 type MigrationStatus struct {
@@ -42,134 +52,123 @@ func NewBunMigrationManager(dbPath string) (*BunMigrationManager, error) {
 		dbPath: dbPath,
 	}
 
-	// Run initial schema creation
+	// Run migrations (this will create the initial schema)
 	ctx := context.Background()
-	if err := manager.createInitialSchema(ctx); err != nil {
+	if err := manager.MigrateToLatest(ctx); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("failed to create initial schema: %w", err)
+		// On migration failure, kill the service
+		log.Fatalf("Migration failed: %v. Service will exit.", err)
 	}
 
 	return manager, nil
-}
-
-// createInitialSchema creates the initial database schema
-func (bmm *BunMigrationManager) createInitialSchema(ctx context.Context) error {
-	// Create databases table
-	_, err := bmm.db.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel `bun:"table:databases"`
-			Name          string `bun:"name,pk,type:text"`
-			Created       string `bun:"created,type:text,notnull"`
-			Modified      string `bun:"modified,type:text,notnull"`
-			TableCount    int    `bun:"table_count,type:integer,default:0"`
-		}{}).
-		IfNotExists().
-		Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create databases table: %w", err)
-	}
-
-	// Create tables table
-	_, err = bmm.db.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel `bun:"table:tables"`
-			DatabaseName  string `bun:"database_name,type:text,notnull"`
-			TableName     string `bun:"table_name,type:text,notnull"`
-			Created       string `bun:"created,type:text,notnull"`
-			Modified      string `bun:"modified,type:text,notnull"`
-		}{}).
-		ForeignKey(`("database_name") REFERENCES "databases" ("name") ON DELETE CASCADE`).
-		IfNotExists().
-		Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create tables table: %w", err)
-	}
-
-	// Create table_metadata table for detailed table information
-	_, err = bmm.db.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel `bun:"table:table_metadata"`
-			DatabaseName  string `bun:"database_name,type:text,notnull"`
-			TableName     string `bun:"table_name,type:text,notnull"`
-			Schema        []byte `bun:"schema,type:blob"`
-			StorageEngine string `bun:"storage_engine,type:text,notnull"`
-			EngineConfig  string `bun:"engine_config,type:text,default:'{}'"`
-			FileCount     int    `bun:"file_count,type:integer,default:0"`
-			TotalSize     int64  `bun:"total_size,type:integer,default:0"`
-			LastModified  string `bun:"last_modified,type:text,notnull"`
-			Created       string `bun:"created,type:text,notnull"`
-		}{}).
-		ForeignKey(`("database_name") REFERENCES "databases" ("name") ON DELETE CASCADE`).
-		ForeignKey(`("table_name") REFERENCES "tables" ("table_name") ON DELETE CASCADE`).
-		IfNotExists().
-		Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create table_metadata table: %w", err)
-	}
-
-	// Create table_files table for file tracking
-	_, err = bmm.db.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel `bun:"table:table_files"`
-			DatabaseName  string `bun:"database_name,type:text,notnull"`
-			TableName     string `bun:"table_name,type:text,notnull"`
-			FileName      string `bun:"file_name,type:text,notnull"`
-			FileSize      int64  `bun:"file_size,type:integer,notnull"`
-			Created       string `bun:"created,type:text,notnull"`
-			Modified      string `bun:"modified,type:text,notnull"`
-			Date          string `bun:"date,type:text,notnull"`
-		}{}).
-		ForeignKey(`("database_name") REFERENCES "databases" ("name") ON DELETE CASCADE`).
-		ForeignKey(`("table_name") REFERENCES "tables" ("table_name") ON DELETE CASCADE`).
-		IfNotExists().
-		Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create table_files table: %w", err)
-	}
-
-	// Create migrations table for tracking
-	_, err = bmm.db.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel `bun:"table:bun_migrations"`
-			Version       int    `bun:"version,pk,type:integer"`
-			Name          string `bun:"name,type:text,notnull"`
-			AppliedAt     string `bun:"applied_at,type:text,notnull"`
-		}{}).
-		IfNotExists().
-		Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create migrations table: %w", err)
-	}
-
-	// Insert initial migration record
-	_, err = bmm.db.ExecContext(ctx,
-		"INSERT OR IGNORE INTO bun_migrations (version, name, applied_at) VALUES (?, ?, ?)",
-		1, "initial_schema", "now")
-	if err != nil {
-		return fmt.Errorf("failed to insert initial migration record: %w", err)
-	}
-
-	return nil
 }
 
 // MigrateToLatest runs all pending migrations
 func (bmm *BunMigrationManager) MigrateToLatest(ctx context.Context) error {
 	log.Println("🔄 Running bun migrations...")
 
-	// For now, just verify schema exists
-	if err := bmm.VerifySchema(ctx); err != nil {
-		return fmt.Errorf("migration failed: %w", err)
+	// Get current version
+	currentVersion, err := bmm.GetCurrentVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get current version: %w", err)
 	}
 
-	log.Println("✅ Migrations completed successfully")
+	// Get all available migrations
+	availableMigrations := bmm.getAvailableMigrations()
+
+	// Find pending migrations
+	var pendingMigrations []Migration
+	for _, migration := range availableMigrations {
+		if migration.Version() > currentVersion {
+			pendingMigrations = append(pendingMigrations, migration)
+		}
+	}
+
+	if len(pendingMigrations) == 0 {
+		log.Println("✅ No pending migrations")
+		return nil
+	}
+
+	// Begin single transaction for all migrations
+	tx, err := bmm.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction for migrations: %w", err)
+	}
+
+	// Run all pending migrations within the transaction
+	for _, migration := range pendingMigrations {
+		log.Printf("🔄 Running migration %d: %s", migration.Version(), migration.Name())
+
+		// Run migration UP within the transaction
+		if err := migration.Up(ctx, tx); err != nil {
+			// Rollback transaction on any failure
+			if rbErr := tx.Rollback(); rbErr != nil {
+				log.Printf("⚠️ Failed to rollback transaction: %v", rbErr)
+			}
+
+			// Log migration failure and kill service
+			log.Printf("❌ Migration %d (%s) failed: %v", migration.Version(), migration.Name(), err)
+			log.Fatalf("Migration failed. Service will exit. Rollback transaction completed.")
+		}
+
+		log.Printf("✅ Migration %d (%s) completed successfully", migration.Version(), migration.Name())
+	}
+
+	// Record all migrations in migrations table within the transaction
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, migration := range pendingMigrations {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO bun_migrations (version, name, applied_at) VALUES (?, ?, ?)
+		`, migration.Version(), migration.Name(), now)
+
+		if err != nil {
+			// Rollback transaction on recording failure
+			if rbErr := tx.Rollback(); rbErr != nil {
+				log.Printf("⚠️ Failed to rollback transaction: %v", rbErr)
+			}
+
+			log.Printf("❌ Failed to record migration %d: %v", migration.Version(), err)
+			log.Fatalf("Migration recording failed. Service will exit. Rollback transaction completed.")
+		}
+	}
+
+	// Commit transaction - all migrations succeed or none do
+	if err := tx.Commit(); err != nil {
+		log.Printf("❌ Failed to commit migrations: %v", err)
+		log.Fatalf("Migration commit failed. Service will exit.")
+	}
+
+	log.Println("✅ All migrations completed successfully")
 	return nil
+}
+
+// getAvailableMigrations returns all available migrations (hardcoded)
+func (bmm *BunMigrationManager) getAvailableMigrations() []Migration {
+	return []Migration{
+		&migrations.Migration001{}, // from migrations/001_start.go
+		// Future migrations will be added here
+	}
 }
 
 // GetCurrentVersion returns the current migration version
 func (bmm *BunMigrationManager) GetCurrentVersion(ctx context.Context) (int, error) {
+	// First check if migrations table exists
+	exists, err := bmm.tableExists(ctx, "bun_migrations")
+	if err != nil {
+		return 0, fmt.Errorf("failed to check migrations table: %w", err)
+	}
+
+	if !exists {
+		// Create migrations table if it doesn't exist
+		if err := bmm.createMigrationsTable(ctx); err != nil {
+			return 0, fmt.Errorf("failed to create migrations table: %w", err)
+		}
+		return 0, nil
+	}
+
 	// Query the migrations table
 	var version int
-	err := bmm.db.NewSelect().
+	err = bmm.db.NewSelect().
 		Column("version").
 		Table("bun_migrations").
 		Order("version DESC").
@@ -186,8 +185,32 @@ func (bmm *BunMigrationManager) GetCurrentVersion(ctx context.Context) (int, err
 	return version, nil
 }
 
+// createMigrationsTable creates the migrations tracking table
+func (bmm *BunMigrationManager) createMigrationsTable(ctx context.Context) error {
+	_, err := bmm.db.NewCreateTable().
+		Model(&struct {
+			bun.BaseModel `bun:"table:bun_migrations"`
+			Version       int    `bun:"version,pk,type:integer"`
+			Name          string `bun:"name,type:text,notnull"`
+			AppliedAt     string `bun:"applied_at,type:text,notnull"`
+		}{}).
+		IfNotExists().
+		Exec(ctx)
+	return err
+}
+
 // GetMigrationStatus returns migration status
 func (bmm *BunMigrationManager) GetMigrationStatus(ctx context.Context) ([]MigrationStatus, error) {
+	// Check if migrations table exists
+	exists, err := bmm.tableExists(ctx, "bun_migrations")
+	if err != nil {
+		return nil, fmt.Errorf("failed to check migrations table: %w", err)
+	}
+
+	if !exists {
+		return []MigrationStatus{}, nil
+	}
+
 	// Query the migrations table
 	var migrations []struct {
 		Version   int    `bun:"version"`
@@ -195,7 +218,7 @@ func (bmm *BunMigrationManager) GetMigrationStatus(ctx context.Context) ([]Migra
 		AppliedAt string `bun:"applied_at"`
 	}
 
-	err := bmm.db.NewSelect().
+	err = bmm.db.NewSelect().
 		Model(&migrations).
 		Table("bun_migrations").
 		Order("version ASC").
@@ -221,8 +244,12 @@ func (bmm *BunMigrationManager) GetMigrationStatus(ctx context.Context) ([]Migra
 
 // VerifySchema verifies that the current schema matches expectations
 func (bmm *BunMigrationManager) VerifySchema(ctx context.Context) error {
-	// Check if expected tables exist
-	expectedTables := []string{"bun_migrations", "databases", "tables", "table_metadata", "table_files"}
+	// Check if expected tables exist (new production schema tables)
+	expectedTables := []string{
+		"bun_migrations", "users", "databases", "tables", "table_metadata",
+		"table_files", "table_partitions", "table_indexes", "table_constraints",
+		"table_columns", "table_statistics", "access_log", "schema_versions",
+	}
 
 	for _, tableName := range expectedTables {
 		exists, err := bmm.tableExists(ctx, tableName)

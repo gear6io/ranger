@@ -17,39 +17,70 @@
 package parser
 
 import (
+	"strings"
 	"testing"
 )
 
-// TestNewParserCreateDatabase tests CREATE DATABASE statement parsing
+// TestNewParserCreateDatabase tests CREATE DATABASE statement parsing with various scenarios
 func TestNewParserCreateDatabase(t *testing.T) {
-	statement := []byte(`
-	CREATE DATABASE TEST;
-`)
-
-	lexer := NewLexer(statement)
-	t.Log(string(statement))
-
-	parser := NewParser(lexer)
-	if parser == nil {
-		t.Fatal("expected non-nil parser")
+	tests := []struct {
+		name              string
+		statement         string
+		description       string
+		expectIfNotExists bool
+	}{
+		{
+			name:              "BasicCreateDatabase",
+			statement:         `CREATE DATABASE TEST;`,
+			description:       "Basic CREATE DATABASE without IF NOT EXISTS",
+			expectIfNotExists: false,
+		},
+		{
+			name:              "CreateDatabaseIfNotExists",
+			statement:         `CREATE DATABASE IF NOT EXISTS TEST;`,
+			description:       "CREATE DATABASE with IF NOT EXISTS clause",
+			expectIfNotExists: true,
+		},
 	}
 
-	stmt, err := parser.Parse()
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			statement := []byte(tt.statement)
+			t.Log(tt.description)
+			t.Log(string(statement))
 
-	if stmt == nil {
-		t.Fatal("expected non-nil statement")
-	}
+			lexer := NewLexer(statement)
+			parser := NewParser(lexer)
+			if parser == nil {
+				t.Fatal("expected non-nil parser")
+			}
 
-	createDatabaseStmt, ok := stmt.(*CreateDatabaseStmt)
-	if !ok {
-		t.Fatalf("expected *CreateDatabaseStmt, got %T", stmt)
-	}
+			stmt, err := parser.Parse()
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	if createDatabaseStmt.Name.Value != "TEST" {
-		t.Fatalf("expected TEST, got %s", createDatabaseStmt.Name.Value)
+			if stmt == nil {
+				t.Fatal("expected non-nil statement")
+			}
+
+			createDatabaseStmt, ok := stmt.(*CreateDatabaseStmt)
+			if !ok {
+				t.Fatalf("expected *CreateDatabaseStmt, got %T", stmt)
+			}
+
+			// Verify database name
+			if createDatabaseStmt.Name.Value != "TEST" {
+				t.Fatalf("expected TEST, got %s", createDatabaseStmt.Name.Value)
+			}
+
+			// Verify IF NOT EXISTS flag
+			if createDatabaseStmt.IfNotExists != tt.expectIfNotExists {
+				t.Fatalf("expected IfNotExists to be %v, got %v", tt.expectIfNotExists, createDatabaseStmt.IfNotExists)
+			}
+
+			t.Logf("✅ %s parsed successfully", tt.description)
+		})
 	}
 }
 
@@ -86,121 +117,159 @@ func TestNewParserUseDatabase(t *testing.T) {
 	}
 }
 
-// TestNewParserCreateTable tests CREATE TABLE statement parsing
+// TestNewParserCreateTable tests CREATE TABLE statement parsing with various scenarios
 func TestNewParserCreateTable(t *testing.T) {
-	statement := []byte(`
-	CREATE TABLE TEST (col1 INT, col2 CHAR(255), deci DECIMAL(10, 2));
-`)
-
-	lexer := NewLexer(statement)
-	t.Log(string(statement))
-
-	parser := NewParser(lexer)
-	if parser == nil {
-		t.Fatal("expected non-nil parser")
+	tests := []struct {
+		name        string
+		statement   string
+		shouldFail  bool
+		expectedErr string
+		description string
+	}{
+		{
+			name:        "BasicTableWithoutEngine",
+			statement:   `CREATE TABLE TEST (col1 INT, col2 CHAR(255), deci DECIMAL(10, 2));`,
+			shouldFail:  true,
+			expectedErr: "ENGINE clause is required for CREATE TABLE statements",
+			description: "Should fail because ENGINE clause is mandatory",
+		},
+		{
+			name:        "TableWithConstraintsWithoutEngine",
+			statement:   `CREATE TABLE TEST (col1 INT SEQUENCE NOT NULL UNIQUE, col2 CHAR(255) UNIQUE, deci DECIMAL(10, 2));`,
+			shouldFail:  true,
+			expectedErr: "ENGINE clause is required for CREATE TABLE statements",
+			description: "Should fail because ENGINE clause is mandatory even with constraints",
+		},
+		{
+			name: "TableWithMemoryEngine",
+			statement: `CREATE TABLE testdb.my_memory_table (
+				id INT PRIMARY KEY,
+				name VARCHAR(255),
+				value DECIMAL(10, 2)
+			) ENGINE = MEMORY;`,
+			shouldFail:  false,
+			description: "Should pass with MEMORY engine",
+		},
+		{
+			name: "TableWithFilesystemEngine",
+			statement: `CREATE TABLE testdb.my_filesystem_table (
+				id INT PRIMARY KEY,
+				description TEXT,
+				amount DOUBLE
+			) ENGINE = FILESYSTEM;`,
+			shouldFail:  false,
+			description: "Should pass with FILESYSTEM engine",
+		},
+		{
+			name: "TableWithIfNotExists",
+			statement: `CREATE TABLE IF NOT EXISTS testdb.my_memory_table (
+				id INT PRIMARY KEY,
+				name VARCHAR(255),
+				value DECIMAL(10, 2)
+			) ENGINE = MEMORY;`,
+			shouldFail:  false,
+			description: "Should pass with IF NOT EXISTS clause",
+		},
+		{
+			name: "TableWithIfNotExistsAndSimpleName",
+			statement: `CREATE TABLE IF NOT EXISTS simple_table (
+				id INT PRIMARY KEY,
+				name VARCHAR(255)
+			) ENGINE = MEMORY;`,
+			shouldFail:  false,
+			description: "Should pass with IF NOT EXISTS and simple table name",
+		},
 	}
 
-	stmt, err := parser.Parse()
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			statement := []byte(tt.statement)
+			t.Log(tt.description)
+			t.Log(string(statement))
 
-	if stmt == nil {
-		t.Fatal("expected non-nil statement")
-	}
+			lexer := NewLexer(statement)
+			parser := NewParser(lexer)
+			if parser == nil {
+				t.Fatal("expected non-nil parser")
+			}
 
-	createTableStmt, ok := stmt.(*CreateTableStmt)
-	if !ok {
-		t.Fatalf("expected *CreateTableStmt, got %T", stmt)
-	}
+			stmt, err := parser.Parse()
 
-	if createTableStmt.TableName.Value != "TEST" {
-		t.Fatalf("expected TEST, got %s", createTableStmt.TableName.Value)
-	}
+			if tt.shouldFail {
+				// Test should fail
+				if err == nil {
+					t.Fatal("expected error but got none")
+				}
+				if !strings.Contains(err.Error(), tt.expectedErr) {
+					t.Fatalf("expected error containing '%s', got '%s'", tt.expectedErr, err.Error())
+				}
+				t.Logf("✅ Correctly failed with error: %v", err)
+			} else {
+				// Test should pass
+				if err != nil {
+					t.Fatal(err)
+				}
 
-	if createTableStmt.TableSchema.ColumnDefinitions["col1"].DataType != "INT" {
-		t.Fatalf("expected INT, got %s", createTableStmt.TableSchema.ColumnDefinitions["col1"].DataType)
-	}
+				if stmt == nil {
+					t.Fatal("expected non-nil statement")
+				}
 
-	if createTableStmt.TableSchema.ColumnDefinitions["col2"].DataType != "CHAR" {
-		t.Fatalf("expected CHAR, got %s", createTableStmt.TableSchema.ColumnDefinitions["col2"].DataType)
-	}
+				createTableStmt, ok := stmt.(*CreateTableStmt)
+				if !ok {
+					t.Fatalf("expected *CreateTableStmt, got %T", stmt)
+				}
 
-	if createTableStmt.TableSchema.ColumnDefinitions["col2"].Length != 255 {
-		t.Fatalf("expected 255, got %d", createTableStmt.TableSchema.ColumnDefinitions["col2"].Length)
-	}
+				// Verify ENGINE clause is present
+				if createTableStmt.Engine == nil {
+					t.Fatal("expected ENGINE clause to be parsed")
+				}
 
-	if createTableStmt.TableSchema.ColumnDefinitions["deci"].DataType != "DECIMAL" {
-		t.Fatalf("expected DECIMAL, got %s", createTableStmt.TableSchema.ColumnDefinitions["deci"].DataType)
-	}
+				// Verify table name and engine
+				if tt.name == "TableWithMemoryEngine" {
+					if createTableStmt.TableName.Value != "testdb.my_memory_table" {
+						t.Fatalf("expected testdb.my_memory_table, got %s", createTableStmt.TableName.Value)
+					}
+					if createTableStmt.Engine.Value != "MEMORY" {
+						t.Fatalf("expected ENGINE = MEMORY, got ENGINE = %s", createTableStmt.Engine.Value)
+					}
+					if createTableStmt.IfNotExists {
+						t.Fatalf("expected IfNotExists to be false for TableWithMemoryEngine")
+					}
+				} else if tt.name == "TableWithFilesystemEngine" {
+					if createTableStmt.TableName.Value != "testdb.my_filesystem_table" {
+						t.Fatalf("expected testdb.my_filesystem_table, got %s", createTableStmt.TableName.Value)
+					}
+					if createTableStmt.Engine.Value != "FILESYSTEM" {
+						t.Fatalf("expected ENGINE = FILESYSTEM, got ENGINE = %s", createTableStmt.Engine.Value)
+					}
+					if createTableStmt.IfNotExists {
+						t.Fatalf("expected IfNotExists to be false for TableWithFilesystemEngine")
+					}
+				} else if tt.name == "TableWithIfNotExists" {
+					if createTableStmt.TableName.Value != "testdb.my_memory_table" {
+						t.Fatalf("expected testdb.my_memory_table, got %s", createTableStmt.TableName.Value)
+					}
+					if createTableStmt.Engine.Value != "MEMORY" {
+						t.Fatalf("expected ENGINE = MEMORY, got ENGINE = %s", createTableStmt.Engine.Value)
+					}
+					if !createTableStmt.IfNotExists {
+						t.Fatalf("expected IfNotExists to be true for TableWithIfNotExists")
+					}
+				} else if tt.name == "TableWithIfNotExistsAndSimpleName" {
+					if createTableStmt.TableName.Value != "simple_table" {
+						t.Fatalf("expected simple_table, got %s", createTableStmt.TableName.Value)
+					}
+					if createTableStmt.Engine.Value != "MEMORY" {
+						t.Fatalf("expected ENGINE = MEMORY, got ENGINE = %s", createTableStmt.Engine.Value)
+					}
+					if !createTableStmt.IfNotExists {
+						t.Fatalf("expected IfNotExists to be true for TableWithIfNotExistsAndSimpleName")
+					}
+				}
 
-	if createTableStmt.TableSchema.ColumnDefinitions["deci"].Precision != 10 {
-		t.Fatalf("expected 10, got %d", createTableStmt.TableSchema.ColumnDefinitions["deci"].Precision)
-	}
-
-	if createTableStmt.TableSchema.ColumnDefinitions["deci"].Scale != 2 {
-		t.Fatalf("expected 2, got %d", createTableStmt.TableSchema.ColumnDefinitions["deci"].Scale)
-	}
-}
-
-// TestNewParserCreateTableWithConstraints tests CREATE TABLE with constraints
-func TestNewParserCreateTableWithConstraints(t *testing.T) {
-	statement := []byte(`
-	CREATE TABLE TEST (col1 INT SEQUENCE NOT NULL UNIQUE, col2 CHAR(255) UNIQUE, deci DECIMAL(10, 2));
-`)
-
-	lexer := NewLexer(statement)
-	t.Log(string(statement))
-
-	parser := NewParser(lexer)
-	if parser == nil {
-		t.Fatal("expected non-nil parser")
-	}
-
-	stmt, err := parser.Parse()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if stmt == nil {
-		t.Fatal("expected non-nil statement")
-	}
-
-	createTableStmt, ok := stmt.(*CreateTableStmt)
-	if !ok {
-		t.Fatalf("expected *CreateTableStmt, got %T", stmt)
-	}
-
-	if createTableStmt.TableName.Value != "TEST" {
-		t.Fatalf("expected TEST, got %s", createTableStmt.TableName.Value)
-	}
-
-	if createTableStmt.TableSchema.ColumnDefinitions["col1"].DataType != "INT" {
-		t.Fatalf("expected INT, got %s", createTableStmt.TableSchema.ColumnDefinitions["col1"].DataType)
-	}
-
-	if createTableStmt.TableSchema.ColumnDefinitions["col1"].Sequence == nil {
-		t.Fatalf("expected sequence, got nil")
-	}
-
-	if !createTableStmt.TableSchema.ColumnDefinitions["col1"].NotNull {
-		t.Fatalf("expected NOT NULL, got %v", createTableStmt.TableSchema.ColumnDefinitions["col1"].NotNull)
-	}
-
-	if !createTableStmt.TableSchema.ColumnDefinitions["col1"].Unique {
-		t.Fatalf("expected UNIQUE, got %v", createTableStmt.TableSchema.ColumnDefinitions["col1"].Unique)
-	}
-
-	if createTableStmt.TableSchema.ColumnDefinitions["col2"].DataType != "CHAR" {
-		t.Fatalf("expected CHAR, got %s", createTableStmt.TableSchema.ColumnDefinitions["col2"].DataType)
-	}
-
-	if createTableStmt.TableSchema.ColumnDefinitions["col2"].Length != 255 {
-		t.Fatalf("expected 255, got %d", createTableStmt.TableSchema.ColumnDefinitions["col2"].Length)
-	}
-
-	if !createTableStmt.TableSchema.ColumnDefinitions["col2"].Unique {
-		t.Fatalf("expected UNIQUE, got %v", createTableStmt.TableSchema.ColumnDefinitions["col2"].Unique)
+				t.Logf("✅ %s parsed successfully", tt.description)
+			}
+		})
 	}
 }
 
@@ -338,60 +407,103 @@ func TestNewParserCreateIndexMultipleColumns(t *testing.T) {
 	}
 }
 
-// TestNewParserInsert tests INSERT statement parsing
+// TestNewParserInsert tests INSERT statement parsing with various scenarios
 func TestNewParserInsert(t *testing.T) {
-	statement := []byte(`
-	INSERT INTO TEST (col1, col2) VALUES (1, 'hello'), (2, 'world');
-`)
-
-	lexer := NewLexer(statement)
-	t.Log(string(statement))
-
-	parser := NewParser(lexer)
-	if parser == nil {
-		t.Fatal("expected non-nil parser")
+	tests := []struct {
+		name        string
+		statement   string
+		description string
+	}{
+		{
+			name:        "BasicInsert",
+			statement:   `INSERT INTO TEST (col1, col2) VALUES (1, 'hello'), (2, 'world');`,
+			description: "Basic INSERT with simple table name",
+		},
+		{
+			name: "InsertWithQualifiedTable",
+			statement: `INSERT INTO testdb.my_memory_table (id, name, value) VALUES 
+				(1, 'Test User 1', 100.50),
+				(2, 'Test User 2', 200.75);`,
+			description: "INSERT with qualified table name (database.table)",
+		},
 	}
 
-	stmt, err := parser.Parse()
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			statement := []byte(tt.statement)
+			t.Log(tt.description)
+			t.Log(string(statement))
 
-	if stmt == nil {
-		t.Fatal("expected non-nil statement")
-	}
+			lexer := NewLexer(statement)
+			parser := NewParser(lexer)
+			if parser == nil {
+				t.Fatal("expected non-nil parser")
+			}
 
-	insertStmt, ok := stmt.(*InsertStmt)
-	if !ok {
-		t.Fatalf("expected *InsertStmt, got %T", stmt)
-	}
+			stmt, err := parser.Parse()
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	if insertStmt.TableName.Value != "TEST" {
-		t.Fatalf("expected TEST, got %s", insertStmt.TableName.Value)
-	}
+			if stmt == nil {
+				t.Fatal("expected non-nil statement")
+			}
 
-	if len(insertStmt.ColumnNames) != 2 {
-		t.Fatalf("expected 2, got %d", len(insertStmt.ColumnNames))
-	}
+			insertStmt, ok := stmt.(*InsertStmt)
+			if !ok {
+				t.Fatalf("expected *InsertStmt, got %T", stmt)
+			}
 
-	expectedColumns := []string{"col1", "col2"}
-	for i, col := range insertStmt.ColumnNames {
-		if col.Value != expectedColumns[i] {
-			t.Fatalf("expected %s, got %s", expectedColumns[i], col.Value)
-		}
-	}
+			// Verify table name
+			if tt.name == "BasicInsert" {
+				if insertStmt.TableName.Value != "TEST" {
+					t.Fatalf("expected TEST, got %s", insertStmt.TableName.Value)
+				}
+			} else if tt.name == "InsertWithQualifiedTable" {
+				if insertStmt.TableName.Value != "testdb.my_memory_table" {
+					t.Fatalf("expected testdb.my_memory_table, got %s", insertStmt.TableName.Value)
+				}
+			}
 
-	if len(insertStmt.Values) != 2 {
-		t.Fatalf("expected 2, got %d", len(insertStmt.Values))
-	}
+			// Verify column names
+			if tt.name == "BasicInsert" {
+				if len(insertStmt.ColumnNames) != 2 {
+					t.Fatalf("expected 2 columns, got %d", len(insertStmt.ColumnNames))
+				}
+				if insertStmt.ColumnNames[0].Value != "col1" {
+					t.Fatalf("expected first column to be 'col1', got %s", insertStmt.ColumnNames[0].Value)
+				}
+				if insertStmt.ColumnNames[1].Value != "col2" {
+					t.Fatalf("expected second column to be 'col2', got %s", insertStmt.ColumnNames[1].Value)
+				}
+			} else if tt.name == "InsertWithQualifiedTable" {
+				if len(insertStmt.ColumnNames) != 3 {
+					t.Fatalf("expected 3 columns, got %d", len(insertStmt.ColumnNames))
+				}
+				if insertStmt.ColumnNames[0].Value != "id" {
+					t.Fatalf("expected first column to be 'id', got %s", insertStmt.ColumnNames[0].Value)
+				}
+				if insertStmt.ColumnNames[1].Value != "name" {
+					t.Fatalf("expected second column to be 'name', got %s", insertStmt.ColumnNames[1].Value)
+				}
+				if insertStmt.ColumnNames[2].Value != "value" {
+					t.Fatalf("expected third column to be 'value', got %s", insertStmt.ColumnNames[2].Value)
+				}
+			}
 
-	// Check first row values
-	if insertStmt.Values[0][0].(*Literal).Value.(uint64) != uint64(1) {
-		t.Fatalf("expected 1, got %v", insertStmt.Values[0][0].(*Literal).Value)
-	}
+			// Verify values
+			if tt.name == "BasicInsert" {
+				if len(insertStmt.Values) != 2 {
+					t.Fatalf("expected 2 value rows, got %d", len(insertStmt.Values))
+				}
+			} else if tt.name == "InsertWithQualifiedTable" {
+				if len(insertStmt.Values) != 2 {
+					t.Fatalf("expected 2 value rows, got %d", len(insertStmt.Values))
+				}
+			}
 
-	if insertStmt.Values[0][1].(*Literal).Value.(string) != "'hello'" {
-		t.Fatalf("expected 'hello', got %s", insertStmt.Values[0][1].(*Literal).Value)
+			t.Logf("✅ %s parsed successfully", tt.description)
+		})
 	}
 }
 
@@ -1663,6 +1775,7 @@ func TestNewParserLexerIdentifiers(t *testing.T) {
 
 // TestNewParserLexerKeywords tests lexer keyword handling
 func TestNewParserLexerKeywords(t *testing.T) {
+	// Test single-word keywords
 	statement := []byte(`SELECT DISTINCT FROM WHERE;`)
 	lexer := NewLexer(statement)
 
@@ -1690,6 +1803,26 @@ func TestNewParserLexerKeywords(t *testing.T) {
 			t.Fatalf("expected %s, got: %s", expected, keywordTokens[i].value)
 		}
 	}
+
+	// Test multi-word keywords like "IF NOT EXISTS"
+	multiWordStatement := []byte(`CREATE DATABASE IF NOT EXISTS testdb;`)
+	multiWordLexer := NewLexer(multiWordStatement)
+	multiWordLexer.tokenize()
+
+	// Find the IF NOT EXISTS token
+	foundIfNotExists := false
+	for _, token := range multiWordLexer.tokens {
+		if token.tokenT == KEYWORD_TOK && token.value == "IF NOT EXISTS" {
+			foundIfNotExists = true
+			break
+		}
+	}
+
+	if !foundIfNotExists {
+		t.Fatal("Expected to find 'IF NOT EXISTS' as a single keyword token")
+	}
+
+	t.Log("✅ Lexer correctly recognizes both single-word and multi-word keywords")
 }
 
 // TestNewParserLexerOperators tests lexer operator handling

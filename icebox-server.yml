@@ -15,7 +15,7 @@ log:
 # Storage Configuration
 storage:
   # Single data path for all storage
-  data_path: "./data"
+  data_path: "./workspace"
   
   # Catalog configuration
   catalog:

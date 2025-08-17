@@ -160,8 +160,8 @@ func TestRowsOperations(t *testing.T) {
 			{Name: "value", Type: "Float64"},
 		},
 		Data: [][]interface{}{
-			{1, "test1", 1.23},
-			{2, "test2", 4.56},
+			{"1", "test1", "1.23"},
+			{"2", "test2", "4.56"},
 		},
 		Current: 0,
 		Closed:  false,

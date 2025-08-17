@@ -57,7 +57,7 @@ var keywords = append([]string{
 	"UPPER", "LOWER", "CAST", "COALESCE", "REVERSE", "ROUND", "POSITION", "LENGTH", "REPLACE",
 	"CONCAT", "SUBSTRING", "TRIM", "GENERATE_UUID", "SYS_DATE", "SYS_TIME", "SYS_TIMESTAMP", "SYS_DATETIME",
 	"CASE", "WHEN", "THEN", "ELSE", "END", "IF", "ELSEIF", "DEALLOCATE", "NEXT", "WHILE", "PRINT", "EXPLAIN",
-	"COMPRESS", "ENCRYPT", "COLUMN",
+	"COMPRESS", "ENCRYPT", "COLUMN", "ENGINE", "IF NOT EXISTS",
 }, basicDataTypes...)
 
 // Icebox-compatible type definitions to replace SQL parser types
@@ -208,6 +208,56 @@ func checkKeyword(s string) bool {
 		}
 	}
 	return false
+}
+
+// tryMatchMultiWordKeyword tries to match multi-word keywords like "IF NOT EXISTS"
+func (l *Lexer) tryMatchMultiWordKeyword() string {
+	// Get the current position to restore later if no match
+	originalPos := l.pos
+
+	// Look for multi-word keywords that start with the current character
+	for _, keyword := range keywords {
+		if strings.Contains(keyword, " ") {
+			// This is a multi-word keyword
+			keywordWords := strings.Split(keyword, " ")
+			if len(keywordWords) > 1 {
+				// Check if the first word matches what we're currently looking at
+				firstWord := keywordWords[0]
+				if len(firstWord) > 0 && l.pos+len(firstWord) <= len(l.input) {
+					// Check if the first word matches
+					if strings.EqualFold(string(l.input[l.pos:l.pos+len(firstWord)]), firstWord) {
+						// Now check if the rest of the keyword follows
+						pos := l.pos + len(firstWord)
+						matched := true
+
+						for i := 1; i < len(keywordWords); i++ {
+							word := keywordWords[i]
+							// Skip whitespace
+							for pos < len(l.input) && (l.input[pos] == ' ' || l.input[pos] == '\t' || l.input[pos] == '\n') {
+								pos++
+							}
+							// Check if the word matches
+							if pos+len(word) > len(l.input) || !strings.EqualFold(string(l.input[pos:pos+len(word)]), word) {
+								matched = false
+								break
+							}
+							pos += len(word)
+						}
+
+						if matched {
+							// Update the lexer position and return the keyword
+							l.pos = pos
+							return keyword
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// No multi-word keyword matched, restore position
+	l.pos = originalPos
+	return ""
 }
 
 // nextToken returns the next token
@@ -473,6 +523,13 @@ func (l *Lexer) nextToken() Token {
 
 					startPos := l.pos
 
+					// First, try to match multi-word keywords (like "IF NOT EXISTS")
+					multiWordKeyword := l.tryMatchMultiWordKeyword()
+					if multiWordKeyword != "" {
+						return Token{tokenT: KEYWORD_TOK, value: multiWordKeyword}
+					}
+
+					// If no multi-word keyword found, process as single word
 					for isDigit(rune(l.input[l.pos])) || isLetter(rune(l.input[l.pos])) {
 						l.pos++
 						if l.pos+1 > len(l.input) {
@@ -550,6 +607,12 @@ func (l *Lexer) tokenize() {
 	}
 
 	return
+}
+
+func Parse(query string) (Node, error) {
+	lexer := NewLexer([]byte(query))
+	parser := NewParser(lexer)
+	return parser.Parse()
 }
 
 // NewParser creates a new parser
@@ -1182,7 +1245,7 @@ func (p *Parser) parseAlterTableStmt() (Node, error) {
 		if p.peek(0).tokenT == LPAREN_TOK {
 			switch dataType {
 
-			case "CHAR", "CHARACTER", "BINARY":
+			case "CHAR", "CHARACTER", "BINARY", "VARCHAR":
 				p.consume() // Consume (
 
 				if p.peek(0).tokenT != LITERAL_TOK {
@@ -1891,13 +1954,29 @@ func (p *Parser) parseInsertStmt() (Node, error) {
 		return nil, errors.New("expected identifier")
 	}
 
+	// Handle qualified table name (database.table)
 	tableName := p.peek(0).value.(string)
+	p.consume() // Consume first identifier
 
-	insertStmt.TableName = &Identifier{Value: tableName}
+	// Check if next token is a dot (qualified name)
+	if p.peek(0).tokenT == DOT_TOK {
+		p.consume() // Consume dot
+
+		if p.peek(0).tokenT != IDENT_TOK {
+			return nil, errors.New("expected identifier after dot")
+		}
+
+		// Store the qualified name as database.table
+		qualifiedName := tableName + "." + p.peek(0).value.(string)
+		insertStmt.TableName = &Identifier{Value: qualifiedName}
+		p.consume() // Consume second identifier
+	} else {
+		// Simple table name
+		insertStmt.TableName = &Identifier{Value: tableName}
+	}
+
 	insertStmt.ColumnNames = make([]*Identifier, 0)
 	insertStmt.Values = make([][]interface{}, 0)
-
-	p.consume() // Consume schema_name.table_name
 
 	if p.peek(0).tokenT != LPAREN_TOK {
 		return nil, errors.New("expected (")
@@ -2154,7 +2233,7 @@ func (p *Parser) parseCreateProcedureStmt() (Node, error) {
 		// Check for DATATYPE(LEN) or DATATYPE(PRECISION, SCALE)
 		if p.peek(0).tokenT == LPAREN_TOK {
 			switch dataType {
-			case "CHAR", "CHARACTER", "BINARY":
+			case "CHAR", "CHARACTER", "BINARY", "VARCHAR":
 				p.consume() // Consume (
 
 				if p.peek(0).tokenT != LITERAL_TOK {
@@ -2322,21 +2401,45 @@ func (p *Parser) parseCreateUserStmt() (Node, error) {
 
 // parseCreateTableStmt parses a CREATE TABLE statement
 func (p *Parser) parseCreateTableStmt() (Node, error) {
-	// CREATE TABLE schema_name.table_name (column_name1 data_type constraints, column_name2 data_type constraints, ...)
+	// CREATE TABLE [IF NOT EXISTS] schema_name.table_name (column_name1 data_type constraints, column_name2 data_type constraints, ...)
 	createTableStmt := &CreateTableStmt{}
 
 	// Eat TABLE
 	p.consume()
 
+	// Check for IF NOT EXISTS clause BEFORE the table identifier
+	ifNotExists := false
+	if p.peek(0).tokenT == KEYWORD_TOK && p.peek(0).value == "IF NOT EXISTS" {
+		p.consume() // Consume IF NOT EXISTS
+		ifNotExists = true
+	}
+
+	createTableStmt.IfNotExists = ifNotExists
+
 	if p.peek(0).tokenT != IDENT_TOK {
 		return nil, errors.New("expected identifier")
 	}
 
+	// Handle qualified table name (database.table)
 	tableName := p.peek(0).value.(string)
+	p.consume() // Consume first identifier
 
-	createTableStmt.TableName = &Identifier{Value: tableName}
+	// Check if next token is a dot (qualified name)
+	if p.peek(0).tokenT == DOT_TOK {
+		p.consume() // Consume dot
 
-	p.consume() // Consume schema_name.table_name
+		if p.peek(0).tokenT != IDENT_TOK {
+			return nil, errors.New("expected identifier after dot")
+		}
+
+		// Store the qualified name as database.table
+		qualifiedName := tableName + "." + p.peek(0).value.(string)
+		createTableStmt.TableName = &Identifier{Value: qualifiedName}
+		p.consume() // Consume second identifier
+	} else {
+		// Simple table name
+		createTableStmt.TableName = &Identifier{Value: tableName}
+	}
 
 	createTableStmt.TableSchema = &TableSchema{
 		ColumnDefinitions: make(map[string]*ColumnDefinition),
@@ -2348,10 +2451,10 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 
 	p.consume() // Consume (
 
-	for p.peek(0).tokenT != SEMICOLON_TOK {
-
+	// Fix the column parsing loop - parse until we hit the closing parenthesis
+	for p.peek(0).tokenT != RPAREN_TOK && p.peek(0).tokenT != SEMICOLON_TOK {
 		if p.peek(0).tokenT != IDENT_TOK {
-
+			// Try to parse table-level constraints
 			err := p.parseTableConstraints(createTableStmt, "")
 			if err != nil {
 				return nil, err
@@ -2360,16 +2463,13 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 		}
 
 		columnName := p.peek(0).value.(string)
-
 		p.consume() // Consume column name
 
 		if p.peek(0).tokenT != DATATYPE_TOK {
-
-			return nil, errors.New("expected data type")
+			return nil, fmt.Errorf("expected data type, got token type %d with value %v", p.peek(0).tokenT, p.peek(0).value)
 		}
 
 		dataType := p.peek(0).value.(string)
-
 		createTableStmt.TableSchema.ColumnDefinitions[columnName] = &ColumnDefinition{
 			DataType: dataType,
 		}
@@ -2379,17 +2479,14 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 		// check for DATATYPE(LEN) or DATATYPE(PRECISION, SCALE)
 		if p.peek(0).tokenT == LPAREN_TOK {
 			switch dataType {
-
-			case "CHAR", "CHARACTER", "BINARY":
+			case "CHAR", "CHARACTER", "BINARY", "VARCHAR":
 				p.consume() // Consume (
 
 				if p.peek(0).tokenT != LITERAL_TOK {
-
 					return nil, errors.New("expected literal")
 				}
 
 				length := p.peek(0).value.(uint64)
-
 				p.consume() // Consume literal
 
 				if p.peek(0).tokenT != RPAREN_TOK {
@@ -2397,10 +2494,8 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 				}
 
 				p.consume() // Consume )
-
 				createTableStmt.TableSchema.ColumnDefinitions[columnName].Length = int(length)
 			case "DEC", "DECIMAL", "NUMERIC", "REAL", "FLOAT", "DOUBLE":
-
 				p.consume() // Consume (
 
 				if p.peek(0).tokenT != LITERAL_TOK {
@@ -2408,7 +2503,6 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 				}
 
 				precision := p.peek(0).value.(uint64)
-
 				p.consume() // Consume literal
 
 				if p.peek(0).tokenT != COMMA_TOK {
@@ -2422,7 +2516,6 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 				}
 
 				scale := p.peek(0).value.(uint64)
-
 				p.consume() // Consume literal
 
 				if p.peek(0).tokenT != RPAREN_TOK {
@@ -2430,22 +2523,50 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 				}
 
 				p.consume() // Consume )
-
 				createTableStmt.TableSchema.ColumnDefinitions[columnName].Precision = int(precision)
 				createTableStmt.TableSchema.ColumnDefinitions[columnName].Scale = int(scale)
-
 			}
 		}
 
+		// Parse column constraints
 		err := p.parseTableConstraints(createTableStmt, columnName)
 		if err != nil {
 			return nil, err
-
 		}
 
+		// Check for comma separator between columns
+		if p.peek(0).tokenT == COMMA_TOK {
+			p.consume() // Consume comma
+		}
 	}
 
-	p.consume() // Consume ,
+	// Consume the closing parenthesis
+	if p.peek(0).tokenT == RPAREN_TOK {
+		p.consume() // Consume )
+	} else {
+		return nil, errors.New("expected )")
+	}
+
+	// Check for ENGINE clause - ENGINE is MANDATORY
+	if p.peek(0).tokenT == KEYWORD_TOK && p.peek(0).value == "ENGINE" {
+		p.consume() // Consume ENGINE
+
+		if p.peek(0).tokenT != COMPARISON_TOK || p.peek(0).value != "=" {
+			return nil, errors.New("expected = after ENGINE")
+		}
+		p.consume() // Consume =
+
+		if p.peek(0).tokenT != IDENT_TOK {
+			return nil, errors.New("expected engine name after ENGINE =")
+		}
+
+		engineName := p.peek(0).value.(string)
+		createTableStmt.Engine = &Identifier{Value: engineName}
+		p.consume() // Consume engine name
+	} else {
+		// ENGINE clause is mandatory
+		return nil, errors.New("ENGINE clause is required for CREATE TABLE statements")
+	}
 
 	return createTableStmt, nil
 }
@@ -2492,7 +2613,7 @@ func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnN
 				if defaultValue == "SYS_DATE" {
 					createTableStmt.TableSchema.ColumnDefinitions[columnName].Default = &SysDate{}
 				} else if defaultValue == "SYS_TIME" {
-					createTableStmt.TableSchema.ColumnDefinitions[columnName].Default = &SysTime{}
+					createTableStmt.TableSchema.ColumnDefinitions[columnName].Default = &SysTimestamp{}
 				} else if defaultValue == "SYS_TIMESTAMP" {
 					createTableStmt.TableSchema.ColumnDefinitions[columnName].Default = &SysTimestamp{}
 				} else if defaultValue == "GENERATE_UUID" {
@@ -2517,6 +2638,7 @@ func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnN
 				createTableStmt.TableSchema.ColumnDefinitions[columnName].Unique = true
 				sequenceStr := "AUTO_INCREMENT"
 				createTableStmt.TableSchema.ColumnDefinitions[columnName].Sequence = &sequenceStr
+
 			case "FOREIGN":
 				p.consume() // Consume FOREIGN
 				// FOREIGN KEY (1) REFERENCES Departments(2)
@@ -2639,8 +2761,6 @@ func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnN
 		}
 	}
 
-	p.consume()
-
 	return nil
 
 }
@@ -2721,6 +2841,13 @@ func (p *Parser) parseCreateIndexStmt() (Node, error) {
 func (p *Parser) parseCreateDatabaseStmt() (Node, error) {
 	p.consume() // Consume DATABASE
 
+	// Check for IF NOT EXISTS clause BEFORE the identifier
+	ifNotExists := false
+	if p.peek(0).tokenT == KEYWORD_TOK && p.peek(0).value == "IF NOT EXISTS" {
+		p.consume() // Consume IF NOT EXISTS
+		ifNotExists = true
+	}
+
 	if p.peek(0).tokenT != IDENT_TOK {
 		return nil, errors.New("expected identifier")
 	}
@@ -2729,7 +2856,8 @@ func (p *Parser) parseCreateDatabaseStmt() (Node, error) {
 	p.consume() // Consume identifier
 
 	return &CreateDatabaseStmt{
-		Name: &Identifier{Value: name},
+		Name:        &Identifier{Value: name},
+		IfNotExists: ifNotExists,
 	}, nil
 }
 

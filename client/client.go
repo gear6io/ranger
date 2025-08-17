@@ -6,16 +6,16 @@ import (
 	"time"
 
 	"github.com/TFMV/icebox/client/config"
-	"github.com/TFMV/icebox/client/protocols/http"
+	"github.com/TFMV/icebox/pkg/sdk"
 	"github.com/rs/zerolog"
 )
 
 // Client represents the main icebox client
 type Client struct {
-	config     *config.Config
-	httpClient *http.Client
-	logger     zerolog.Logger
-	connected  bool
+	config    *config.Config
+	sdkClient *sdk.Client
+	logger    zerolog.Logger
+	connected bool
 }
 
 // QueryResult represents the result of a SQL query
@@ -26,19 +26,49 @@ type QueryResult struct {
 	Duration time.Duration
 }
 
+// TableSchema represents a table schema
+type TableSchema struct {
+	Columns []Column `json:"columns"`
+}
+
+// Column represents a table column
+type Column struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
 // New creates a new icebox client
 func New(cfg *config.Config, logger zerolog.Logger) (*Client, error) {
-	// Create HTTP client
-	httpClient, err := http.NewClient(&cfg.Server, logger)
+	// Create SDK client options
+	options := &sdk.Options{
+		Protocol: sdk.Native,
+		Addr:     []string{fmt.Sprintf("%s:%d", cfg.Server.Address, cfg.Server.Port)},
+		Auth: sdk.Auth{
+			Username: cfg.Auth.Username,
+			Password: cfg.Auth.Password,
+			Database: cfg.Database.Name,
+		},
+		DialTimeout:  cfg.Server.Timeout,
+		ReadTimeout:  cfg.Server.Timeout,
+		WriteTimeout: cfg.Server.Timeout,
+		MaxOpenConns: 10,
+		MaxIdleConns: 5,
+		Settings: sdk.Settings{
+			"use_native": true,
+		},
+	}
+
+	// Create SDK client
+	sdkClient, err := sdk.NewClient(options)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP client: %w", err)
+		return nil, fmt.Errorf("failed to create SDK client: %w", err)
 	}
 
 	return &Client{
-		config:     cfg,
-		httpClient: httpClient,
-		logger:     logger,
-		connected:  false,
+		config:    cfg,
+		sdkClient: sdkClient,
+		logger:    logger,
+		connected: false,
 	}, nil
 }
 
@@ -46,8 +76,8 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Client, error) {
 func (c *Client) Connect(ctx context.Context) error {
 	c.logger.Debug().Msg("Connecting to icebox server")
 
-	// Test connection
-	if err := c.httpClient.Ping(ctx); err != nil {
+	// Test connection using ping
+	if err := c.sdkClient.Ping(ctx); err != nil {
 		return fmt.Errorf("failed to connect to server: %w", err)
 	}
 
@@ -60,30 +90,53 @@ func (c *Client) Connect(ctx context.Context) error {
 func (c *Client) Close() error {
 	c.logger.Debug().Msg("Closing client connection")
 	c.connected = false
-	return nil
+	return c.sdkClient.Close()
 }
 
 // ExecuteQuery executes a SQL query
 func (c *Client) ExecuteQuery(ctx context.Context, query string) (*QueryResult, error) {
+	// Don't try to connect if already connected
 	if !c.connected {
-		if err := c.Connect(ctx); err != nil {
-			return nil, err
-		}
+		return nil, fmt.Errorf("client not connected to server")
 	}
 
 	c.logger.Debug().Str("query", query).Msg("Executing query")
 
-	// Execute query via HTTP client
-	result, err := c.httpClient.ExecuteQuery(ctx, query)
+	start := time.Now()
+
+	// Execute query using SDK
+	rows, err := c.sdkClient.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}
+	defer rows.Close()
+
+	// Extract columns
+	var columns []string
+	for _, col := range rows.Cols {
+		columns = append(columns, col.Name)
+	}
+
+	// Extract data
+	var data [][]interface{}
+	for rows.Next() {
+		// Get the current row data from the rows
+		// Note: rows.Current is already advanced by Next(), so we use Current-1
+		if rows.Current > 0 && rows.Current <= len(rows.Data) {
+			rowData := rows.Data[rows.Current-1]
+			if rowData != nil {
+				data = append(data, rowData)
+			}
+		}
+	}
+
+	duration := time.Since(start)
 
 	return &QueryResult{
-		Columns:  result.Columns,
-		Rows:     result.Rows,
-		RowCount: result.RowCount,
-		Duration: result.Duration,
+		Columns:  columns,
+		Rows:     data,
+		RowCount: int64(len(data)),
+		Duration: duration,
 	}, nil
 }
 
@@ -102,59 +155,87 @@ func (c *Client) ImportFile(ctx context.Context, filePath, tableName, namespace 
 		Bool("overwrite", overwrite).
 		Msg("Importing file")
 
-	// Import file via HTTP client
-	return c.httpClient.ImportFile(ctx, filePath, tableName, namespace, overwrite)
+	// Use SQL COPY command for import
+	var query string
+	if overwrite {
+		query = fmt.Sprintf("COPY %s FROM '%s' (FORMAT PARQUET)", tableName, filePath)
+	} else {
+		query = fmt.Sprintf("COPY %s FROM '%s' (FORMAT PARQUET)", tableName, filePath)
+	}
+
+	// Execute the import query
+	if err := c.sdkClient.Exec(ctx, query); err != nil {
+		return fmt.Errorf("failed to import file: %w", err)
+	}
+
+	return nil
 }
 
 // ListTables lists all tables
-func (c *Client) ListTables(ctx context.Context) error {
+func (c *Client) ListTables(ctx context.Context) ([]string, error) {
 	if !c.connected {
 		if err := c.Connect(ctx); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	c.logger.Debug().Msg("Listing tables")
 
-	// List tables via HTTP client
-	tables, err := c.httpClient.ListTables(ctx)
+	// Execute SHOW TABLES query
+	result, err := c.ExecuteQuery(ctx, "SHOW TABLES")
 	if err != nil {
-		return fmt.Errorf("failed to list tables: %w", err)
+		return nil, fmt.Errorf("failed to list tables: %w", err)
 	}
 
-	// Display tables
-	fmt.Printf("📋 Tables:\n")
-	for _, table := range tables {
-		fmt.Printf("   - %s\n", table)
+	// Extract table names from the result
+	var tables []string
+	for _, row := range result.Rows {
+		if len(row) > 0 {
+			if tableName, ok := row[0].(string); ok {
+				tables = append(tables, tableName)
+			}
+		}
 	}
 
-	return nil
+	return tables, nil
 }
 
 // DescribeTable describes a table structure
-func (c *Client) DescribeTable(ctx context.Context, tableName string) error {
+func (c *Client) DescribeTable(ctx context.Context, tableName string) (*TableSchema, error) {
 	if !c.connected {
 		if err := c.Connect(ctx); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	c.logger.Debug().Str("table", tableName).Msg("Describing table")
 
-	// Describe table via HTTP client
-	schema, err := c.httpClient.DescribeTable(ctx, tableName)
+	// Execute DESCRIBE query
+	result, err := c.ExecuteQuery(ctx, fmt.Sprintf("DESCRIBE %s", tableName))
 	if err != nil {
-		return fmt.Errorf("failed to describe table: %w", err)
+		return nil, fmt.Errorf("failed to describe table: %w", err)
 	}
 
-	// Display schema
-	fmt.Printf("📋 Table: %s\n", tableName)
-	fmt.Printf("📊 Schema:\n")
-	for _, column := range schema.Columns {
-		fmt.Printf("   - %s: %s\n", column.Name, column.Type)
+	// Extract schema information from the result
+	schema := &TableSchema{
+		Columns: []Column{},
 	}
 
-	return nil
+	for _, row := range result.Rows {
+		if len(row) >= 2 {
+			columnName, _ := row[0].(string)
+			columnType, _ := row[1].(string)
+
+			if columnName != "" && columnType != "" {
+				schema.Columns = append(schema.Columns, Column{
+					Name: columnName,
+					Type: columnType,
+				})
+			}
+		}
+	}
+
+	return schema, nil
 }
 
 // DropTable drops a table
@@ -167,33 +248,48 @@ func (c *Client) DropTable(ctx context.Context, tableName string) error {
 
 	c.logger.Debug().Str("table", tableName).Msg("Dropping table")
 
-	// Drop table via HTTP client
-	return c.httpClient.DropTable(ctx, tableName)
+	// Execute DROP TABLE query
+	if err := c.sdkClient.Exec(ctx, fmt.Sprintf("DROP TABLE %s", tableName)); err != nil {
+		return fmt.Errorf("failed to drop table: %w", err)
+	}
+
+	return nil
 }
 
 // ListNamespaces lists all namespaces
-func (c *Client) ListNamespaces(ctx context.Context) error {
+func (c *Client) ListNamespaces(ctx context.Context) ([]string, error) {
 	if !c.connected {
 		if err := c.Connect(ctx); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	c.logger.Debug().Msg("Listing namespaces")
 
-	// List namespaces via HTTP client
-	namespaces, err := c.httpClient.ListNamespaces(ctx)
+	// Try to get namespaces using SQL query
+	// If it fails, return default namespace
+	result, err := c.ExecuteQuery(ctx, "SELECT DISTINCT namespace FROM system.namespaces")
 	if err != nil {
-		return fmt.Errorf("failed to list namespaces: %w", err)
+		// If the query fails, return default namespace
+		return []string{"default"}, nil
 	}
 
-	// Display namespaces
-	fmt.Printf("📋 Namespaces:\n")
-	for _, namespace := range namespaces {
-		fmt.Printf("   - %s\n", namespace)
+	// Extract namespace names from the result
+	var namespaces []string
+	for _, row := range result.Rows {
+		if len(row) > 0 {
+			if namespace, ok := row[0].(string); ok {
+				namespaces = append(namespaces, namespace)
+			}
+		}
 	}
 
-	return nil
+	// If no namespaces found, return default
+	if len(namespaces) == 0 {
+		namespaces = []string{"default"}
+	}
+
+	return namespaces, nil
 }
 
 // CreateNamespace creates a new namespace
@@ -206,8 +302,12 @@ func (c *Client) CreateNamespace(ctx context.Context, namespace string) error {
 
 	c.logger.Debug().Str("namespace", namespace).Msg("Creating namespace")
 
-	// Create namespace via HTTP client
-	return c.httpClient.CreateNamespace(ctx, namespace)
+	// Execute CREATE NAMESPACE query
+	if err := c.sdkClient.Exec(ctx, fmt.Sprintf("CREATE NAMESPACE %s", namespace)); err != nil {
+		return fmt.Errorf("failed to create namespace: %w", err)
+	}
+
+	return nil
 }
 
 // DropNamespace drops a namespace
@@ -220,8 +320,12 @@ func (c *Client) DropNamespace(ctx context.Context, namespace string) error {
 
 	c.logger.Debug().Str("namespace", namespace).Msg("Dropping namespace")
 
-	// Drop namespace via HTTP client
-	return c.httpClient.DropNamespace(ctx, namespace)
+	// Execute DROP NAMESPACE query
+	if err := c.sdkClient.Exec(ctx, fmt.Sprintf("DROP NAMESPACE %s", namespace)); err != nil {
+		return fmt.Errorf("failed to drop namespace: %w", err)
+	}
+
+	return nil
 }
 
 // IsConnected returns whether the client is connected

@@ -95,9 +95,9 @@ func (sm *Store) IsUsingBun() bool {
 func (sm *Store) CreateDatabase(ctx context.Context, dbName string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	// Insert database record
-	insertSQL := `INSERT INTO databases (name, created, modified, table_count) VALUES (?, ?, ?, 0)`
-	_, err := sm.db.ExecContext(ctx, insertSQL, dbName, now, now)
+	// Insert database record using new production schema
+	insertSQL := `INSERT INTO databases (name, description, owner_id, is_system, is_read_only, table_count, total_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err := sm.db.ExecContext(ctx, insertSQL, dbName, "", 1, false, false, 0, 0, now, now)
 	if err != nil {
 		return fmt.Errorf("failed to create database %s: %w", dbName, err)
 	}
@@ -167,11 +167,19 @@ func (sm *Store) DatabaseExists(ctx context.Context, dbName string) bool {
 	return err == nil
 }
 
-// CreateTable creates a new table in the specified database
-func (sm *Store) CreateTable(ctx context.Context, dbName, tableName string) error {
+// CreateTable creates a new table with complete metadata in a single transaction
+func (sm *Store) CreateTable(ctx context.Context, database, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*types.TableMetadata, error) {
 	// Check if database exists
-	if !sm.DatabaseExists(ctx, dbName) {
-		return fmt.Errorf("database %s does not exist", dbName)
+	if !sm.DatabaseExists(ctx, database) {
+		return nil, fmt.Errorf("database %s does not exist", database)
+	}
+
+	// Get database ID
+	var dbID int64
+	query := `SELECT id FROM databases WHERE name = ?`
+	err := sm.db.QueryRowContext(ctx, query, database).Scan(&dbID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database ID for %s: %w", database, err)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -179,40 +187,85 @@ func (sm *Store) CreateTable(ctx context.Context, dbName, tableName string) erro
 	// Begin transaction
 	tx, err := sm.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Insert table record
-	insertTableSQL := `INSERT INTO tables (database_name, table_name, created, modified) VALUES (?, ?, ?, ?)`
-	_, err = tx.ExecContext(ctx, insertTableSQL, dbName, tableName, now, now)
+	// Insert table record using new production schema
+	insertTableSQL := `INSERT INTO tables (database_id, name, display_name, description, table_type, is_temporary, is_external, row_count, file_count, total_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	result, err := tx.ExecContext(ctx, insertTableSQL, dbID, tableName, tableName, "", "user", false, false, 0, 0, 0, now, now)
 	if err != nil {
-		return fmt.Errorf("failed to create table %s: %w", tableName, err)
+		return nil, fmt.Errorf("failed to create table %s: %w", tableName, err)
+	}
+
+	// Get the table ID that was just created
+	tableID, err := result.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get table ID: %w", err)
+	}
+
+	// Serialize engine config to JSON
+	engineConfigJSON := "{}"
+	if engineConfig != nil {
+		configBytes, err := json.Marshal(engineConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal engine config: %w", err)
+		}
+		engineConfigJSON = string(configBytes)
+	}
+
+	// Insert table metadata record using new production schema
+	insertMetadataSQL := `INSERT INTO table_metadata (table_id, schema_version, schema, storage_engine, engine_config, format, compression, partition_by, sort_by, properties, last_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err = tx.ExecContext(ctx, insertMetadataSQL, tableID, 1, schema, storageEngine, engineConfigJSON, "", "", "", "", "{}", now, now, now)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create table metadata for %s.%s: %w", database, tableName, err)
 	}
 
 	// Update database table count
-	updateDBSQL := `UPDATE databases SET table_count = table_count + 1, modified = ? WHERE name = ?`
-	_, err = tx.ExecContext(ctx, updateDBSQL, now, dbName)
+	updateDBSQL := `UPDATE databases SET table_count = table_count + 1, updated_at = ? WHERE id = ?`
+	_, err = tx.ExecContext(ctx, updateDBSQL, now, dbID)
 	if err != nil {
-		return fmt.Errorf("failed to update database table count: %w", err)
+		return nil, fmt.Errorf("failed to update database table count: %w", err)
 	}
 
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	// Create table directory
-	tablePath := filepath.Join(sm.basePath, "databases", dbName, tableName)
+	tablePath := filepath.Join(sm.basePath, "databases", database, tableName)
 	if err := os.MkdirAll(tablePath, 0755); err != nil {
-		return fmt.Errorf("failed to create table directory: %w", err)
+		return nil, fmt.Errorf("failed to create table directory: %w", err)
 	}
 
-	return nil
+	// Create metadata object
+	tableMetadata := &types.TableMetadata{
+		Database:      database,
+		Name:          tableName,
+		Schema:        schema,
+		StorageEngine: storageEngine,
+		EngineConfig:  engineConfig,
+		FileCount:     0,
+		TotalSize:     0,
+		LastModified:  now,
+		Created:       now,
+		Files:         []types.FileInfo{},
+	}
+
+	return tableMetadata, nil
 }
 
 // DropTable drops a table from the specified database
 func (sm *Store) DropTable(ctx context.Context, dbName, tableName string) error {
+	// Get database ID
+	var dbID int64
+	query := `SELECT id FROM databases WHERE name = ?`
+	err := sm.db.QueryRowContext(ctx, query, dbName).Scan(&dbID)
+	if err != nil {
+		return fmt.Errorf("failed to get database ID for %s: %w", dbName, err)
+	}
+
 	// Begin transaction
 	tx, err := sm.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -220,9 +273,9 @@ func (sm *Store) DropTable(ctx context.Context, dbName, tableName string) error 
 	}
 	defer tx.Rollback()
 
-	// Delete table record
-	deleteTableSQL := `DELETE FROM tables WHERE database_name = ? AND table_name = ?`
-	result, err := tx.ExecContext(ctx, deleteTableSQL, dbName, tableName)
+	// Delete table record using new production schema
+	deleteTableSQL := `DELETE FROM tables WHERE database_id = ? AND name = ?`
+	result, err := tx.ExecContext(ctx, deleteTableSQL, dbID, tableName)
 	if err != nil {
 		return fmt.Errorf("failed to drop table %s: %w", tableName, err)
 	}
@@ -238,8 +291,8 @@ func (sm *Store) DropTable(ctx context.Context, dbName, tableName string) error 
 
 	// Update database table count
 	now := time.Now().UTC().Format(time.RFC3339)
-	updateDBSQL := `UPDATE databases SET table_count = table_count - 1, modified = ? WHERE name = ?`
-	_, err = tx.ExecContext(ctx, updateDBSQL, now, dbName)
+	updateDBSQL := `UPDATE databases SET table_count = table_count - 1, updated_at = ? WHERE id = ?`
+	_, err = tx.ExecContext(ctx, updateDBSQL, now, dbID)
 	if err != nil {
 		return fmt.Errorf("failed to update database table count: %w", err)
 	}
@@ -260,7 +313,7 @@ func (sm *Store) DropTable(ctx context.Context, dbName, tableName string) error 
 
 // ListTables returns a list of tables in the specified database
 func (sm *Store) ListTables(ctx context.Context, dbName string) ([]string, error) {
-	query := `SELECT table_name FROM tables WHERE database_name = ? ORDER BY table_name`
+	query := `SELECT t.name FROM tables t JOIN databases d ON t.database_id = d.id WHERE d.name = ? ORDER BY t.name`
 	rows, err := sm.db.QueryContext(ctx, query, dbName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query tables: %w", err)
@@ -281,7 +334,7 @@ func (sm *Store) ListTables(ctx context.Context, dbName string) ([]string, error
 
 // TableExists checks if a table exists in the specified database
 func (sm *Store) TableExists(ctx context.Context, dbName, tableName string) bool {
-	query := `SELECT 1 FROM tables WHERE database_name = ? AND table_name = ? LIMIT 1`
+	query := `SELECT 1 FROM tables t JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ? LIMIT 1`
 	var exists int
 	err := sm.db.QueryRowContext(ctx, query, dbName, tableName).Scan(&exists)
 	return err == nil
@@ -289,6 +342,14 @@ func (sm *Store) TableExists(ctx context.Context, dbName, tableName string) bool
 
 // CreateTableMetadata creates detailed metadata for a table (for storage operations)
 func (sm *Store) CreateTableMetadata(ctx context.Context, database, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*types.TableMetadata, error) {
+	// Get table ID
+	var tableID int64
+	query := `SELECT t.id FROM tables t JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ?`
+	err := sm.db.QueryRowContext(ctx, query, database, tableName).Scan(&tableID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get table ID for %s.%s: %w", database, tableName, err)
+	}
+
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	// Serialize engine config to JSON
@@ -301,9 +362,9 @@ func (sm *Store) CreateTableMetadata(ctx context.Context, database, tableName st
 		engineConfigJSON = string(configBytes)
 	}
 
-	// Insert table metadata record
-	insertSQL := `INSERT INTO table_metadata (database_name, table_name, schema, storage_engine, engine_config, file_count, total_size, last_modified, created) VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)`
-	_, err := sm.db.ExecContext(ctx, insertSQL, database, tableName, schema, storageEngine, engineConfigJSON, now, now)
+	// Insert table metadata record using new production schema
+	insertSQL := `INSERT INTO table_metadata (table_id, schema_version, schema, storage_engine, engine_config, format, compression, partition_by, sort_by, properties, last_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err = sm.db.ExecContext(ctx, insertSQL, tableID, 1, schema, storageEngine, engineConfigJSON, "", "", "", "", "{}", now, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create table metadata for %s.%s: %w", database, tableName, err)
 	}
@@ -327,16 +388,13 @@ func (sm *Store) CreateTableMetadata(ctx context.Context, database, tableName st
 
 // LoadTableMetadata loads detailed metadata for a table
 func (sm *Store) LoadTableMetadata(ctx context.Context, database, tableName string) (*types.TableMetadata, error) {
-	query := `SELECT table_name, schema, storage_engine, engine_config, file_count, total_size, last_modified, created FROM table_metadata WHERE database_name = ? AND table_name = ?`
+	query := `SELECT tm.schema, tm.storage_engine, tm.engine_config, tm.last_modified, tm.created_at FROM table_metadata tm JOIN tables t ON tm.table_id = t.id JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ?`
 
-	var tableNameStr, storageEngine, engineConfigJSON, lastModified, created string
+	var storageEngine, engineConfigJSON, lastModified, created string
 	var schema []byte
-	var fileCount int
-	var totalSize int64
 
 	err := sm.db.QueryRowContext(ctx, query, database, tableName).Scan(
-		&tableNameStr, &schema, &storageEngine, &engineConfigJSON,
-		&fileCount, &totalSize, &lastModified, &created)
+		&schema, &storageEngine, &engineConfigJSON, &lastModified, &created)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("table metadata not found: %s.%s", database, tableName)
@@ -358,9 +416,20 @@ func (sm *Store) LoadTableMetadata(ctx context.Context, database, tableName stri
 		return nil, fmt.Errorf("failed to load table files: %w", err)
 	}
 
+	// Get file count and total size
+	var fileCount int
+	var totalSize int64
+	countQuery := `SELECT COUNT(*), COALESCE(SUM(file_size), 0) FROM table_files tf JOIN tables t ON tf.table_id = t.id JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ?`
+	err = sm.db.QueryRowContext(ctx, countQuery, database, tableName).Scan(&fileCount, &totalSize)
+	if err != nil {
+		// Use defaults if query fails
+		fileCount = 0
+		totalSize = 0
+	}
+
 	tableMetadata := &types.TableMetadata{
 		Database:      database,
-		Name:          tableNameStr,
+		Name:          tableName,
 		Schema:        schema,
 		StorageEngine: storageEngine,
 		EngineConfig:  engineConfig,
@@ -376,7 +445,7 @@ func (sm *Store) LoadTableMetadata(ctx context.Context, database, tableName stri
 
 // ListAllTables returns a list of all tables across all databases (for storage manager)
 func (sm *Store) ListAllTables(ctx context.Context) ([]string, error) {
-	query := `SELECT database_name, table_name FROM tables ORDER BY database_name, table_name`
+	query := `SELECT d.name, t.name FROM tables t JOIN databases d ON t.database_id = d.id ORDER BY d.name, t.name`
 	rows, err := sm.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query all tables: %w", err)
@@ -397,7 +466,7 @@ func (sm *Store) ListAllTables(ctx context.Context) ([]string, error) {
 
 // loadTableFiles loads file information for a table
 func (sm *Store) loadTableFiles(ctx context.Context, database, tableName string) ([]types.FileInfo, error) {
-	query := `SELECT file_name, file_size, created, modified, date FROM table_files WHERE database_name = ? AND table_name = ? ORDER BY file_name`
+	query := `SELECT tf.file_name, tf.file_size, tf.created_at, tf.modified_at, tf.partition_path FROM table_files tf JOIN tables t ON tf.table_id = t.id JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ? ORDER BY tf.file_name`
 	rows, err := sm.db.QueryContext(ctx, query, database, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query table files: %w", err)
@@ -406,10 +475,10 @@ func (sm *Store) loadTableFiles(ctx context.Context, database, tableName string)
 
 	var files []types.FileInfo
 	for rows.Next() {
-		var fileName, created, modified, date string
+		var fileName, created, modified, partitionPath string
 		var fileSize int64
 
-		if err := rows.Scan(&fileName, &fileSize, &created, &modified, &date); err != nil {
+		if err := rows.Scan(&fileName, &fileSize, &created, &modified, &partitionPath); err != nil {
 			return nil, fmt.Errorf("failed to scan file info: %w", err)
 		}
 
@@ -418,7 +487,7 @@ func (sm *Store) loadTableFiles(ctx context.Context, database, tableName string)
 			Size:     fileSize,
 			Created:  created,
 			Modified: modified,
-			Date:     date,
+			Date:     partitionPath, // Use partition_path as date for backward compatibility
 		}
 		files = append(files, fileInfo)
 	}

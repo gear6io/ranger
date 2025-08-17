@@ -6,10 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"bufio"
-
 	"github.com/TFMV/icebox/client"
 	"github.com/TFMV/icebox/client/config"
+	"github.com/c-bata/go-prompt"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 )
@@ -29,7 +28,7 @@ Examples:
   icebox-client query "SELECT * FROM my_table"
   icebox-client import data.parquet --table sales
   icebox-client shell
-  icebox-client --server localhost:8080 query "SHOW TABLES"`,
+  icebox-client --server localhost:2849 query "SHOW TABLES"`,
 	}
 
 	// Add global flags
@@ -39,7 +38,7 @@ Examples:
 	var database string
 	var sslMode string
 
-	rootCmd.PersistentFlags().StringVar(&serverAddr, "server", "localhost:8080", "server address")
+	rootCmd.PersistentFlags().StringVar(&serverAddr, "server", "localhost:2849", "server address")
 	rootCmd.PersistentFlags().StringVar(&username, "user", "", "username")
 	rootCmd.PersistentFlags().StringVar(&password, "password", "", "password")
 	rootCmd.PersistentFlags().StringVar(&database, "database", "default", "database name")
@@ -94,7 +93,14 @@ func createQueryCommand(client *client.Client) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			query := args[0]
-			result, err := client.ExecuteQuery(context.Background(), query)
+
+			// Validate server connection before executing query
+			ctx := context.Background()
+			if err := client.Connect(ctx); err != nil {
+				return fmt.Errorf("failed to connect to server: %w", err)
+			}
+
+			result, err := client.ExecuteQuery(ctx, query)
 			if err != nil {
 				return err
 			}
@@ -112,6 +118,12 @@ func createShellCommand(client *client.Client) *cobra.Command {
 		Use:   "shell",
 		Short: "Start interactive shell",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Validate server connection before starting shell
+			ctx := context.Background()
+			if err := client.Connect(ctx); err != nil {
+				return fmt.Errorf("failed to connect to server: %w", err)
+			}
+
 			return startInteractiveShell(client)
 		},
 	}
@@ -126,7 +138,28 @@ func displayQueryResults(result *client.QueryResult) error {
 		return nil
 	}
 
-	// Print column headers
+	// Check if this is an empty result set (successful query with no data)
+	if len(result.Columns) == 0 && len(result.Rows) == 0 {
+		fmt.Println("✅ Query executed successfully")
+		fmt.Println("📊 Result: Empty result set (no data returned)")
+		if result.Duration > 0 {
+			fmt.Printf("⏱️  Duration: %v\n", result.Duration)
+		}
+		return nil
+	}
+
+	// Check if we have columns but no rows (successful query with structure but no data)
+	if len(result.Columns) > 0 && len(result.Rows) == 0 {
+		fmt.Println("✅ Query executed successfully")
+		fmt.Printf("📊 Result: Query returned %d columns but no rows\n", len(result.Columns))
+		fmt.Printf("📋 Columns: %s\n", strings.Join(result.Columns, ", "))
+		if result.Duration > 0 {
+			fmt.Printf("⏱️  Duration: %v\n", result.Duration)
+		}
+		return nil
+	}
+
+	// Print column headers for data results
 	if len(result.Columns) > 0 {
 		headers := strings.Join(result.Columns, " | ")
 		fmt.Printf("┌─%s─┐\n", strings.Repeat("─", len(headers)))
@@ -147,14 +180,16 @@ func displayQueryResults(result *client.QueryResult) error {
 		fmt.Printf("│ %s │\n", strings.Join(rowStr, " | "))
 	}
 
-	// Print footer
+	// Print footer for data results
 	if len(result.Columns) > 0 {
 		headers := strings.Join(result.Columns, " | ")
 		fmt.Printf("└─%s─┘\n", strings.Repeat("─", len(headers)))
 	}
 
-	// Print summary
-	fmt.Printf("\n📊 Query Results:\n")
+	// Print summary with clean formatting
+	fmt.Println()
+	fmt.Println("📊 Query Results:")
+	fmt.Printf("   Status: ✅ Success\n")
 	fmt.Printf("   Rows: %d\n", len(result.Rows))
 	fmt.Printf("   Columns: %d\n", len(result.Columns))
 	if result.Duration > 0 {
@@ -164,52 +199,118 @@ func displayQueryResults(result *client.QueryResult) error {
 	return nil
 }
 
-// startInteractiveShell starts an interactive SQL shell
+// startInteractiveShell starts an interactive SQL shell with proper arrow key support and command history
 func startInteractiveShell(client *client.Client) error {
 	fmt.Println("🧊 Icebox Interactive Shell")
 	fmt.Println("==========================")
 	fmt.Println("Type 'exit' or 'quit' to exit")
 	fmt.Println("Type 'help' for available commands")
+	fmt.Println("Use ↑↓ arrow keys to navigate command history")
+	fmt.Println("Use ←→ arrow keys to edit current line")
 	fmt.Println()
 
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		fmt.Print("icebox> ")
-		if !scanner.Scan() {
-			break
+	// Command history
+	var history []string
+
+	// Create a completer for basic SQL commands
+	completer := func(d prompt.Document) []prompt.Suggest {
+		suggestions := []prompt.Suggest{
+			{Text: "SHOW", Description: "Show databases, tables, or columns"},
+			{Text: "CREATE", Description: "Create database, table, or other objects"},
+			{Text: "DROP", Description: "Drop database, table, or other objects"},
+			{Text: "SELECT", Description: "Query data from tables"},
+			{Text: "INSERT", Description: "Insert data into tables"},
+			{Text: "UPDATE", Description: "Update data in tables"},
+			{Text: "DELETE", Description: "Delete data from tables"},
+			{Text: "DESCRIBE", Description: "Describe table structure"},
+			{Text: "EXPLAIN", Description: "Explain query execution plan"},
+			{Text: "help", Description: "Show available commands"},
+			{Text: "history", Description: "Show command history"},
+			{Text: "clear", Description: "Clear screen"},
+			{Text: "exit", Description: "Exit the shell"},
+			{Text: "quit", Description: "Exit the shell"},
+		}
+		return prompt.FilterHasPrefix(suggestions, d.GetWordBeforeCursor(), true)
+	}
+
+	// Create the prompt
+	p := prompt.New(
+		executor(client, &history),
+		completer,
+		prompt.OptionTitle("Icebox SQL Shell"),
+		prompt.OptionPrefix("icebox> "),
+		prompt.OptionInputTextColor(prompt.Yellow),
+		prompt.OptionPrefixTextColor(prompt.Blue),
+		prompt.OptionSuggestionTextColor(prompt.Green),
+		prompt.OptionSuggestionBGColor(prompt.DarkGray),
+		prompt.OptionSelectedSuggestionTextColor(prompt.Black),
+		prompt.OptionSelectedSuggestionBGColor(prompt.Turquoise),
+		prompt.OptionDescriptionBGColor(prompt.DarkGray),
+		prompt.OptionDescriptionTextColor(prompt.White),
+		prompt.OptionSelectedDescriptionTextColor(prompt.Black),
+		prompt.OptionSelectedDescriptionBGColor(prompt.Turquoise),
+		prompt.OptionScrollbarThumbColor(prompt.DarkGray),
+		prompt.OptionScrollbarBGColor(prompt.LightGray),
+		prompt.OptionMaxSuggestion(20),
+	)
+
+	p.Run()
+	return nil
+}
+
+// executor handles command execution and maintains history
+func executor(client *client.Client, history *[]string) func(string) {
+	return func(input string) {
+		input = strings.TrimSpace(input)
+		if input == "" {
+			return
 		}
 
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+		// Add to history (avoid duplicates)
+		if len(*history) == 0 || (*history)[len(*history)-1] != input {
+			*history = append(*history, input)
 		}
 
 		// Handle special commands
-		switch strings.ToLower(line) {
+		switch strings.ToLower(input) {
 		case "exit", "quit":
 			fmt.Println("Goodbye!")
-			return nil
+			os.Exit(0)
 		case "help":
 			fmt.Println("Available commands:")
 			fmt.Println("  exit, quit - Exit the shell")
 			fmt.Println("  help       - Show this help")
+			fmt.Println("  history    - Show command history")
+			fmt.Println("  clear      - Clear screen")
 			fmt.Println("  <SQL>      - Execute SQL query")
-			continue
+			return
+		case "history":
+			fmt.Println("Command History:")
+			for i, cmd := range *history {
+				fmt.Printf("  %d: %s\n", i+1, cmd)
+			}
+			return
+		case "clear":
+			// Clear screen
+			fmt.Print("\033[H\033[2J")
+			return
 		}
 
 		// Execute SQL query
-		result, err := client.ExecuteQuery(context.Background(), line)
+		result, err := client.ExecuteQuery(context.Background(), input)
 		if err != nil {
 			fmt.Printf("❌ Error: %v\n", err)
-			continue
+			return
 		}
 
+		// Display results with proper formatting
 		if err := displayQueryResults(result); err != nil {
 			fmt.Printf("❌ Error displaying results: %v\n", err)
 		}
-	}
 
-	return scanner.Err()
+		// Ensure proper spacing after results
+		fmt.Println()
+	}
 }
 
 func createImportCommand(client *client.Client) *cobra.Command {
@@ -245,7 +346,21 @@ func createTableCommand(client *client.Client) *cobra.Command {
 			Use:   "list",
 			Short: "List tables",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				return client.ListTables(context.Background())
+				tables, err := client.ListTables(context.Background())
+				if err != nil {
+					return err
+				}
+
+				// Display tables
+				fmt.Printf("📋 Tables:\n")
+				if len(tables) == 0 {
+					fmt.Printf("   No tables found\n")
+				} else {
+					for _, table := range tables {
+						fmt.Printf("   - %s\n", table)
+					}
+				}
+				return nil
 			},
 		},
 		&cobra.Command{
@@ -254,7 +369,22 @@ func createTableCommand(client *client.Client) *cobra.Command {
 			Args:  cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				table := args[0]
-				return client.DescribeTable(context.Background(), table)
+				schema, err := client.DescribeTable(context.Background(), table)
+				if err != nil {
+					return err
+				}
+
+				// Display schema
+				fmt.Printf("📋 Table: %s\n", table)
+				fmt.Printf("📊 Schema:\n")
+				if len(schema.Columns) == 0 {
+					fmt.Printf("   No columns found\n")
+				} else {
+					for _, column := range schema.Columns {
+						fmt.Printf("   - %s: %s\n", column.Name, column.Type)
+					}
+				}
+				return nil
 			},
 		},
 		&cobra.Command{
@@ -282,7 +412,21 @@ func createCatalogCommand(client *client.Client) *cobra.Command {
 			Use:   "namespaces",
 			Short: "List namespaces",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				return client.ListNamespaces(context.Background())
+				namespaces, err := client.ListNamespaces(context.Background())
+				if err != nil {
+					return err
+				}
+
+				// Display namespaces
+				fmt.Printf("📋 Namespaces:\n")
+				if len(namespaces) == 0 {
+					fmt.Printf("   No namespaces found\n")
+				} else {
+					for _, namespace := range namespaces {
+						fmt.Printf("   - %s\n", namespace)
+					}
+				}
+				return nil
 			},
 		},
 		&cobra.Command{

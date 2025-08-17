@@ -22,45 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MockPathManager implements shared.PathManager for testing
-var _ shared.PathManager = (*MockPathManager)(nil)
-
-type MockPathManager struct {
-	basePath string
-}
-
-func (m *MockPathManager) GetCatalogURI(catalogType string) string {
-	return filepath.Join(m.basePath, "catalog", "catalog.json")
-}
-
-func (m *MockPathManager) GetTableMetadataPath(namespace []string, tableName string) string {
-	nsPath := strings.Join(namespace, "/")
-	return filepath.Join(m.basePath, "tables", nsPath, tableName, "metadata")
-}
-
-func (m *MockPathManager) GetTableDataPath(namespace []string, tableName string) string {
-	nsPath := strings.Join(namespace, "/")
-	return filepath.Join(m.basePath, "tables", nsPath, tableName, "data")
-}
-
-func (m *MockPathManager) GetViewMetadataPath(namespace []string, viewName string) string {
-	nsPath := strings.Join(namespace, "/")
-	return filepath.Join(m.basePath, "views", nsPath, viewName, "metadata")
-}
-
-func (m *MockPathManager) GetNamespacePath(namespace []string) string {
-	nsPath := strings.Join(namespace, "/")
-	return filepath.Join(m.basePath, "namespaces", nsPath)
-}
-
-func (m *MockPathManager) GetMetadataDir() string {
-	return filepath.Join(m.basePath, "metadata")
-}
-
-func (m *MockPathManager) GetDataDir() string {
-	return filepath.Join(m.basePath, "data")
-}
-
 // Helper function to create test config
 func createTestConfig(dataPath string) *config.Config {
 	return &config.Config{
@@ -68,9 +29,6 @@ func createTestConfig(dataPath string) *config.Config {
 			DataPath: dataPath,
 			Catalog: config.CatalogConfig{
 				Type: "json",
-			},
-			Data: config.DataConfig{
-				Type: "filesystem",
 			},
 		},
 	}
@@ -87,7 +45,7 @@ func createTestCatalog(t *testing.T) (*Catalog, string) {
 	})
 
 	cfg := createTestConfig(tempDir)
-	pathManager := &MockPathManager{basePath: tempDir}
+	pathManager := &shared.MockPathManager{BasePath: tempDir}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	require.NoError(t, err)
@@ -119,12 +77,9 @@ func TestNewCatalogMissingConfig(t *testing.T) {
 			Catalog: config.CatalogConfig{
 				Type: "invalid", // Invalid catalog type
 			},
-			Data: config.DataConfig{
-				Type: "filesystem",
-			},
 		},
 	}
-	pathManager := &MockPathManager{basePath: tempDir2}
+	pathManager := &shared.MockPathManager{BasePath: tempDir2}
 
 	_, err2 := NewCatalog(cfg, pathManager)
 	assert.Error(t, err2)
@@ -816,7 +771,7 @@ func TestIndexConfigurationSupport(t *testing.T) {
 
 	// Test loading configuration from index
 	cfg := createTestConfig(tempDir)
-	pathManager := &MockPathManager{basePath: tempDir}
+	pathManager := &shared.MockPathManager{BasePath: tempDir}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	require.NoError(t, err)
@@ -850,9 +805,6 @@ func TestConfigurationValidation(t *testing.T) {
 					Catalog: config.CatalogConfig{
 						Type: "json",
 					},
-					Data: config.DataConfig{
-						Type: "filesystem",
-					},
 				},
 			},
 			expectError: false,
@@ -865,9 +817,6 @@ func TestConfigurationValidation(t *testing.T) {
 					Catalog: config.CatalogConfig{
 						Type: "invalid",
 					},
-					Data: config.DataConfig{
-						Type: "filesystem",
-					},
 				},
 			},
 			expectError: true,
@@ -877,7 +826,7 @@ func TestConfigurationValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pathManager := &MockPathManager{basePath: tempDir}
+			pathManager := &shared.MockPathManager{BasePath: tempDir}
 			_, err := NewCatalog(tt.config, pathManager)
 			if tt.expectError {
 				assert.Error(t, err)
@@ -966,7 +915,7 @@ func TestCorruptedCatalogFile(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := createTestConfig(tempDir)
-	pathManager := &MockPathManager{basePath: tempDir}
+	pathManager := &shared.MockPathManager{BasePath: tempDir}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	require.NoError(t, err) // Catalog creation should succeed
@@ -1572,7 +1521,7 @@ func TestIndexConfigurationEdgeCases(t *testing.T) {
 	// Test catalog creation with empty base path (should still work)
 	t.Run("empty base path", func(t *testing.T) {
 		cfg := createTestConfig("")
-		pathManager := &MockPathManager{basePath: ""}
+		pathManager := &shared.MockPathManager{BasePath: ""}
 
 		catalog, err := NewCatalog(cfg, pathManager)
 		require.NoError(t, err)
@@ -1589,7 +1538,7 @@ func TestIndexConfigurationEdgeCases(t *testing.T) {
 		defer os.RemoveAll(tempDir)
 
 		cfg := createTestConfig(tempDir)
-		pathManager := &MockPathManager{basePath: tempDir}
+		pathManager := &shared.MockPathManager{BasePath: tempDir}
 
 		catalog, err := NewCatalog(cfg, pathManager)
 		require.NoError(t, err)

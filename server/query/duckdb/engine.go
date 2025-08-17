@@ -363,15 +363,8 @@ func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 
 	start := time.Now()
 
-	// Preprocess the query to handle Iceberg table references
-	processedQuery, err := e.preprocessQuery(ctx, query)
-	if err != nil {
-		e.incrementErrorCount()
-		return nil, fmt.Errorf("failed to preprocess query [%s]: %w", queryID, err)
-	}
-
 	// Execute the query with timeout context using parameterized query when possible
-	rows, err := e.executeSecureQuery(ctx, processedQuery, queryID)
+	rows, err := e.executeSecureQuery(ctx, query, queryID)
 	if err != nil {
 		e.incrementErrorCount()
 		// Provide better error messages for common issues
@@ -458,8 +451,8 @@ func (e *Engine) RegisterTable(ctx context.Context, identifier table.Identifier,
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
-	// Convert table identifier to SQL-safe name
-	tableName := e.identifierToTableName(identifier)
+	// Convert table identifier to qualified table name
+	tableName := strings.Join(identifier, ".")
 
 	start := time.Now()
 
@@ -592,57 +585,6 @@ func (e *Engine) ClearTableCache() {
 	e.log.Printf("Info: ClearTableCache called - no cache to clear in this implementation")
 }
 
-// preprocessQuery preprocesses SQL queries to handle Iceberg table references
-func (e *Engine) preprocessQuery(ctx context.Context, query string) (string, error) {
-	// Convert dot notation to underscore notation for table references
-	// This regex matches table references like 'default.sales' but ignores qualified column references like 'table.column'
-	tablePattern := regexp.MustCompile(`(FROM|JOIN|UPDATE|INTO|TABLE)\s+([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*)`)
-
-	processedQuery := tablePattern.ReplaceAllStringFunc(query, func(match string) string {
-		parts := strings.SplitN(match, " ", 2)
-		if len(parts) != 2 {
-			return match
-		}
-
-		keyword := parts[0]
-		tablePath := parts[1]
-
-		// Replace dots with underscores in table references
-		tableName := strings.ReplaceAll(tablePath, ".", "_")
-		return fmt.Sprintf("%s %s", keyword, tableName)
-	})
-
-	// Create aliases for table references to support both notations
-	if strings.Contains(processedQuery, "_") {
-		for _, table := range tablePattern.FindAllString(query, -1) {
-			parts := strings.SplitN(table, " ", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			tablePath := parts[1]
-			dotParts := strings.Split(tablePath, ".")
-			if len(dotParts) == 2 {
-				aliasStmt := fmt.Sprintf("CREATE ALIAS IF NOT EXISTS %s FOR %s_%s;", dotParts[1], dotParts[0], dotParts[1])
-				if _, err := e.db.Exec(aliasStmt); err != nil {
-					e.log.Printf("Failed to create alias: %v", err)
-				}
-			}
-		}
-	}
-
-	// Replace column references to use underscore notation
-	columnPattern := regexp.MustCompile(`([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*)`)
-	processedQuery = columnPattern.ReplaceAllStringFunc(processedQuery, func(match string) string {
-		parts := strings.Split(match, ".")
-		if len(parts) == 3 {
-			return fmt.Sprintf("%s_%s.%s", parts[0], parts[1], parts[2])
-		}
-		return match
-	})
-
-	return processedQuery, nil
-}
-
 // incrementErrorCount safely increments the error counter
 func (e *Engine) incrementErrorCount() {
 	e.metrics.mu.Lock()
@@ -655,11 +597,6 @@ func (e *Engine) incrementBlockedQueries() {
 	e.metrics.mu.Lock()
 	e.metrics.BlockedQueries++
 	e.metrics.mu.Unlock()
-}
-
-// identifierToTableName converts a table identifier to a SQL-safe table name
-func (e *Engine) identifierToTableName(identifier table.Identifier) string {
-	return strings.Join(identifier, "_")
 }
 
 // quoteName quotes a SQL identifier to make it safe for use in queries

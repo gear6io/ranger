@@ -5,8 +5,6 @@
 BINARY_DIR = .
 SERVER_BINARY = $(BINARY_DIR)/icebox-server
 CLIENT_BINARY = $(BINARY_DIR)/icebox-client
-NATIVE_CLIENT_BINARY = $(BINARY_DIR)/native_client
-CLICKHOUSE_EXAMPLE_BINARY = $(BINARY_DIR)/clickhouse_example
 
 # Go build flags
 GO_BUILD_FLAGS = -ldflags="-s -w"
@@ -25,8 +23,9 @@ help: ## Show this help message
 	@echo "Examples:"
 	@echo "  make build-server    # Build only the server"
 	@echo "  make build-client    # Build only the client"
-	@echo "  make build-all       # Build server, client, and examples"
+	@echo "  make build-all       # Build server and client"
 	@echo "  make run-server      # Run the server"
+	@echo "  make kill-server     # Kill running server processes"
 	@echo "  make clean           # Clean all binaries"
 
 # Build targets
@@ -42,23 +41,8 @@ build-client: ## Build the Icebox client
 	@go build $(GO_BUILD_FLAGS) -o $(CLIENT_BINARY) ./cmd/icebox-client/main.go
 	@echo "✅ Client built successfully: $(CLIENT_BINARY)"
 
-.PHONY: build-native-client
-build-native-client: ## Build the native protocol client example
-	@echo "Building native client example..."
-	@go build $(GO_BUILD_FLAGS) -o $(NATIVE_CLIENT_BINARY) ./examples/native/native_client.go
-	@echo "✅ Native client built successfully: $(NATIVE_CLIENT_BINARY)"
-
-.PHONY: build-clickhouse-example
-build-clickhouse-example: ## Build the ClickHouse Go example
-	@echo "Building ClickHouse Go example..."
-	@go build $(GO_BUILD_FLAGS) -o $(CLICKHOUSE_EXAMPLE_BINARY) ./examples/clickhouse_go_example.go
-	@echo "✅ ClickHouse example built successfully: $(CLICKHOUSE_EXAMPLE_BINARY)"
-
-.PHONY: build-examples
-build-examples: build-native-client build-clickhouse-example ## Build all examples
-
 .PHONY: build-all
-build-all: build-server build-client build-examples ## Build server, client, and all examples
+build-all: build-server build-client ## Build server and client
 	@echo "🎉 All binaries built successfully!"
 
 # Development targets
@@ -106,17 +90,6 @@ test-integration: ## Run integration tests
 	@echo "Running integration tests..."
 	@go test -v ./integration_tests/...
 
-# Example targets
-.PHONY: run-native-client
-run-native-client: build-native-client ## Build and run native client example
-	@echo "Running native client example..."
-	@./$(NATIVE_CLIENT_BINARY)
-
-.PHONY: run-clickhouse-example
-run-clickhouse-example: build-clickhouse-example ## Build and run ClickHouse example
-	@echo "Running ClickHouse Go example..."
-	@./$(CLICKHOUSE_EXAMPLE_BINARY)
-
 # Docker targets
 .PHONY: docker-build-server
 docker-build-server: ## Build server Docker image
@@ -150,8 +123,17 @@ docker-stop: ## Stop Docker Compose services
 .PHONY: clean
 clean: ## Clean all built binaries
 	@echo "Cleaning binaries..."
-	@rm -f $(SERVER_BINARY) $(CLIENT_BINARY) $(NATIVE_CLIENT_BINARY) $(CLICKHOUSE_EXAMPLE_BINARY)
+	@rm -f $(SERVER_BINARY) $(CLIENT_BINARY)
 	@echo "✅ Cleaned successfully"
+
+.PHONY: kill-server
+kill-server: ## Kill running icebox server processes
+	@echo "Killing running icebox server processes..."
+	@if pkill -f icebox-server; then \
+		echo "✅ Icebox server processes killed successfully"; \
+	else \
+		echo "ℹ️  No running icebox server processes found"; \
+	fi
 
 .PHONY: clean-all
 clean-all: clean ## Clean binaries and go cache
@@ -206,8 +188,6 @@ status: ## Show build status
 	@echo "Binaries:"
 	@if [ -f "$(SERVER_BINARY)" ]; then echo "✅ Server: $(SERVER_BINARY)"; else echo "❌ Server: Not built"; fi
 	@if [ -f "$(CLIENT_BINARY)" ]; then echo "✅ Client: $(CLIENT_BINARY)"; else echo "❌ Client: Not built"; fi
-	@if [ -f "$(NATIVE_CLIENT_BINARY)" ]; then echo "✅ Native Client: $(NATIVE_CLIENT_BINARY)"; else echo "❌ Native Client: Not built"; fi
-	@if [ -f "$(CLICKHOUSE_EXAMPLE_BINARY)" ]; then echo "✅ ClickHouse Example: $(CLICKHOUSE_EXAMPLE_BINARY)"; else echo "❌ ClickHouse Example: Not built"; fi
 	@echo ""
 	@echo "Configuration:"
 	@if [ -f "icebox-server.yml" ]; then echo "✅ Server config: icebox-server.yml"; else echo "❌ Server config: Missing"; fi
@@ -216,9 +196,6 @@ status: ## Show build status
 # Quick start targets
 .PHONY: quick-start
 quick-start: build-all run-server ## Build everything and start server
-
-.PHONY: quick-test
-quick-test: build-server run-native-client ## Build server and test with native client
 
 # Development workflow
 .PHONY: dev-setup

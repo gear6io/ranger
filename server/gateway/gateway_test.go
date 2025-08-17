@@ -5,6 +5,7 @@ import (
 
 	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/query"
+	"github.com/TFMV/icebox/server/storage"
 	"github.com/rs/zerolog"
 )
 
@@ -13,19 +14,24 @@ func TestNewGateway(t *testing.T) {
 	cfg := &config.Config{
 		Log: config.LogConfig{Level: "info"},
 		Storage: config.StorageConfig{
+			DataPath: ".icebox/warehouse",
 			Catalog: config.CatalogConfig{
 				Type: "json",
-				URI:  ".icebox/catalog.json",
 			},
-			Path: ".icebox/warehouse",
 		},
 	}
 
 	// Create logger
 	logger := zerolog.New(zerolog.NewConsoleWriter())
 
+	// Create storage manager
+	storageMgr, err := storage.NewManager(cfg, logger)
+	if err != nil {
+		t.Fatalf("Failed to create storage manager: %v", err)
+	}
+
 	// Create a mock QueryEngine (we'll use a simple one for testing)
-	queryEngine, err := query.NewEngine(cfg, logger)
+	queryEngine, err := query.NewEngine(cfg, storageMgr, logger)
 	if err != nil {
 		t.Fatalf("Failed to create query engine: %v", err)
 	}

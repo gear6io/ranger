@@ -36,3 +36,4 @@ my-lakehouse/
 logs/
 .vscode/
 bin/
+workspace/

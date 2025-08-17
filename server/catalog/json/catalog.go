@@ -394,17 +394,7 @@ func validateJSONConfig(cfg *config.Config) error {
 }
 
 // isValidURI checks if the string is a valid URI scheme
-// Currently supports file:// and s3:// schemes for future extensibility
 func isValidURI(uri string) bool {
-	// Check for URI schemes
-	switch {
-	case strings.HasPrefix(uri, "file://"):
-		stripped := strings.TrimPrefix(uri, "file://")
-		return filepath.IsAbs(stripped) || strings.HasPrefix(stripped, "./") || strings.HasPrefix(stripped, "../")
-	case strings.HasPrefix(uri, "s3://"):
-		return true
-	}
-
 	// Check if it's an absolute path or relative path
 	return filepath.IsAbs(uri) || strings.HasPrefix(uri, "./") || strings.HasPrefix(uri, "../")
 }

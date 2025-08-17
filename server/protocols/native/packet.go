@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 )
 
 // PacketReader reads protocol packets
@@ -91,6 +92,16 @@ func (r *PacketReader) ReadUVarInt() (uint64, error) {
 		}
 	}
 	return value, nil
+}
+
+// ReadFloat64 reads a 64-bit floating point number (big endian)
+func (r *PacketReader) ReadFloat64() (float64, error) {
+	buf := make([]byte, 8)
+	if _, err := r.conn.Read(buf); err != nil {
+		return 0, err
+	}
+	bits := binary.BigEndian.Uint64(buf)
+	return math.Float64frombits(bits), nil
 }
 
 // PacketWriter writes protocol packets

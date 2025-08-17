@@ -219,23 +219,6 @@ func (c *Config) GetStorageType() string {
 	return "filesystem"
 }
 
-// GetCatalogURI returns the catalog URI based on data path and catalog type
-func (c *Config) GetCatalogURI() string {
-	dataPath := c.GetStoragePath()
-	if dataPath == "" {
-		return ""
-	}
-
-	switch c.GetCatalogType() {
-	case "json":
-		return fmt.Sprintf("file://%s/catalog/catalog.json", dataPath)
-	case "sqlite":
-		return fmt.Sprintf("file://%s/catalog/catalog.db", dataPath)
-	default:
-		return ""
-	}
-}
-
 // GetStoragePath returns the storage path
 func (c *Config) GetStoragePath() string {
 	return c.Storage.DataPath

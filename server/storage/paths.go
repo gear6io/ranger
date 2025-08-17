@@ -59,9 +59,9 @@ func (pm *PathManager) GetCatalogURI(catalogType string) string {
 
 	switch catalogType {
 	case "json":
-		return fmt.Sprintf("file://%s/catalog/catalog.json", pm.basePath)
+		return fmt.Sprintf("%s/catalog/catalog.json", pm.basePath)
 	case "sqlite":
-		return fmt.Sprintf("file://%s/catalog/catalog.db", pm.basePath)
+		return fmt.Sprintf("%s/catalog/catalog.db", pm.basePath)
 	default:
 		return ""
 	}

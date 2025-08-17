@@ -210,10 +210,9 @@ func (m *Manager) CreateTable(ctx context.Context, database, tableName string, s
 		return fmt.Errorf("unsupported storage engine: %s", storageEngine)
 	}
 
-	// First create table metadata in internal storage
-	_, err := m.meta.CreateTableMetadata(ctx, database, tableName, schema, storageEngine, engineConfig)
-	if err != nil {
-		return errors.New(errors.CommonInternal, "failed to create table metadata").AddContext("database", database).AddContext("table", tableName).AddContext("storage_engine", storageEngine)
+	// Create table with complete metadata in internal storage
+	if err := m.meta.CreateTable(ctx, database, tableName, schema, storageEngine, engineConfig); err != nil {
+		return errors.New(errors.CommonInternal, "failed to create table").AddContext("database", database).AddContext("table", tableName).AddContext("storage_engine", storageEngine)
 	}
 
 	// Get the appropriate storage engine for this table

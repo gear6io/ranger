@@ -87,7 +87,7 @@ func TestBunSystem(t *testing.T) {
 		}
 
 		// Create table
-		if err := store.CreateTable(ctx, "testdb", "testtable"); err != nil {
+		if _, err := store.CreateTable(ctx, "testdb", "testtable", []byte("{}"), "MEMORY", nil); err != nil {
 			t.Fatalf("Failed to create table: %v", err)
 		}
 

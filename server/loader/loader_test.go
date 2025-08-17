@@ -12,13 +12,11 @@ func TestNewLoader(t *testing.T) {
 	cfg := &config.Config{
 		Log: config.LogConfig{Level: "info"},
 		Storage: config.StorageConfig{
+			DataPath: ".icebox/warehouse",
 			Catalog: config.CatalogConfig{
 				Type: "json",
-				URI:  ".icebox/catalog.json",
 			},
-			Config: config.DataConfig{
-				Type: "memory",
-			},
+			Data: config.DataConfig{},
 		},
 	}
 

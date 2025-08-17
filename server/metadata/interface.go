@@ -15,13 +15,12 @@ type MetadataManagerInterface interface {
 	DatabaseExists(ctx context.Context, dbName string) bool
 
 	// Table operations
-	CreateTable(ctx context.Context, dbName, tableName string) error
+	CreateTable(ctx context.Context, dbName, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) error
 	DropTable(ctx context.Context, dbName, tableName string) error
 	ListTables(ctx context.Context, dbName string) ([]string, error)
 	TableExists(ctx context.Context, dbName, tableName string) bool
 
 	// Table metadata operations (for storage manager) - these work with explicit database and table names
-	CreateTableMetadata(ctx context.Context, database, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*types.TableMetadata, error)
 	LoadTableMetadata(ctx context.Context, database, tableName string) (*types.TableMetadata, error)
 	ListAllTables(ctx context.Context) ([]string, error)
 

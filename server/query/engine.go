@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/query/duckdb"
@@ -19,6 +20,7 @@ type Engine struct {
 	duckdbEngine *duckdb.Engine
 	storageMgr   *storage.Manager
 	logger       zerolog.Logger
+	queryManager *ExecutionManager
 }
 
 // QueryResult represents the result of a query execution
@@ -28,6 +30,7 @@ type QueryResult struct {
 	Columns  []string
 	Message  string
 	Error    error
+	QueryID  string
 }
 
 // NewEngine creates a new shared query engine service with storage
@@ -61,38 +64,83 @@ func NewEngine(cfg *config.Config, storageMgr *storage.Manager, logger zerolog.L
 		return nil, fmt.Errorf("failed to create DuckDB engine: %w", err)
 	}
 
+	// Create execution manager for tracking and cancellation
+	queryManager := NewExecutionManager(logger)
+
 	return &Engine{
 		duckdbEngine: duckdbEngine,
 		storageMgr:   storageMgr,
 		logger:       logger,
+		queryManager: queryManager,
 	}, nil
 }
 
-// ExecuteQuery routes and executes a query
+// ExecuteQuery routes and executes a query with tracking and cancellation support
 func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, error) {
-	// Create a catalog-aware parser
-	catalogAdapter := parser.NewDefaultCatalogAdapter()
-	enhancedParser := parser.NewEnhancedParser(catalogAdapter)
+	return e.ExecuteQueryWithTracking(ctx, query, "unknown", "unknown")
+}
 
-	// Parse and validate the query against catalog
-	stmt, err := enhancedParser.ParseAndValidate(ctx, query, catalogAdapter)
+// ExecuteQueryWithTracking executes a query with full tracking and cancellation support
+func (e *Engine) ExecuteQueryWithTracking(ctx context.Context, query, user, clientAddr string) (*QueryResult, error) {
+	// Generate unique query ID
+	queryID := fmt.Sprintf("query_%d", time.Now().UnixNano())
+
+	// Start tracking the query
+	_, trackedCtx := e.queryManager.StartQuery(ctx, queryID, query, user, clientAddr)
+
+	// Use the tracked context for execution
+	ctx = trackedCtx
+
+	// Ensure query completion is tracked
+	defer func() {
+		if r := recover(); r != nil {
+			e.queryManager.CompleteQuery(queryID, 0, fmt.Errorf("panic: %v", r))
+			panic(r)
+		}
+	}()
+
+	// Parse the query (validation will be handled separately if needed)
+	stmt, err := parser.Parse(query)
 	if err != nil {
+		e.queryManager.CompleteQuery(queryID, 0, err)
 		return nil, fmt.Errorf("failed to parse and validate query: %w", err)
 	}
 
+	// Debug: Log the parsed statement type
+	e.logger.Debug().
+		Str("statement_type", fmt.Sprintf("%T", stmt)).
+		Msg("Parsed statement type")
+
 	// Route based on statement type
+	var result *QueryResult
 	switch stmt := stmt.(type) {
 	case *parser.SelectStmt:
-		return e.executeReadQuery(ctx, query)
+		result, err = e.executeReadQuery(ctx, query)
 	case *parser.InsertStmt:
-		return e.executeInsertQuery(ctx, query)
+		result, err = e.executeInsertQuery(ctx, query)
 	case *parser.CreateTableStmt:
-		return e.executeDDLQuery(ctx, query)
+		result, err = e.executeDDLQuery(ctx, query)
+	case *parser.CreateDatabaseStmt:
+		result, err = e.executeCreateDatabase(ctx, stmt)
 	case *parser.ShowStmt:
-		return e.executeShowStmt(ctx, stmt)
+		result, err = e.executeShowStmt(ctx, stmt)
 	default:
-		return nil, fmt.Errorf("unsupported statement type")
+		err = fmt.Errorf("unsupported statement type: %T", stmt)
 	}
+
+	// Track query completion
+	if err != nil {
+		e.queryManager.CompleteQuery(queryID, 0, err)
+		return nil, err
+	}
+
+	// Set query ID in result
+	result.QueryID = queryID
+
+	// Track successful completion
+	e.queryManager.CompleteQuery(queryID, result.RowCount, nil)
+
+	return result, nil
 }
 
 // executeReadQuery redirects read queries to DuckDB
@@ -191,7 +239,44 @@ func (e *Engine) executeShowTables(ctx context.Context) (*QueryResult, error) {
 		Data:     rows,
 		RowCount: int64(len(rows)),
 		Columns:  []string{"Table"},
-		Message:  fmt.Sprintf("Found %d table(s)", len(rows)),
+		Message:  fmt.Sprintf("Found %d table(s)", len(tables)),
+	}, nil
+}
+
+// executeCreateDatabase handles CREATE DATABASE statements
+func (e *Engine) executeCreateDatabase(ctx context.Context, stmt *parser.CreateDatabaseStmt) (*QueryResult, error) {
+	e.logger.Debug().
+		Str("database", stmt.Name.Value).
+		Bool("ifNotExists", stmt.IfNotExists).
+		Msg("Executing CREATE DATABASE")
+
+	// Check if database already exists
+	if e.storageMgr.GetMetadataManager().DatabaseExists(ctx, stmt.Name.Value) {
+		if stmt.IfNotExists {
+			// Database exists and IF NOT EXISTS was specified - return success
+			return &QueryResult{
+				Data:     [][]interface{}{},
+				RowCount: 0,
+				Columns:  []string{},
+				Message:  fmt.Sprintf("Database %s already exists (IF NOT EXISTS)", stmt.Name.Value),
+			}, nil
+		} else {
+			// Database exists but IF NOT EXISTS was not specified - return error
+			return nil, fmt.Errorf("database %s already exists", stmt.Name.Value)
+		}
+	}
+
+	// Create database using metadata manager
+	err := e.storageMgr.GetMetadataManager().CreateDatabase(ctx, stmt.Name.Value)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create database: %w", err)
+	}
+
+	return &QueryResult{
+		Data:     [][]interface{}{},
+		RowCount: 0,
+		Columns:  []string{},
+		Message:  fmt.Sprintf("Database %s created successfully", stmt.Name.Value),
 	}, nil
 }
 
@@ -200,10 +285,7 @@ func (e *Engine) executeDDLQuery(ctx context.Context, query string) (*QueryResul
 	e.logger.Debug().Str("query", query).Msg("Executing DDL query")
 
 	// Parse the query to determine the statement type
-	catalogAdapter := parser.NewDefaultCatalogAdapter()
-	enhancedParser := parser.NewEnhancedParser(catalogAdapter)
-
-	stmt, err := enhancedParser.ParseAndValidate(ctx, query, catalogAdapter)
+	stmt, err := parser.Parse(query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse DDL query: %w", err)
 	}
@@ -211,9 +293,48 @@ func (e *Engine) executeDDLQuery(ctx context.Context, query string) (*QueryResul
 	// Handle different DDL statement types
 	switch stmt := stmt.(type) {
 	case *parser.CreateTableStmt:
+		// Extract database and table name
+		database := "default"
+		tableName := stmt.TableName.Value
+
+		// Check if table name includes database prefix (e.g., "db.table")
+		if strings.Contains(tableName, ".") {
+			parts := strings.SplitN(tableName, ".", 2)
+			database = parts[0]
+			tableName = parts[1]
+		}
+
+		e.logger.Debug().
+			Str("database", database).
+			Str("table", tableName).
+			Bool("ifNotExists", stmt.IfNotExists).
+			Msg("Processing CREATE TABLE statement")
+
+		// Check if table already exists
+		if e.storageMgr.GetMetadataManager().TableExists(ctx, database, tableName) {
+			if stmt.IfNotExists {
+				// Table exists and IF NOT EXISTS was specified - return success
+				return &QueryResult{
+					Data:     [][]interface{}{},
+					RowCount: 0,
+					Columns:  []string{},
+					Message:  fmt.Sprintf("Table %s.%s already exists (IF NOT EXISTS)", database, tableName),
+				}, nil
+			} else {
+				// Table exists but IF NOT EXISTS was not specified - return error
+				return nil, fmt.Errorf("table %s.%s already exists", database, tableName)
+			}
+		}
+
+		// Determine storage engine
+		storageEngine := "default"
+		if stmt.Engine != nil {
+			storageEngine = stmt.Engine.Value
+		}
+
 		// Create table using our storage manager
 		schemaData := e.serializeTableSchema(stmt.TableSchema)
-		if err := e.storageMgr.CreateTable(ctx, "default", stmt.TableName.Value, schemaData, "default", nil); err != nil {
+		if err := e.storageMgr.CreateTable(ctx, database, tableName, schemaData, storageEngine, nil); err != nil {
 			return nil, fmt.Errorf("failed to create table in storage: %w", err)
 		}
 
@@ -221,7 +342,7 @@ func (e *Engine) executeDDLQuery(ctx context.Context, query string) (*QueryResul
 			Data:     [][]interface{}{},
 			RowCount: 0,
 			Columns:  []string{},
-			Message:  "Table created successfully",
+			Message:  fmt.Sprintf("Table %s created successfully with %s engine", tableName, storageEngine),
 		}, nil
 
 	default:
@@ -241,16 +362,24 @@ func (e *Engine) executeDDLQuery(ctx context.Context, query string) (*QueryResul
 }
 
 // CreateTable creates a new table with the given schema
-func (e *Engine) CreateTable(ctx context.Context, tableName string, schema *parser.TableSchema) error {
-	e.logger.Info().Str("table", tableName).Msg("Creating table")
+func (e *Engine) CreateTable(ctx context.Context, database, tableName, storageEngine string, schema *parser.TableSchema) error {
+	e.logger.Info().Str("database", database).Str("table", tableName).Str("engine", storageEngine).Msg("Creating table")
 
 	// Store table schema in storage using Storage Manager
 	schemaData := e.serializeTableSchema(schema)
-	if err := e.storageMgr.CreateTable(ctx, "default", tableName, schemaData, "default", nil); err != nil {
+	if err := e.storageMgr.CreateTable(ctx, database, tableName, schemaData, storageEngine, nil); err != nil {
 		return fmt.Errorf("failed to create table in storage: %w", err)
 	}
 
-	e.logger.Info().Str("table", tableName).Msg("Table created successfully")
+	// Register table with DuckDB engine for query execution
+	// Build CREATE TABLE SQL for DuckDB
+	createTableSQL := e.buildCreateTableSQL(fmt.Sprintf("%s.%s", database, tableName), schema)
+	if _, err := e.duckdbEngine.ExecuteQuery(ctx, createTableSQL); err != nil {
+		e.logger.Warn().Err(err).Str("database", database).Str("table", tableName).Msg("Failed to register table with DuckDB - queries may fail")
+		// Don't fail table creation if DuckDB registration fails
+	}
+
+	e.logger.Info().Str("database", database).Str("table", tableName).Str("engine", storageEngine).Msg("Table created successfully")
 	return nil
 }
 
@@ -463,6 +592,31 @@ func (e *Engine) GetDuckDBEngine() *duckdb.Engine {
 // GetStorageManager returns the storage manager for direct access
 func (e *Engine) GetStorageManager() *storage.Manager {
 	return e.storageMgr
+}
+
+// GetExecutionManager returns the execution manager for external access
+func (e *Engine) GetExecutionManager() *ExecutionManager {
+	return e.queryManager
+}
+
+// CancelQuery cancels a running query by ID
+func (e *Engine) CancelQuery(queryID string) error {
+	return e.queryManager.CancelQuery(queryID)
+}
+
+// GetQueryInfo returns information about a specific query
+func (e *Engine) GetQueryInfo(queryID string) (*QueryInfo, error) {
+	return e.queryManager.GetQueryInfo(queryID)
+}
+
+// ListRunningQueries returns all currently running queries
+func (e *Engine) ListRunningQueries() []*QueryInfo {
+	return e.queryManager.ListRunningQueries()
+}
+
+// GetQueryStats returns statistics about queries
+func (e *Engine) GetQueryStats() map[string]interface{} {
+	return e.queryManager.GetStats()
 }
 
 // Close closes the engine and releases resources

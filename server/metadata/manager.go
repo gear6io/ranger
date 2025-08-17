@@ -85,16 +85,17 @@ func (mm *MetadataManager) DatabaseExists(ctx context.Context, dbName string) bo
 	return mm.storage.DatabaseExists(ctx, dbName)
 }
 
-// CreateTable creates a new table
-func (mm *MetadataManager) CreateTable(ctx context.Context, dbName, tableName string) error {
-	// Create in personal metadata storage
-	if err := mm.storage.CreateTable(ctx, dbName, tableName); err != nil {
-		return fmt.Errorf("failed to create table in storage: %w", err)
+// CreateTable creates a new table with complete metadata
+func (mm *MetadataManager) CreateTable(ctx context.Context, dbName, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) error {
+	// Create table with complete metadata in a single operation
+	_, err := mm.storage.CreateTable(ctx, dbName, tableName, schema, storageEngine, engineConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create table with metadata: %w", err)
 	}
 
 	// Create in Iceberg catalog if needed
 	// This is where you'd coordinate with the Iceberg catalog
-	log.Printf("Created table %s.%s in personal metadata", dbName, tableName)
+	log.Printf("Created table %s.%s with complete metadata in personal metadata", dbName, tableName)
 
 	return nil
 }

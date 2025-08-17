@@ -56,7 +56,7 @@ func TestReadUvarint(t *testing.T) {
 
 	reader := &PacketReader{conn: &mockConn{data: buf[:n]}}
 
-	value, err := reader.ReadUvarint()
+	value, err := reader.ReadUVarInt()
 	assert.NoError(t, err)
 	assert.Equal(t, expected, value)
 }

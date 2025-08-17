@@ -67,9 +67,6 @@ func createTestConfig(catalogType, dataPath string) *config.Config {
 			Catalog: config.CatalogConfig{
 				Type: catalogType,
 			},
-			Data: config.DataConfig{
-				Type: "filesystem",
-			},
 		},
 	}
 }
