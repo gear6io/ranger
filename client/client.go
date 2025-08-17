@@ -130,6 +130,11 @@ func (c *Client) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 		}
 	}
 
+	// Check for any errors that occurred during row iteration
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during query execution: %w", err)
+	}
+
 	duration := time.Since(start)
 
 	return &QueryResult{

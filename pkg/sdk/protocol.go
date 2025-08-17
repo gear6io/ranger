@@ -59,13 +59,14 @@ func (r *Row) Scan(dest ...interface{}) error {
 
 // Rows represents query results
 type Rows struct {
-	Client  *Client
-	Query   Query
-	Cols    []Column
-	Data    [][]interface{}
-	Current int
-	Closed  bool
-	onClose func()
+	Client   *Client
+	Query    Query
+	Cols     []Column
+	Data     [][]interface{}
+	Current  int
+	Closed   bool
+	QueryErr error // Store any error encountered during query execution
+	onClose  func()
 }
 
 // Column represents a column in query results
@@ -301,9 +302,7 @@ func (r *Rows) Close() error {
 
 // Err returns any error encountered during iteration
 func (r *Rows) Err() error {
-	// For now, return nil as we don't track iteration errors
-	// In a real implementation, this would return any error encountered during Next()
-	return nil
+	return r.QueryErr
 }
 
 // readResults reads query results from the server
@@ -769,6 +768,7 @@ func (c *connection) readQueryResponse(query string) (*Rows, error) {
 	// Read response packets until EndOfStream
 	var allColumns []Column
 	var allData [][]interface{}
+	var queryErr error // Store any error encountered during query execution
 
 	for {
 		// Read message length (4 bytes, big endian)
@@ -787,24 +787,27 @@ func (c *connection) readQueryResponse(query string) (*Rows, error) {
 		case ServerEndOfStream:
 			// Return the accumulated rows
 			return &Rows{
-				Client:  c.client,
-				Query:   Query{Body: query, QueryID: GenerateQueryID()},
-				Cols:    allColumns,
-				Data:    allData,
-				Current: 0,
-				Closed:  false,
+				Client:   c.client,
+				Query:    Query{Body: query, QueryID: GenerateQueryID()},
+				Cols:     allColumns,
+				Data:     allData,
+				Current:  0,
+				Closed:   false,
+				QueryErr: queryErr, // Store any error encountered
 			}, nil
 		case ServerException:
-			// Read exception details
-			_, err = c.readString() // Error message
+			// Read exception details and store the error
+			errorMsg, err := c.readString() // Error message
 			if err != nil {
 				return nil, err
 			}
-			_, err = c.readUvarint() // Error code
+			errorCode, err := c.readUvarint() // Error code
 			if err != nil {
 				return nil, err
 			}
-			return nil, fmt.Errorf("server exception")
+			queryErr = fmt.Errorf("server exception [%d]: %s", errorCode, errorMsg)
+			// Continue reading to get EndOfStream
+			continue
 		case ServerData:
 			// Parse the data payload according to the format sent by the server
 			// Format: column_count (uvarint) + column_name (string) + column_type (string) + data_block (uvarint) + row_count (uvarint) + data (string)
@@ -896,15 +899,15 @@ func (c *connection) readExecResponse() error {
 			return nil
 		case ServerException:
 			// Read exception details
-			_, err = c.readString() // Error message
+			errorMsg, err := c.readString() // Error message
 			if err != nil {
 				return err
 			}
-			_, err = c.readUvarint() // Error code
+			errorCode, err := c.readUvarint() // Error code
 			if err != nil {
 				return err
 			}
-			return fmt.Errorf("server exception")
+			return fmt.Errorf("server exception [%d]: %s", errorCode, errorMsg)
 		case ServerData:
 			// Parse the ServerData packet according to the server's format:
 			// columnCount (uvarint) + columnName (string) + columnType (string) + dataBlock (uvarint) + rowCount (uvarint) + data (string)

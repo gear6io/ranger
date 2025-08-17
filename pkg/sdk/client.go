@@ -427,6 +427,11 @@ func (c *Client) Query(ctx context.Context, query string, args ...interface{}) (
 	return rows, nil
 }
 
+// ExecuteQuery executes a query and returns results (alias for Query for compatibility)
+func (c *Client) ExecuteQuery(ctx context.Context, query string) (*Rows, error) {
+	return c.Query(ctx, query)
+}
+
 // QueryRow executes a query and returns a single row
 func (c *Client) QueryRow(ctx context.Context, query string, args ...interface{}) *Row {
 	rows, err := c.Query(ctx, query, args...)

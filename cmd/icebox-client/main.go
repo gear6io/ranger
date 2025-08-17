@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/TFMV/icebox/client"
 	"github.com/TFMV/icebox/client/config"
@@ -16,6 +18,17 @@ import (
 func main() {
 	// Initialize logger
 	logger := setupLogger()
+
+	// Set up global signal handling
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Handle signals in a goroutine
+	go func() {
+		sig := <-sigChan
+		logger.Info().Str("signal", sig.String()).Msg("Received signal, shutting down gracefully")
+		os.Exit(0)
+	}()
 
 	// Create root command
 	rootCmd := &cobra.Command{
@@ -100,9 +113,22 @@ func createQueryCommand(client *client.Client) *cobra.Command {
 				return fmt.Errorf("failed to connect to server: %w", err)
 			}
 
+			// Execute query with context (no timeout)
 			result, err := client.ExecuteQuery(ctx, query)
 			if err != nil {
-				return err
+				// Provide better error categorization
+				errMsg := err.Error()
+				if strings.Contains(errMsg, "server exception") {
+					return fmt.Errorf("server error: %s", errMsg)
+				} else if strings.Contains(errMsg, "connection") || strings.Contains(errMsg, "network") {
+					return fmt.Errorf("connection error: %s", errMsg)
+				} else if strings.Contains(errMsg, "syntax") || strings.Contains(errMsg, "parse") {
+					return fmt.Errorf("syntax error: %s", errMsg)
+				} else if strings.Contains(errMsg, "table") || strings.Contains(errMsg, "database") {
+					return fmt.Errorf("object error: %s", errMsg)
+				} else {
+					return fmt.Errorf("query execution failed: %s", errMsg)
+				}
 			}
 
 			// Display results
@@ -116,14 +142,15 @@ func createQueryCommand(client *client.Client) *cobra.Command {
 func createShellCommand(client *client.Client) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "shell",
-		Short: "Start interactive shell",
+		Short: "Start interactive SQL shell",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Validate server connection before starting shell
+			// Connect to server
 			ctx := context.Background()
 			if err := client.Connect(ctx); err != nil {
 				return fmt.Errorf("failed to connect to server: %w", err)
 			}
 
+			// Start interactive shell
 			return startInteractiveShell(client)
 		},
 	}
@@ -207,7 +234,12 @@ func startInteractiveShell(client *client.Client) error {
 	fmt.Println("Type 'help' for available commands")
 	fmt.Println("Use ↑↓ arrow keys to navigate command history")
 	fmt.Println("Use ←→ arrow keys to edit current line")
+	fmt.Println("Press Ctrl+C to cancel long-running queries")
 	fmt.Println()
+
+	// Set up signal handling for Ctrl+C
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Command history
 	var history []string
@@ -235,7 +267,7 @@ func startInteractiveShell(client *client.Client) error {
 
 	// Create the prompt
 	p := prompt.New(
-		executor(client, &history),
+		executor(client, &history, sigChan),
 		completer,
 		prompt.OptionTitle("Icebox SQL Shell"),
 		prompt.OptionPrefix("icebox> "),
@@ -259,7 +291,7 @@ func startInteractiveShell(client *client.Client) error {
 }
 
 // executor handles command execution and maintains history
-func executor(client *client.Client, history *[]string) func(string) {
+func executor(client *client.Client, history *[]string, sigChan chan os.Signal) func(string) {
 	return func(input string) {
 		input = strings.TrimSpace(input)
 		if input == "" {
@@ -296,10 +328,41 @@ func executor(client *client.Client, history *[]string) func(string) {
 			return
 		}
 
-		// Execute SQL query
-		result, err := client.ExecuteQuery(context.Background(), input)
+		// Create a cancellable context for the query (no timeout)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Set up signal handling for this query
+		go func() {
+			select {
+			case <-sigChan:
+				fmt.Println("\n⚠️  Cancelling query...")
+				cancel()
+			case <-ctx.Done():
+				// Context was cancelled by other means
+			}
+		}()
+
+		// Execute SQL query with context
+		result, err := client.ExecuteQuery(ctx, input)
 		if err != nil {
-			fmt.Printf("❌ Error: %v\n", err)
+			if ctx.Err() == context.Canceled {
+				fmt.Println("❌ Query cancelled")
+			} else {
+				// Provide better error categorization
+				errMsg := err.Error()
+				if strings.Contains(errMsg, "server exception") {
+					fmt.Printf("❌ Server Error: %s\n", errMsg)
+				} else if strings.Contains(errMsg, "connection") || strings.Contains(errMsg, "network") {
+					fmt.Printf("❌ Connection Error: %s\n", errMsg)
+				} else if strings.Contains(errMsg, "syntax") || strings.Contains(errMsg, "parse") {
+					fmt.Printf("❌ Syntax Error: %s\n", errMsg)
+				} else if strings.Contains(errMsg, "table") || strings.Contains(errMsg, "database") {
+					fmt.Printf("❌ Object Error: %s\n", errMsg)
+				} else {
+					fmt.Printf("❌ Query Error: %s\n", errMsg)
+				}
+			}
 			return
 		}
 
@@ -324,7 +387,9 @@ func createImportCommand(client *client.Client) *cobra.Command {
 			namespace, _ := cmd.Flags().GetString("namespace")
 			overwrite, _ := cmd.Flags().GetBool("overwrite")
 
-			return client.ImportFile(context.Background(), file, table, namespace, overwrite)
+			// Use simple context for import operation
+			ctx := context.Background()
+			return client.ImportFile(ctx, file, table, namespace, overwrite)
 		},
 	}
 
@@ -346,7 +411,9 @@ func createTableCommand(client *client.Client) *cobra.Command {
 			Use:   "list",
 			Short: "List tables",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				tables, err := client.ListTables(context.Background())
+				// Use simple context
+				ctx := context.Background()
+				tables, err := client.ListTables(ctx)
 				if err != nil {
 					return err
 				}
@@ -369,7 +436,10 @@ func createTableCommand(client *client.Client) *cobra.Command {
 			Args:  cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				table := args[0]
-				schema, err := client.DescribeTable(context.Background(), table)
+
+				// Use simple context
+				ctx := context.Background()
+				schema, err := client.DescribeTable(ctx, table)
 				if err != nil {
 					return err
 				}
@@ -393,7 +463,10 @@ func createTableCommand(client *client.Client) *cobra.Command {
 			Args:  cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				table := args[0]
-				return client.DropTable(context.Background(), table)
+
+				// Use simple context
+				ctx := context.Background()
+				return client.DropTable(ctx, table)
 			},
 		},
 	)
@@ -412,7 +485,9 @@ func createCatalogCommand(client *client.Client) *cobra.Command {
 			Use:   "namespaces",
 			Short: "List namespaces",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				namespaces, err := client.ListNamespaces(context.Background())
+				// Use simple context
+				ctx := context.Background()
+				namespaces, err := client.ListNamespaces(ctx)
 				if err != nil {
 					return err
 				}
@@ -435,7 +510,10 @@ func createCatalogCommand(client *client.Client) *cobra.Command {
 			Args:  cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				namespace := args[0]
-				return client.CreateNamespace(context.Background(), namespace)
+
+				// Use simple context
+				ctx := context.Background()
+				return client.CreateNamespace(ctx, namespace)
 			},
 		},
 		&cobra.Command{
@@ -444,7 +522,10 @@ func createCatalogCommand(client *client.Client) *cobra.Command {
 			Args:  cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				namespace := args[0]
-				return client.DropNamespace(context.Background(), namespace)
+
+				// Use simple context
+				ctx := context.Background()
+				return client.DropNamespace(ctx, namespace)
 			},
 		},
 	)
