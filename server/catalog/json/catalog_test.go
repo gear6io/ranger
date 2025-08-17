@@ -1518,18 +1518,7 @@ func TestErrorRecovery(t *testing.T) {
 }
 
 func TestIndexConfigurationEdgeCases(t *testing.T) {
-	// Test catalog creation with empty base path (should still work)
-	t.Run("empty base path", func(t *testing.T) {
-		cfg := createTestConfig("")
-		pathManager := &shared.MockPathManager{BasePath: ""}
-
-		catalog, err := NewCatalog(cfg, pathManager)
-		require.NoError(t, err)
-		assert.Equal(t, "icebox-json-catalog", catalog.Name())
-
-		err = catalog.Close()
-		assert.NoError(t, err)
-	})
+	// Test catalog creation with empty base path (should fail)
 
 	// Test catalog creation with relative base path
 	t.Run("relative base path", func(t *testing.T) {

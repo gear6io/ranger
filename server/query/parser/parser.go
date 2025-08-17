@@ -1624,21 +1624,37 @@ func (p *Parser) parsePrivilegeStmt(revoke bool) (Node, error) {
 			privilegeDefinition.Object = &Identifier{Value: db.Value + "." + table.Value}
 
 		} else {
-			if len(strings.Split(p.peek(0).value.(string), ".")) != 2 {
-				return nil, errors.New("expected database.table, *.*, or database.*")
+			// Check if this is a database name followed by .*
+			if p.peek(0).tokenT == IDENT_TOK {
+				dbName := p.peek(0).value.(string)
+				p.consume() // Consume database name
+
+				// Check if next token is . followed by *
+				if p.peek(0).tokenT == DOT_TOK {
+					p.consume() // Consume .
+
+					if p.peek(0).tokenT == ASTERISK_TOK {
+						// This is database.* format
+						db = &Identifier{Value: dbName}
+						table = &Identifier{Value: "*"}
+						privilegeDefinition.Object = &Identifier{Value: db.Value + "." + table.Value}
+						p.consume() // Consume *
+					} else if p.peek(0).tokenT == IDENT_TOK {
+						// This is database.table format
+						tableName := p.peek(0).value.(string)
+						db = &Identifier{Value: dbName}
+						table = &Identifier{Value: tableName}
+						privilegeDefinition.Object = &Identifier{Value: db.Value + "." + table.Value}
+						p.consume() // Consume table name
+					} else {
+						return nil, errors.New("expected * or table name after .")
+					}
+				} else {
+					return nil, errors.New("expected . after database name")
+				}
+			} else {
+				return nil, errors.New("expected database name or *")
 			}
-
-			db = &Identifier{Value: strings.Split(p.peek(0).value.(string), ".")[0]}
-			table = &Identifier{Value: strings.Split(p.peek(0).value.(string), ".")[1]}
-
-			privilegeDefinition.Object = &Identifier{Value: db.Value + "." + table.Value}
-
-			p.consume() // Consume table name
-
-		}
-
-		if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "TO" {
-			return nil, errors.New("expected TO")
 		}
 	}
 

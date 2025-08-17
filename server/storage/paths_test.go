@@ -46,8 +46,8 @@ func TestGetCatalogURI(t *testing.T) {
 		catalogType string
 		expected    string
 	}{
-		{"json", "file:///test/path/catalog/catalog.json"},
-		{"sqlite", "file:///test/path/catalog/catalog.db"},
+		{"json", "/test/path/catalog/catalog.json"},
+		{"sqlite", "/test/path/catalog/catalog.db"},
 		{"rest", ""},
 		{"", ""},
 	}

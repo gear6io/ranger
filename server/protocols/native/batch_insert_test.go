@@ -2,6 +2,7 @@ package native
 
 import (
 	"encoding/binary"
+	"math"
 	"net"
 	"testing"
 	"time"
@@ -10,8 +11,8 @@ import (
 )
 
 func TestReadColumnValue(t *testing.T) {
-	// Test UInt32
-	data := []byte{1, 0, 0, 0} // Little endian 1
+	// Test UInt32 - using big endian data
+	data := []byte{0, 0, 0, 1} // Big endian 1
 	reader := &PacketReader{conn: &mockConn{data: data}}
 
 	value, err := reader.ReadUint32()
@@ -20,9 +21,14 @@ func TestReadColumnValue(t *testing.T) {
 }
 
 func TestReadFloat64(t *testing.T) {
-	// Test Float64
+	// Test Float64 - using big endian data
 	expected := 3.14159
-	reader := &PacketReader{conn: &mockConn{data: []byte{0x6e, 0x86, 0x1b, 0xf0, 0xf9, 0x21, 0x09, 0x40}}}
+	// Convert to big endian bytes
+	bits := math.Float64bits(expected)
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, bits)
+
+	reader := &PacketReader{conn: &mockConn{data: buf}}
 
 	value, err := reader.ReadFloat64()
 	assert.NoError(t, err)
@@ -30,15 +36,15 @@ func TestReadFloat64(t *testing.T) {
 }
 
 func TestReadString(t *testing.T) {
-	// Test String
+	// Test String - using 4-byte big-endian length prefix
 	expected := "Hello, World!"
-	length := uint64(len(expected))
+	length := uint32(len(expected))
 
-	// Create buffer with length + string
+	// Create buffer with 4-byte big-endian length + string
 	buf := make([]byte, 0)
-	lengthBuf := make([]byte, binary.MaxVarintLen64)
-	n := binary.PutUvarint(lengthBuf, length)
-	buf = append(buf, lengthBuf[:n]...)
+	lengthBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(lengthBuf, length)
+	buf = append(buf, lengthBuf...)
 	buf = append(buf, []byte(expected)...)
 
 	reader := &PacketReader{conn: &mockConn{data: buf}}

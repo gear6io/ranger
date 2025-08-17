@@ -60,7 +60,7 @@ func TestEngineWithStorage(t *testing.T) {
 		}
 
 		// Create table using engine
-		err = engine.CreateTable(ctx, "default", "test_users", "default", schema)
+		err = engine.CreateTable(ctx, "default", "test_users", "MEMORY", schema)
 		require.NoError(t, err, "Should create table successfully")
 
 		// Verify table was created by checking schema

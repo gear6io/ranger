@@ -13,9 +13,54 @@ import (
 	"github.com/apache/iceberg-go/table"
 )
 
+// TestMain cleans up test databases after all tests
+func TestMain(m *testing.M) {
+	// Run tests
+	code := m.Run()
+
+	// Clean up test databases
+	cleanupTestDatabases()
+
+	os.Exit(code)
+}
+
+// cleanupTestDatabases removes all test database files
+func cleanupTestDatabases() {
+	testDirs := []string{"/tmp/test", "/tmp/test2", "/tmp/test3", "/tmp/test4", "/tmp/test5"}
+	for _, dir := range testDirs {
+		if err := os.RemoveAll(dir); err != nil {
+			// Ignore cleanup errors
+		}
+	}
+}
+
+// createTestConfig creates a test configuration with unique database path
+func createTestConfig(t *testing.T) *config.Config {
+	// Use unique test directory for each test
+	testDir := filepath.Join("/tmp", "test", t.Name())
+	if err := os.MkdirAll(testDir, 0755); err != nil {
+		t.Fatalf("Failed to create test directory: %v", err)
+	}
+
+	return &config.Config{
+		Storage: config.StorageConfig{
+			DataPath: testDir,
+			Catalog: config.CatalogConfig{
+				Type: "sqlite",
+			},
+		},
+	}
+}
+
+// createTestPathManager creates a unique path manager for each test
+func createTestPathManager(t *testing.T) *shared.MockPathManager {
+	testDir := filepath.Join("/tmp", "test", t.Name())
+	return &shared.MockPathManager{BasePath: testDir}
+}
+
 func TestNewCatalog(t *testing.T) {
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := createTestPathManager(t)
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
@@ -48,7 +93,7 @@ func TestNewCatalogMissingConfig(t *testing.T) {
 		},
 	}
 
-	pathManager := &shared.MockPathManager{BasePath: ""}
+	pathManager := createTestPathManager(t)
 
 	_, err := NewCatalog(cfg, pathManager)
 	if err == nil {
@@ -58,7 +103,7 @@ func TestNewCatalogMissingConfig(t *testing.T) {
 
 func TestCreateAndCheckNamespace(t *testing.T) {
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := createTestPathManager(t)
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
 		t.Fatalf("Failed to create catalog: %v", err)
@@ -102,7 +147,7 @@ func TestCreateAndCheckNamespace(t *testing.T) {
 
 func TestLoadNamespaceProperties(t *testing.T) {
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := createTestPathManager(t)
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
 		t.Fatalf("Failed to create catalog: %v", err)
@@ -150,7 +195,7 @@ func TestLoadNamespaceProperties(t *testing.T) {
 
 func TestListNamespaces(t *testing.T) {
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := createTestPathManager(t)
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
 		t.Fatalf("Failed to create catalog: %v", err)
@@ -194,7 +239,7 @@ func TestListNamespaces(t *testing.T) {
 
 func TestDropNamespace(t *testing.T) {
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := createTestPathManager(t)
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
 		t.Fatalf("Failed to create catalog: %v", err)
@@ -234,7 +279,7 @@ func TestDropNamespace(t *testing.T) {
 
 func TestCreateAndCheckTable(t *testing.T) {
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := createTestPathManager(t)
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
 		t.Fatalf("Failed to create catalog: %v", err)
@@ -293,7 +338,7 @@ func TestCreateAndCheckTable(t *testing.T) {
 
 func TestCreateTableInNonExistentNamespace(t *testing.T) {
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := createTestPathManager(t)
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
 		t.Fatalf("Failed to create catalog: %v", err)
@@ -317,7 +362,7 @@ func TestCreateTableInNonExistentNamespace(t *testing.T) {
 
 func TestLoadTable(t *testing.T) {
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := createTestPathManager(t)
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
 		t.Fatalf("Failed to create catalog: %v", err)
@@ -363,7 +408,7 @@ func TestLoadTable(t *testing.T) {
 
 func TestDropTable(t *testing.T) {
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := createTestPathManager(t)
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
 		t.Fatalf("Failed to create catalog: %v", err)
@@ -415,7 +460,7 @@ func TestDropTable(t *testing.T) {
 
 func TestListTables(t *testing.T) {
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := createTestPathManager(t)
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
 		t.Fatalf("Failed to create catalog: %v", err)
@@ -478,7 +523,7 @@ func TestListTables(t *testing.T) {
 
 func TestDropNamespaceWithTables(t *testing.T) {
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := createTestPathManager(t)
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
 		t.Fatalf("Failed to create catalog: %v", err)
@@ -560,27 +605,4 @@ func TestHelperFunctions(t *testing.T) {
 	if len(backToNs) != 1 || backToNs[0] != nsStr {
 		t.Logf("Note: stringToNamespace implementation is simplified for testing")
 	}
-}
-
-// Helper function to create a test config
-func createTestConfig(t *testing.T) *config.Config {
-	tempDir, err := os.MkdirTemp("", "icebox-sqlite-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir for config: %v", err)
-	}
-
-	cfg := &config.Config{
-		Storage: config.StorageConfig{
-			DataPath: filepath.Join(tempDir, "data"),
-			Catalog: config.CatalogConfig{
-				Type: "sqlite",
-			},
-		},
-	}
-
-	t.Cleanup(func() {
-		os.RemoveAll(tempDir)
-	})
-
-	return cfg
 }

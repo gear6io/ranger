@@ -363,7 +363,7 @@ func NewCatalog(cfg *config.Config, pathManager shared.PathManager) (*Catalog, e
 	// Create catalog with validated settings
 	catalog := &Catalog{
 		name:        "icebox-json-catalog",
-		uri:         pathManager.GetCatalogURI("json"),
+		uri:         pathManager.GetCatalogURI(cfg.GetCatalogType()),
 		fileIO:      icebergio.LocalFS{},
 		pathManager: pathManager,
 		logger:      log.New(os.Stdout, "[JSON-CATALOG] ", log.LstdFlags),

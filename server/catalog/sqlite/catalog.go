@@ -33,6 +33,12 @@ type Catalog struct {
 
 // NewCatalog creates a new SQLite-based catalog
 func NewCatalog(cfg *config.Config, pathManager shared.PathManager) (*Catalog, error) {
+	// Validate catalog type
+	catalogType := cfg.GetCatalogType()
+	if catalogType != "sqlite" {
+		return nil, fmt.Errorf("expected catalog type 'sqlite', got '%s'", catalogType)
+	}
+
 	// Get catalog URI from path manager
 	catalogURI := pathManager.GetCatalogURI("sqlite")
 	if catalogURI == "" {
