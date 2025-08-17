@@ -810,7 +810,7 @@ func (c *connection) readQueryResponse(query string) (*Rows, error) {
 			continue
 		case ServerData:
 			// Parse the data payload according to the format sent by the server
-			// Format: column_count (uvarint) + column_name (string) + column_type (string) + data_block (uvarint) + row_count (uvarint) + data (string)
+			// Format: column_count (uvarint) + column_name (uvarint length + string) + column_type (uvarint length + string) + data_block (uvarint) + row_count (uvarint) + data (uvarint length + string)
 
 			// Read column count (uvarint) - should always be 1 for single column
 			_, err = c.readUvarint()
@@ -818,17 +818,29 @@ func (c *connection) readQueryResponse(query string) (*Rows, error) {
 				return nil, fmt.Errorf("failed to read column count: %w", err)
 			}
 
-			// Read column name (string)
-			columnName, err := c.readString()
+			// Read column name (uvarint length + string)
+			columnNameLen, err := c.readUvarint()
+			if err != nil {
+				return nil, fmt.Errorf("failed to read column name length: %w", err)
+			}
+			columnNameBytes := make([]byte, columnNameLen)
+			_, err = c.conn.Read(columnNameBytes)
 			if err != nil {
 				return nil, fmt.Errorf("failed to read column name: %w", err)
 			}
+			columnName := string(columnNameBytes)
 
-			// Read column type (string)
-			columnType, err := c.readString()
+			// Read column type (uvarint length + string)
+			columnTypeLen, err := c.readUvarint()
+			if err != nil {
+				return nil, fmt.Errorf("failed to read column type length: %w", err)
+			}
+			columnTypeBytes := make([]byte, columnTypeLen)
+			_, err = c.conn.Read(columnTypeBytes)
 			if err != nil {
 				return nil, fmt.Errorf("failed to read column type: %w", err)
 			}
+			columnType := string(columnTypeBytes)
 
 			// Read data block (uvarint)
 			_, err = c.readUvarint()
@@ -842,11 +854,17 @@ func (c *connection) readQueryResponse(query string) (*Rows, error) {
 				return nil, fmt.Errorf("failed to read row count: %w", err)
 			}
 
-			// Read data (string)
-			data, err := c.readString()
+			// Read data (uvarint length + string)
+			dataLen, err := c.readUvarint()
+			if err != nil {
+				return nil, fmt.Errorf("failed to read data length: %w", err)
+			}
+			dataBytes := make([]byte, dataLen)
+			_, err = c.conn.Read(dataBytes)
 			if err != nil {
 				return nil, fmt.Errorf("failed to read data: %w", err)
 			}
+			data := string(dataBytes)
 
 			// Add this column to our collection
 			allColumns = append(allColumns, Column{Name: columnName, Type: columnType})

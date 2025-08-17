@@ -68,31 +68,89 @@ func (q *QueryCommand) displayResults(result *client.QueryResult) error {
 		return nil
 	}
 
+	// Calculate column widths for proper table formatting
+	columnWidths := make([]int, len(result.Columns))
+	for i, colName := range result.Columns {
+		// Start with header width
+		columnWidths[i] = len(colName)
+
+		// Check data widths for this column
+		for _, row := range result.Rows {
+			if i < len(row) {
+				var cellStr string
+				if row[i] == nil {
+					cellStr = "NULL"
+				} else {
+					cellStr = fmt.Sprintf("%v", row[i])
+				}
+				if len(cellStr) > columnWidths[i] {
+					columnWidths[i] = len(cellStr)
+				}
+			}
+		}
+	}
+
 	// Print column headers
 	if len(result.Columns) > 0 {
-		headers := strings.Join(result.Columns, " | ")
-		fmt.Printf("┌─%s─┐\n", strings.Repeat("─", len(headers)))
-		fmt.Printf("│ %s │\n", headers)
-		fmt.Printf("├─%s─┤\n", strings.Repeat("─", len(headers)))
+		// Print top border
+		fmt.Print("┌─")
+		for i, width := range columnWidths {
+			if i > 0 {
+				fmt.Print("─┬─")
+			}
+			fmt.Print(strings.Repeat("─", width))
+		}
+		fmt.Println("─┐")
+
+		// Print header row
+		fmt.Print("│ ")
+		for i, colName := range result.Columns {
+			if i > 0 {
+				fmt.Print(" │ ")
+			}
+			fmt.Printf("%-*s", columnWidths[i], colName)
+		}
+		fmt.Println(" │")
+
+		// Print separator
+		fmt.Print("├─")
+		for i, width := range columnWidths {
+			if i > 0 {
+				fmt.Print("─┼─")
+			}
+			fmt.Print(strings.Repeat("─", width))
+		}
+		fmt.Println("─┤")
 	}
 
 	// Print data rows
 	for _, row := range result.Rows {
-		rowStr := make([]string, len(row))
+		fmt.Print("│ ")
 		for j, val := range row {
-			if val == nil {
-				rowStr[j] = "NULL"
-			} else {
-				rowStr[j] = fmt.Sprintf("%v", val)
+			if j > 0 {
+				fmt.Print(" │ ")
 			}
+			var cellStr string
+			if val == nil {
+				cellStr = "NULL"
+			} else {
+				cellStr = fmt.Sprintf("%v", val)
+			}
+			fmt.Printf("%-*s", columnWidths[j], cellStr)
 		}
-		fmt.Printf("│ %s │\n", strings.Join(rowStr, " | "))
+		fmt.Println(" │")
 	}
 
 	// Print footer
 	if len(result.Columns) > 0 {
-		headers := strings.Join(result.Columns, " | ")
-		fmt.Printf("└─%s─┘\n", strings.Repeat("─", len(headers)))
+		fmt.Print("└─")
+		for i, width := range columnWidths {
+			if i > 0 {
+				fmt.Print("─┴─")
+			}
+			fmt.Print(strings.Repeat("─", width))
+		}
+		fmt.Println("─┘")
 	}
 
 	// Print summary

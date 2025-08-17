@@ -296,16 +296,16 @@ func (h *ConnectionHandler) sendSimpleExpressionResult(columnName, columnType, v
 	n := binary.PutUvarint(columnCountBytes, 1)
 	payload = append(payload, columnCountBytes[:n]...)
 
-	// Column name (4-byte big-endian length + content)
-	nameLen := make([]byte, 4)
-	binary.BigEndian.PutUint32(nameLen, uint32(len(columnName)))
-	payload = append(payload, nameLen...)
+	// Column name (as uvarint length + content)
+	nameLenBytes := make([]byte, binary.MaxVarintLen64)
+	nameLenN := binary.PutUvarint(nameLenBytes, uint64(len(columnName)))
+	payload = append(payload, nameLenBytes[:nameLenN]...)
 	payload = append(payload, []byte(columnName)...)
 
-	// Column type (4-byte big-endian length + content)
-	typeLen := make([]byte, 4)
-	binary.BigEndian.PutUint32(typeLen, uint32(len(columnType)))
-	payload = append(payload, typeLen...)
+	// Column type (as uvarint length + content)
+	typeLenBytes := make([]byte, binary.MaxVarintLen64)
+	typeLenN := binary.PutUvarint(typeLenBytes, uint64(len(columnType)))
+	payload = append(payload, typeLenBytes[:typeLenN]...)
 	payload = append(payload, []byte(columnType)...)
 
 	// Data block = 0 (as uvarint)
@@ -318,10 +318,10 @@ func (h *ConnectionHandler) sendSimpleExpressionResult(columnName, columnType, v
 	n3 := binary.PutUvarint(rowCountBytes, 1)
 	payload = append(payload, rowCountBytes[:n3]...)
 
-	// Data (4-byte big-endian length + string content)
-	dataLen := make([]byte, 4)
-	binary.BigEndian.PutUint32(dataLen, uint32(len(value)))
-	payload = append(payload, dataLen...)
+	// Data (as uvarint length + content)
+	dataLenBytes := make([]byte, binary.MaxVarintLen64)
+	dataLenN := binary.PutUvarint(dataLenBytes, uint64(len(value)))
+	payload = append(payload, dataLenBytes[:dataLenN]...)
 	payload = append(payload, []byte(value)...)
 
 	if err := h.writer.WriteMessage(ServerData, payload); err != nil {
@@ -366,10 +366,10 @@ func (h *ConnectionHandler) sendEmptyResultSet() error {
 	n3 := binary.PutUvarint(rowCountBytes, 0)
 	payload = append(payload, rowCountBytes[:n3]...)
 
-	// Empty data string (4-byte length + empty content)
-	dataLen := make([]byte, 4)
-	binary.BigEndian.PutUint32(dataLen, 0)
-	payload = append(payload, dataLen...)
+	// Empty data string (as uvarint length + empty content)
+	dataLenBytes := make([]byte, binary.MaxVarintLen64)
+	dataLenN := binary.PutUvarint(dataLenBytes, 0)
+	payload = append(payload, dataLenBytes[:dataLenN]...)
 
 	// Send ServerData with proper payload
 	if err := h.writer.WriteMessage(ServerData, payload); err != nil {
@@ -407,19 +407,17 @@ func (h *ConnectionHandler) sendQueryResults(tableName string, rows [][]interfac
 		n := binary.PutUvarint(columnCountBytes, 1)
 		payload = append(payload, columnCountBytes[:n]...)
 
-		// Column name (4-byte big-endian length + string content)
-		columnNameLength := uint32(len(columnName))
-		columnNameLengthBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(columnNameLengthBytes, columnNameLength)
-		payload = append(payload, columnNameLengthBytes...)
+		// Column name (as uvarint length + string content)
+		columnNameLengthBytes := make([]byte, binary.MaxVarintLen64)
+		columnNameLengthN := binary.PutUvarint(columnNameLengthBytes, uint64(len(columnName)))
+		payload = append(payload, columnNameLengthBytes[:columnNameLengthN]...)
 		payload = append(payload, []byte(columnName)...)
 
-		// Column type (4-byte big-endian length + string content)
+		// Column type (as uvarint length + string content)
 		columnType := columnTypes[i]
-		columnTypeLength := uint32(len(columnType))
-		columnTypeLengthBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(columnTypeLengthBytes, columnTypeLength)
-		payload = append(payload, columnTypeLengthBytes...)
+		columnTypeLengthBytes := make([]byte, binary.MaxVarintLen64)
+		columnTypeLengthN := binary.PutUvarint(columnTypeLengthBytes, uint64(len(columnType)))
+		payload = append(payload, columnTypeLengthBytes[:columnTypeLengthN]...)
 		payload = append(payload, []byte(columnType)...)
 
 		// Data block (uvarint) - placeholder for now
@@ -443,10 +441,9 @@ func (h *ConnectionHandler) sendQueryResults(tableName string, rows [][]interfac
 			dataBuilder.WriteString(fmt.Sprintf("%v", row[i]))
 		}
 		data := dataBuilder.String()
-		dataLength := uint32(len(data))
-		dataLengthBytes := make([]byte, 4)
-		binary.BigEndian.PutUint32(dataLengthBytes, dataLength)
-		payload = append(payload, dataLengthBytes...)
+		dataLengthBytes := make([]byte, binary.MaxVarintLen64)
+		dataLengthN := binary.PutUvarint(dataLengthBytes, uint64(len(data)))
+		payload = append(payload, dataLengthBytes[:dataLengthN]...)
 		payload = append(payload, []byte(data)...)
 
 		h.logger.Debug().
@@ -875,32 +872,32 @@ func (h *ConnectionHandler) sendQueryEngineResults(result *query.QueryResult) er
 		n := binary.PutUvarint(columnCountBytes, 1)
 		payload = append(payload, columnCountBytes[:n]...)
 
-		// Column name (4-byte big-endian length + content)
-		nameLen := make([]byte, 4)
-		binary.BigEndian.PutUint32(nameLen, uint32(len(columnName)))
-		payload = append(payload, nameLen...)
+		// Column name (as uvarint length + content)
+		nameLenBytes := make([]byte, binary.MaxVarintLen64)
+		n2 := binary.PutUvarint(nameLenBytes, uint64(len(columnName)))
+		payload = append(payload, nameLenBytes[:n2]...)
 		payload = append(payload, []byte(columnName)...)
 
-		// Column type (4-byte big-endian length + content)
-		typeLen := make([]byte, 4)
-		binary.BigEndian.PutUint32(typeLen, uint32(len(columnType)))
-		payload = append(payload, typeLen...)
+		// Column type (as uvarint length + content)
+		typeLenBytes := make([]byte, binary.MaxVarintLen64)
+		n3 := binary.PutUvarint(typeLenBytes, uint64(len(columnType)))
+		payload = append(payload, typeLenBytes[:n3]...)
 		payload = append(payload, []byte(columnType)...)
 
 		// Data block = 0 (as uvarint)
 		dataBlockBytes := make([]byte, binary.MaxVarintLen64)
-		n2 := binary.PutUvarint(dataBlockBytes, 0)
-		payload = append(payload, dataBlockBytes[:n2]...)
+		n4 := binary.PutUvarint(dataBlockBytes, 0)
+		payload = append(payload, dataBlockBytes[:n4]...)
 
 		// Row count (as uvarint)
 		rowCountBytes := make([]byte, binary.MaxVarintLen64)
-		n3 := binary.PutUvarint(rowCountBytes, uint64(len(rows)))
-		payload = append(payload, rowCountBytes[:n3]...)
+		n5 := binary.PutUvarint(rowCountBytes, uint64(len(rows)))
+		payload = append(payload, rowCountBytes[:n5]...)
 
-		// Data (4-byte big-endian length + string content)
-		dataLen := make([]byte, 4)
-		binary.BigEndian.PutUint32(dataLen, uint32(len(dataString)))
-		payload = append(payload, dataLen...)
+		// Data (as uvarint length + content)
+		dataLenBytes := make([]byte, binary.MaxVarintLen64)
+		n6 := binary.PutUvarint(dataLenBytes, uint64(len(dataString)))
+		payload = append(payload, dataLenBytes[:n6]...)
 		payload = append(payload, []byte(dataString)...)
 
 		// Send ServerData for this column
