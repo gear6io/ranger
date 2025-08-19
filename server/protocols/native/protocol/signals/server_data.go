@@ -256,3 +256,18 @@ func NewServerData(columns []Column, rows [][]interface{}) *ServerData {
 		RowCount:    uint32(len(rows)),
 	}
 }
+
+// Register registers this signal type in both registry and factory
+func (d *ServerData) Register(registry *protocol.Registry, factory *protocol.SignalFactory) error {
+	// Register in registry
+	if err := registry.RegisterServerSignal(d, &protocol.SignalInfo{Name: "ServerData"}); err != nil {
+		return fmt.Errorf("failed to register ServerData in registry: %w", err)
+	}
+
+	// Register constructor in factory
+	factory.RegisterConstructor(protocol.ServerData, func() protocol.Signal {
+		return &ServerData{}
+	})
+
+	return nil
+}

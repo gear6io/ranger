@@ -20,6 +20,9 @@ type Signal interface {
 
 	// Size returns the size of the packed signal (for pre-allocation)
 	Size() int
+
+	// Register registers this signal type in both registry and factory
+	Register(registry *Registry, factory *SignalFactory) error
 }
 
 // Message represents a complete protocol message with length and type

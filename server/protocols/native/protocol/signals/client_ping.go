@@ -52,3 +52,18 @@ func NewClientPing(timestamp int64) *ClientPing {
 		Timestamp: timestamp,
 	}
 }
+
+// Register registers this signal type in both registry and factory
+func (p *ClientPing) Register(registry *protocol.Registry, factory *protocol.SignalFactory) error {
+	// Register in registry
+	if err := registry.RegisterClientSignal(p, &protocol.SignalInfo{Name: "ClientPing"}); err != nil {
+		return fmt.Errorf("failed to register ClientPing in registry: %w", err)
+	}
+
+	// Register constructor in factory
+	factory.RegisterConstructor(protocol.ClientPing, func() protocol.Signal {
+		return &ClientPing{}
+	})
+
+	return nil
+}

@@ -67,3 +67,18 @@ func NewClientCancel(queryID string) *ClientCancel {
 		QueryID: queryID,
 	}
 }
+
+// Register registers this signal type in both registry and factory
+func (c *ClientCancel) Register(registry *protocol.Registry, factory *protocol.SignalFactory) error {
+	// Register in registry
+	if err := registry.RegisterClientSignal(c, &protocol.SignalInfo{Name: "ClientCancel"}); err != nil {
+		return fmt.Errorf("failed to register ClientCancel in registry: %w", err)
+	}
+
+	// Register constructor in factory
+	factory.RegisterConstructor(protocol.ClientCancel, func() protocol.Signal {
+		return &ClientCancel{}
+	})
+
+	return nil
+}

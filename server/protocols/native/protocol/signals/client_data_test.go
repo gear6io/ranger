@@ -16,7 +16,7 @@ func TestClientData(t *testing.T) {
 		{2, "Jane Smith", "jane@example.com"},
 	}
 
-	data := NewClientData("users", columns, columnTypes, rows)
+	data := NewClientData("users", columns, rows)
 
 	// Test Type method
 	if data.Type() != protocol.ClientData {

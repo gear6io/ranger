@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"net/url"
@@ -16,6 +17,10 @@ import (
 
 	"github.com/go-faster/errors"
 	"go.uber.org/zap"
+
+	// Unified protocol package
+	"github.com/TFMV/icebox/server/protocols/native/protocol"
+	"github.com/TFMV/icebox/server/protocols/native/protocol/signals"
 )
 
 // CompressionMethod represents compression methods
@@ -229,6 +234,11 @@ type connection struct {
 	released  bool
 	bad       bool
 	mu        sync.Mutex
+
+	// Unified protocol components
+	codec    *protocol.DefaultCodec
+	registry *protocol.Registry
+	factory  *protocol.SignalFactory
 }
 
 // NewClient creates a new Icebox client
@@ -611,13 +621,7 @@ func (c *Client) dial(ctx context.Context) (*connection, error) {
 		return nil, err
 	}
 
-	connection := &connection{
-		conn:      conn,
-		client:    c,
-		connID:    connID,
-		createdAt: time.Now(),
-		lastUsed:  time.Now(),
-	}
+	connection := newConnection(conn, c, connID)
 
 	// Perform handshake
 	if err := connection.handshake(ctx); err != nil {
@@ -626,6 +630,96 @@ func (c *Client) dial(ctx context.Context) (*connection, error) {
 	}
 
 	return connection, nil
+}
+
+// newConnection creates a new connection with initialized protocol components
+func newConnection(conn net.Conn, client *Client, connID int) *connection {
+	// Initialize unified protocol components
+	registry := protocol.NewRegistry()
+	factory := protocol.NewSignalFactory()
+	codec := protocol.NewDefaultCodec(registry, factory)
+
+	connection := &connection{
+		conn:      conn,
+		client:    client,
+		connID:    connID,
+		createdAt: time.Now(),
+		lastUsed:  time.Now(),
+		codec:     codec,
+		registry:  registry,
+		factory:   factory,
+	}
+
+	// Register constructors for all signals
+	connection.registerSignalConstructors()
+
+	return connection
+}
+
+// handshake performs the initial protocol handshake with the server
+func (c *connection) handshake(ctx context.Context) error {
+	// Protocol components are already initialized in connection creation
+
+	// Send ClientHello
+	clientHello := signals.NewClientHello(
+		"Icebox SDK",
+		c.client.opt.Auth.Database,
+		c.client.opt.Auth.Username,
+		c.client.opt.Auth.Password,
+	)
+
+	// Encode and send the message
+	message, err := c.codec.EncodeMessage(clientHello)
+	if err != nil {
+		return errors.Wrap(err, "failed to encode client hello")
+	}
+
+	if err := c.codec.WriteMessage(c.conn, message); err != nil {
+		return errors.Wrap(err, "failed to send client hello")
+	}
+
+	// Read and process ServerHello response
+	response, err := c.codec.ReadMessage(c.conn)
+	if err != nil {
+		return errors.Wrap(err, "failed to read server hello")
+	}
+
+	signal, err := c.codec.UnpackSignal(response)
+	if err != nil {
+		return errors.Wrap(err, "failed to unpack server hello")
+	}
+
+	if signal.Type() != protocol.ServerHello {
+		return errors.Errorf("expected server hello, got signal type %d", signal.Type())
+	}
+
+	return nil
+}
+
+// registerSignalConstructors registers constructors for all signal types using the new clean auto-registration pattern
+func (c *connection) registerSignalConstructors() {
+	// Create signal instances for auto-registration
+	signals := []protocol.Signal{
+		&signals.ClientHello{},
+		&signals.ClientQuery{},
+		&signals.ClientData{},
+		&signals.ClientCancel{},
+		&signals.ClientPing{},
+		&signals.ServerHello{},
+		&signals.ServerData{},
+		&signals.ServerException{},
+		&signals.ServerProgress{},
+		&signals.ServerPong{},
+		&signals.ServerEndOfStream{},
+		&signals.ServerProfileInfo{},
+	}
+
+	// Register signals
+	for _, signal := range signals {
+		if err := signal.Register(c.registry, c.factory); err != nil {
+			fmt.Printf("Warning: Failed to register signal %T: %v\n", signal, err)
+		}
+	}
 }
 
 // chooseAddr chooses an address based on the connection strategy
@@ -708,3 +802,261 @@ var (
 	ErrAcquireConnNoAddress      = errors.New("icebox: no valid address supplied")
 	ErrServerUnexpectedData      = errors.New("code: 101, message: Unexpected packet Data received from client")
 )
+
+// ping sends a ping to the server using unified protocol
+func (c *connection) ping(ctx context.Context) error {
+	// Create and send ClientPing signal
+	ping := signals.NewClientPing(time.Now().Unix())
+
+	message, err := c.codec.EncodeMessage(ping)
+	if err != nil {
+		return errors.Wrap(err, "failed to encode client ping")
+	}
+
+	if err := c.codec.WriteMessage(c.conn, message); err != nil {
+		return errors.Wrap(err, "failed to send client ping")
+	}
+
+	// Read and process ServerPong response
+	response, err := c.codec.ReadMessage(c.conn)
+	if err != nil {
+		return errors.Wrap(err, "failed to read server pong")
+	}
+
+	signal, err := c.codec.UnpackSignal(response)
+	if err != nil {
+		return errors.Wrap(err, "failed to unpack server pong")
+	}
+
+	if signal.Type() != protocol.ServerPong {
+		return errors.Errorf("expected server pong, got signal type %d", signal.Type())
+	}
+
+	return nil
+}
+
+// query executes a query using unified protocol
+func (c *connection) query(ctx context.Context, queryStr string, args ...interface{}) (*Rows, error) {
+	// Create and send ClientQuery signal
+	queryID := generateQueryID()
+	query := signals.NewClientQuery(queryStr, queryID, c.client.opt.Auth.Database, c.client.opt.Auth.Username, c.client.opt.Auth.Password)
+
+	message, err := c.codec.EncodeMessage(query)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to encode client query")
+	}
+
+	if err := c.codec.WriteMessage(c.conn, message); err != nil {
+		return nil, errors.Wrap(err, "failed to send client query")
+	}
+
+	// Read and process server response
+	rows := &Rows{
+		Client: c.client,
+		Query: Query{
+			Body:    queryStr,
+			QueryID: queryID,
+		},
+		Cols:    []Column{},
+		Data:    [][]interface{}{},
+		Current: 0,
+		Closed:  false,
+	}
+
+	// Read response packets using unified protocol until EndOfStream
+	for {
+		// Read and decode message using unified protocol
+		message, err := c.codec.ReadMessage(c.conn)
+		if err != nil {
+			if err == io.EOF {
+				break // Client disconnected, stop reading
+			}
+			return nil, errors.Wrap(err, "failed to read message")
+		}
+
+		// Unpack the message into a signal
+		signal, err := c.codec.UnpackSignal(message)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to unpack message")
+		}
+
+		switch signal.Type() {
+		case protocol.ServerEndOfStream:
+			// End of response, return the rows
+			return rows, nil
+		case protocol.ServerException:
+			// Handle exception signal
+			exception := signal.(*signals.ServerException)
+			return nil, fmt.Errorf("server exception [%d]: %s", exception.ErrorCode, exception.ErrorMessage)
+		case protocol.ServerData:
+			// Handle data signal - extract column information and data
+			serverData := signal.(*signals.ServerData)
+
+			// Extract column information
+			if len(rows.Cols) == 0 {
+				rows.Cols = make([]Column, len(serverData.Columns))
+				for i, col := range serverData.Columns {
+					rows.Cols[i] = Column{
+						Name: col.Name,
+						Type: col.Type,
+					}
+				}
+			}
+
+			// Extract row data
+			if len(serverData.Rows) > 0 {
+				rows.Data = append(rows.Data, serverData.Rows...)
+			}
+
+			continue
+		case protocol.ServerProgress:
+			// Handle progress signal - just continue reading
+			continue
+		default:
+			// Skip other packet types for now
+			continue
+		}
+	}
+
+	return rows, nil
+}
+
+// exec executes a query without returning results using unified protocol
+func (c *connection) exec(ctx context.Context, queryStr string, args ...interface{}) error {
+	// Create and send ClientQuery signal
+	queryID := generateQueryID()
+	query := signals.NewClientQuery(queryStr, queryID, c.client.opt.Auth.Database, c.client.opt.Auth.Username, c.client.opt.Auth.Password)
+
+	message, err := c.codec.EncodeMessage(query)
+	if err != nil {
+		return errors.Wrap(err, "failed to encode client query")
+	}
+
+	if err := c.codec.WriteMessage(c.conn, message); err != nil {
+		return errors.Wrap(err, "failed to send client query")
+	}
+
+	// Read response packets using unified protocol until EndOfStream
+	for {
+		// Read and decode message using unified protocol
+		message, err := c.codec.ReadMessage(c.conn)
+		if err != nil {
+			if err == io.EOF {
+				break // Client disconnected, stop reading
+			}
+			return errors.Wrap(err, "failed to read message")
+		}
+
+		// Unpack the message into a signal
+		signal, err := c.codec.UnpackSignal(message)
+		if err != nil {
+			return errors.Wrap(err, "failed to unpack message")
+		}
+
+		switch signal.Type() {
+		case protocol.ServerEndOfStream:
+			// End of response, execution successful
+			return nil
+		case protocol.ServerException:
+			// Handle exception signal
+			exception := signal.(*signals.ServerException)
+			return fmt.Errorf("server exception [%d]: %s", exception.ErrorCode, exception.ErrorMessage)
+		case protocol.ServerData:
+			// Handle data signal - just continue reading for exec
+			continue
+		case protocol.ServerProgress:
+			// Handle progress signal - just continue reading
+			continue
+		default:
+			// Skip other packet types for now
+			continue
+		}
+	}
+
+	return nil
+}
+
+// prepareBatch prepares a batch for insertion using unified protocol
+func (c *connection) prepareBatch(ctx context.Context, queryStr string, opts ...BatchOption) (*Batch, error) {
+	// Create batch with proper initialization
+	batch := &Batch{
+		Query: Query{
+			Body:    queryStr,
+			QueryID: generateQueryID(),
+		},
+		TableName: "",
+		Columns:   []string{},
+		Data:      [][]interface{}{},
+		Sent:      false,
+	}
+
+	// Apply options
+	options := &BatchOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	return batch, nil
+}
+
+// asyncInsert performs an asynchronous insert using unified protocol
+func (c *connection) asyncInsert(ctx context.Context, queryStr string, wait bool, args ...interface{}) error {
+	// For now, just execute synchronously with proper response handling
+	return c.exec(ctx, queryStr, args...)
+}
+
+// close closes the connection
+func (c *connection) close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.released {
+		c.conn.Close()
+		c.released = true
+	}
+}
+
+// generateQueryID generates a unique query ID
+func generateQueryID() string {
+	return fmt.Sprintf("query_%d", time.Now().UnixNano())
+}
+
+// isBad checks if the connection is marked as bad
+func (c *connection) isBad() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.bad
+}
+
+// markBad marks the connection as bad
+func (c *connection) markBad() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.bad = true
+}
+
+// updateLastUsed updates the last used timestamp
+func (c *connection) updateLastUsed() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastUsed = time.Now()
+}
+
+// serverVersion returns server version information using unified protocol
+func (c *connection) serverVersion() (*ServerVersion, error) {
+	// For now, return a default server version
+	// TODO: Implement proper server version retrieval using unified protocol
+	return &ServerVersion{
+		Name:        "Icebox",
+		Major:       1,
+		Minor:       0,
+		Patch:       0,
+		Revision:    0,
+		Interface:   "Native",
+		DefaultDB:   "default",
+		Timezone:    "UTC",
+		DisplayName: "Icebox Server",
+		Version:     "1.0.0",
+		Protocol:    1,
+	}, nil
+}

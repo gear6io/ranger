@@ -133,3 +133,18 @@ func NewServerException(errorCode uint64, errorMessage, stackTrace string) *Serv
 		StackTrace:   stackTrace,
 	}
 }
+
+// Register registers this signal type in both registry and factory
+func (e *ServerException) Register(registry *protocol.Registry, factory *protocol.SignalFactory) error {
+	// Register in registry
+	if err := registry.RegisterServerSignal(e, &protocol.SignalInfo{Name: "ServerException"}); err != nil {
+		return fmt.Errorf("failed to register ServerException in registry: %w", err)
+	}
+
+	// Register constructor in factory
+	factory.RegisterConstructor(protocol.ServerException, func() protocol.Signal {
+		return &ServerException{}
+	})
+
+	return nil
+}

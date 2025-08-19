@@ -146,3 +146,18 @@ func NewServerProgress(rowsRead, bytesRead, totalRows, totalBytes uint64, elapse
 		ElapsedTime: elapsedTime,
 	}
 }
+
+// Register registers this signal type in both registry and factory
+func (p *ServerProgress) Register(registry *protocol.Registry, factory *protocol.SignalFactory) error {
+	// Register in registry
+	if err := registry.RegisterServerSignal(p, &protocol.SignalInfo{Name: "ServerProgress"}); err != nil {
+		return fmt.Errorf("failed to register ServerProgress in registry: %w", err)
+	}
+
+	// Register constructor in factory
+	factory.RegisterConstructor(protocol.ServerProgress, func() protocol.Signal {
+		return &ServerProgress{}
+	})
+
+	return nil
+}

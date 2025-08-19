@@ -165,3 +165,18 @@ func NewServerProfileInfo(rowsReadBeforeLimit, bytesReadBeforeLimit, appliedLimi
 		BytesRead:            bytesRead,
 	}
 }
+
+// Register registers this signal type in both registry and factory
+func (p *ServerProfileInfo) Register(registry *protocol.Registry, factory *protocol.SignalFactory) error {
+	// Register in registry
+	if err := registry.RegisterServerSignal(p, &protocol.SignalInfo{Name: "ServerProfileInfo"}); err != nil {
+		return fmt.Errorf("failed to register ServerProfileInfo in registry: %w", err)
+	}
+
+	// Register constructor in factory
+	factory.RegisterConstructor(protocol.ServerProfileInfo, func() protocol.Signal {
+		return &ServerProfileInfo{}
+	})
+
+	return nil
+}

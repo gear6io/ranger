@@ -73,6 +73,9 @@ func (c *DefaultCodec) ReadMessage(reader io.Reader) (*Message, error) {
 	// Read message length (4 bytes, big endian)
 	lengthBuf := make([]byte, 4)
 	if _, err := io.ReadFull(reader, lengthBuf); err != nil {
+		if err == io.EOF {
+			return nil, err // Return EOF directly for proper handling
+		}
 		return nil, fmt.Errorf("failed to read message length: %w", err)
 	}
 	messageLength := binary.BigEndian.Uint32(lengthBuf)
@@ -80,6 +83,9 @@ func (c *DefaultCodec) ReadMessage(reader io.Reader) (*Message, error) {
 	// Read message type (1 byte)
 	typeBuf := make([]byte, 1)
 	if _, err := io.ReadFull(reader, typeBuf); err != nil {
+		if err == io.EOF {
+			return nil, err // Return EOF directly for proper handling
+		}
 		return nil, fmt.Errorf("failed to read message type: %w", err)
 	}
 	messageType := SignalType(typeBuf[0])
@@ -89,6 +95,9 @@ func (c *DefaultCodec) ReadMessage(reader io.Reader) (*Message, error) {
 	if messageLength > 1 {
 		payload = make([]byte, messageLength-1)
 		if _, err := io.ReadFull(reader, payload); err != nil {
+			if err == io.EOF {
+				return nil, err // Return EOF directly for proper handling
+			}
 			return nil, fmt.Errorf("failed to read message payload: %w", err)
 		}
 	}

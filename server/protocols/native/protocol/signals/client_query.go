@@ -160,3 +160,18 @@ func NewClientQuery(query, queryID, database, user, password string) *ClientQuer
 		Password: password,
 	}
 }
+
+// Register registers this signal type in both registry and factory
+func (q *ClientQuery) Register(registry *protocol.Registry, factory *protocol.SignalFactory) error {
+	// Register in registry
+	if err := registry.RegisterClientSignal(q, &protocol.SignalInfo{Name: "ClientQuery"}); err != nil {
+		return fmt.Errorf("failed to register ClientQuery in registry: %w", err)
+	}
+
+	// Register constructor in factory
+	factory.RegisterConstructor(protocol.ClientQuery, func() protocol.Signal {
+		return &ClientQuery{}
+	})
+
+	return nil
+}

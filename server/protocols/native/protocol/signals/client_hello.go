@@ -195,3 +195,18 @@ func NewClientHello(clientName, database, user, password string) *ClientHello {
 		Password:        password,
 	}
 }
+
+// Register registers this signal type in both registry and factory
+func (h *ClientHello) Register(registry *protocol.Registry, factory *protocol.SignalFactory) error {
+	// Register in registry
+	if err := registry.RegisterClientSignal(h, &protocol.SignalInfo{Name: "ClientHello"}); err != nil {
+		return fmt.Errorf("failed to register ClientHello in registry: %w", err)
+	}
+
+	// Register constructor in factory
+	factory.RegisterConstructor(protocol.ClientHello, func() protocol.Signal {
+		return &ClientHello{}
+	})
+
+	return nil
+}

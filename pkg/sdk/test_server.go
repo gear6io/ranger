@@ -138,7 +138,15 @@ func TestWithServer(t *testing.T, testFunc func(*testing.T, *TestServer)) {
 
 	// Run test with timeout
 	done := make(chan bool)
+	testErr := make(chan error, 1)
+
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				testErr <- fmt.Errorf("test panicked: %v", r)
+			}
+		}()
+
 		testFunc(t, server)
 		done <- true
 	}()
@@ -146,7 +154,15 @@ func TestWithServer(t *testing.T, testFunc func(*testing.T, *TestServer)) {
 	select {
 	case <-done:
 		// Test completed successfully
-	case <-time.After(25 * time.Second):
-		t.Fatal("Test timed out after 25 seconds")
+		select {
+		case err := <-testErr:
+			t.Fatalf("Test failed with panic: %v", err)
+		default:
+			// No panic, test completed normally
+		}
+	case err := <-testErr:
+		t.Fatalf("Test panicked: %v", err)
+	case <-time.After(20 * time.Second): // Reduced from 25s to 20s to match overall test timeout
+		t.Fatal("Test timed out after 20 seconds")
 	}
 }

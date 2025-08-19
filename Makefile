@@ -27,6 +27,14 @@ help: ## Show this help message
 	@echo "  make run-server      # Run the server"
 	@echo "  make kill-server     # Kill running server processes"
 	@echo "  make clean           # Clean all binaries"
+	@echo "  make fmt-all         # Format all code files"
+	@echo "  make install-formatting-tools # Install formatting tools"
+	@echo "  make install-hooks       # Install git pre-commit and commit-msg hooks"
+	@echo "  make install-pre-commit-framework # Install pre-commit framework hooks"
+	@echo "  make pre-commit          # Run pre-commit checks"
+	@echo "  make release-build       # Build release binaries"
+	@echo "  make release-clean       # Clean release binaries"
+	@echo "  make status              # Show build status"
 
 # Build targets
 .PHONY: build-server
@@ -146,6 +154,25 @@ fmt: ## Format Go code
 	@echo "Formatting Go code..."
 	@go fmt ./...
 
+.PHONY: fmt-all
+fmt-all: ## Format all code files (Go, Python, JS, etc.)
+	@echo "Formatting all code files..."
+	@echo "📝 Formatting Go code..."
+	@go fmt ./...
+	@echo "📝 Formatting Go imports..."
+	@if command -v goimports &> /dev/null; then \
+		find . -name "*.go" -not -path "./vendor/*" -not -path "./.git/*" -exec goimports -w {} \;; \
+	else \
+		echo "⚠️  goimports not found, install with: go install golang.org/x/tools/cmd/goimports@latest"; \
+	fi
+	@echo "📝 Formatting Markdown..."
+	@if command -v markdownlint &> /dev/null; then \
+		find . -name "*.md" -not -path "./vendor/*" -not -path "./.git/*" -exec markdownlint --fix {} \;; \
+	else \
+		echo "⚠️  markdownlint not found, install with: npm install -g markdownlint-cli"; \
+	fi
+	@echo "✅ All files formatted"
+
 .PHONY: vet
 vet: ## Run go vet
 	@echo "Running go vet..."
@@ -207,8 +234,29 @@ install-hooks: ## Install git pre-commit and commit-msg hooks
 	@echo "Installing git pre-commit and commit-msg hooks..."
 	@./scripts/install-hooks.sh
 
+.PHONY: install-pre-commit-framework
+install-pre-commit-framework: ## Install pre-commit framework hooks
+	@echo "Installing pre-commit framework hooks..."
+	@if ! command -v pre-commit &> /dev/null; then \
+		echo "Installing pre-commit framework..."; \
+		pip install pre-commit; \
+	fi
+	@pre-commit install
+	@echo "✅ Pre-commit framework hooks installed"
+
+.PHONY: install-formatting-tools
+install-formatting-tools: ## Install all formatting tools
+	@echo "Installing formatting tools..."
+	@echo "📦 Installing Go formatting tools..."
+	@go install golang.org/x/tools/cmd/goimports@latest
+	@echo "📦 Installing Python formatting tools..."
+	@pip install black autopep8 isort yapf
+	@echo "📦 Installing JavaScript/TypeScript formatting tools..."
+	@npm install -g prettier markdownlint-cli
+	@echo "✅ All formatting tools installed"
+
 .PHONY: pre-commit
-pre-commit: fmt vet test mod-tidy ## Run pre-commit checks
+pre-commit: fmt-all vet mod-tidy mod-verify deps ## Run pre-commit checks
 	@echo "✅ Pre-commit checks passed"
 
 # Release targets

@@ -1,81 +1,9 @@
 package native
 
 import (
-	"encoding/binary"
-	"math"
 	"net"
-	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
 )
-
-func TestReadColumnValue(t *testing.T) {
-	// Test UInt32 - using big endian data
-	data := []byte{0, 0, 0, 1} // Big endian 1
-	reader := &PacketReader{conn: &mockConn{data: data}}
-
-	value, err := reader.ReadUint32()
-	assert.NoError(t, err)
-	assert.Equal(t, uint32(1), value)
-}
-
-func TestReadFloat64(t *testing.T) {
-	// Test Float64 - using big endian data
-	expected := 3.14159
-	// Convert to big endian bytes
-	bits := math.Float64bits(expected)
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, bits)
-
-	reader := &PacketReader{conn: &mockConn{data: buf}}
-
-	value, err := reader.ReadFloat64()
-	assert.NoError(t, err)
-	assert.InDelta(t, expected, value, 0.0001)
-}
-
-func TestReadString(t *testing.T) {
-	// Test String - using 4-byte big-endian length prefix
-	expected := "Hello, World!"
-	length := uint32(len(expected))
-
-	// Create buffer with 4-byte big-endian length + string
-	buf := make([]byte, 0)
-	lengthBuf := make([]byte, 4)
-	binary.BigEndian.PutUint32(lengthBuf, length)
-	buf = append(buf, lengthBuf...)
-	buf = append(buf, []byte(expected)...)
-
-	reader := &PacketReader{conn: &mockConn{data: buf}}
-
-	value, err := reader.ReadString()
-	assert.NoError(t, err)
-	assert.Equal(t, expected, value)
-}
-
-func TestReadUvarint(t *testing.T) {
-	// Test Uvarint
-	expected := uint64(12345)
-	buf := make([]byte, binary.MaxVarintLen64)
-	n := binary.PutUvarint(buf, expected)
-
-	reader := &PacketReader{conn: &mockConn{data: buf[:n]}}
-
-	value, err := reader.ReadUVarInt()
-	assert.NoError(t, err)
-	assert.Equal(t, expected, value)
-}
-
-func TestReadByte(t *testing.T) {
-	// Test ReadByte
-	expected := byte(42)
-	reader := &PacketReader{conn: &mockConn{data: []byte{expected}}}
-
-	value, err := reader.ReadByte()
-	assert.NoError(t, err)
-	assert.Equal(t, expected, value)
-}
 
 // Mock connection for testing
 type mockConn struct {

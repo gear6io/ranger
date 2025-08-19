@@ -6,17 +6,19 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"io"
-	"math/rand"
 	"regexp"
 	"strings"
 	"time"
 
-	"encoding/binary"
 	"net"
 	"strconv"
 
 	"github.com/go-faster/errors"
 	"github.com/google/uuid"
+
+	// Unified protocol package
+	"github.com/TFMV/icebox/server/protocols/native/protocol"
+	"github.com/TFMV/icebox/server/protocols/native/protocol/signals"
 )
 
 // ServerVersion represents server version information
@@ -305,27 +307,6 @@ func (r *Rows) Err() error {
 	return r.QueryErr
 }
 
-// readResults reads query results from the server
-func (r *Rows) readResults(ctx context.Context) error {
-	// This is a simplified implementation
-	// In a real implementation, this would read the actual protocol packets
-
-	// For now, we'll create some dummy data
-	r.Cols = []Column{
-		{Name: "id", Type: "Int32"},
-		{Name: "name", Type: "String"},
-		{Name: "value", Type: "Float64"},
-	}
-
-	r.Data = [][]interface{}{
-		{1, "test1", 1.23},
-		{2, "test2", 4.56},
-		{3, "test3", 7.89},
-	}
-
-	return nil
-}
-
 // Append adds a row to the batch
 func (b *Batch) Append(values ...interface{}) error {
 	if b.Sent {
@@ -426,613 +407,44 @@ func (bc *BatchColumn) Append(value interface{}) error {
 	return nil
 }
 
-// generateRandomBytes generates random bytes of the specified length
-func generateRandomBytes(length int) ([]byte, error) {
-	bytes := make([]byte, length)
-	_, err := rand.Read(bytes)
-	return bytes, err
-}
-
-// Protocol constants matching ClickHouse native protocol
-// See https://github.com/ClickHouse/ClickHouse/blob/master/src/Core/Protocol.h
-const (
-	// Client message types
-	ClientHello  byte = 0
-	ClientQuery  byte = 1
-	ClientData   byte = 2
-	ClientCancel byte = 3
-	ClientPing   byte = 4
-
-	// Server message types
-	ServerHello               byte = 0
-	ServerData                byte = 1
-	ServerException           byte = 2
-	ServerProgress            byte = 3
-	ServerPong                byte = 4
-	ServerEndOfStream         byte = 5
-	ServerProfileInfo         byte = 6
-	ServerTotals              byte = 7
-	ServerExtremes            byte = 8
-	ServerTablesStatus        byte = 9
-	ServerLog                 byte = 10
-	ServerTableColumns        byte = 11
-	ServerPartUUIDs           byte = 12
-	ServerReadTaskRequest     byte = 13
-	ServerProfileEvents       byte = 14
-	ServerTreeReadTaskRequest byte = 15
-
-	// Protocol versions
-	DBMS_TCP_PROTOCOL_VERSION = 54460
-)
-
-// connection methods (these will be implemented in a separate connection.go file)
-func (c *connection) ping(ctx context.Context) error {
-	// Send ping packet
-	if err := c.sendPing(); err != nil {
-		return fmt.Errorf("failed to send ping: %w", err)
-	}
-
-	// Read pong response
-	if err := c.readPong(); err != nil {
-		return fmt.Errorf("failed to read pong: %w", err)
-	}
-
-	return nil
-}
-
-func (c *connection) query(ctx context.Context, query string, args ...interface{}) (*Rows, error) {
-	// Send query packet
-	if err := c.sendQuery(query); err != nil {
-		return nil, fmt.Errorf("failed to send query: %w", err)
-	}
-
-	// Read query response
-	rows, err := c.readQueryResponse(query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read query response: %w", err)
-	}
-
-	return rows, nil
-}
-
-func (c *connection) exec(ctx context.Context, query string, args ...interface{}) error {
-	// Send query packet
-	if err := c.sendQuery(query); err != nil {
-		return fmt.Errorf("failed to send query: %w", err)
-	}
-
-	// Read query response (for DDL statements, we expect EndOfStream)
-	if err := c.readExecResponse(); err != nil {
-		return fmt.Errorf("failed to read exec response: %w", err)
-	}
-
-	return nil
-}
-
-func (c *connection) prepareBatch(ctx context.Context, query string, opts ...BatchOption) (*Batch, error) {
-	// Parse the INSERT query to extract table name and columns
-	tableName, columns, err := ParseInsertQuery(query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse insert query: %w", err)
-	}
-
-	// Create batch with parsed information
-	batch := &Batch{
-		Client:    c.client,
-		Query:     Query{Body: query, QueryID: GenerateQueryID()},
-		TableName: tableName,
-		Columns:   columns,
-		Data:      make([][]interface{}, 0),
-		Sent:      false,
-	}
-
-	// Note: Batch options are not currently stored in the Batch struct
-	// This is a limitation that can be addressed in future versions
-
-	return batch, nil
-}
-
-func (c *connection) asyncInsert(ctx context.Context, query string, wait bool, args ...interface{}) error {
-	// For now, just delegate to exec since async insert is not fully implemented
-	return c.exec(ctx, query, args...)
-}
-
-func (c *connection) serverVersion() (*ServerVersion, error) {
-	// Return a default server version for now
-	return &ServerVersion{
-		Name:        "Icebox",
-		Major:       1,
-		Minor:       0,
-		Patch:       0,
-		Revision:    0,
-		Interface:   "Native",
-		DefaultDB:   "default",
-		Timezone:    "UTC",
-		DisplayName: "Icebox Server",
-		Version:     "1.0.0",
-		Protocol:    1,
-	}, nil
-}
-
-func (c *connection) handshake(ctx context.Context) error {
-	// Send client hello
-	if err := c.sendClientHello(); err != nil {
-		return fmt.Errorf("failed to send client hello: %w", err)
-	}
-
-	// Read server hello
-	if err := c.readServerHello(); err != nil {
-		return fmt.Errorf("failed to read server hello: %w", err)
-	}
-
-	return nil
-}
-
-// Protocol helper methods
-
-func (c *connection) sendClientHello() error {
-	// ClickHouse ClientHello format: client_name + major_version + minor_version + protocol_version
-	// Note: The server only expects these 4 fields, not the additional default_database, username, password
-
-	// Create a buffer for the payload
-	payload := make([]byte, 0, 256)
-
-	// Client name (4-byte big-endian length + content)
-	clientName := "Icebox Go Client"
-	clientNameBytes := []byte(clientName)
-	clientNameLen := make([]byte, 4)
-	binary.BigEndian.PutUint32(clientNameLen, uint32(len(clientNameBytes)))
-	payload = append(payload, clientNameLen...)
-	payload = append(payload, clientNameBytes...)
-
-	// Major version (varint)
-	majorVersion := make([]byte, binary.MaxVarintLen64)
-	n := binary.PutUvarint(majorVersion, 1)
-	payload = append(payload, majorVersion[:n]...)
-
-	// Minor version (varint)
-	minorVersion := make([]byte, binary.MaxVarintLen64)
-	n = binary.PutUvarint(minorVersion, 0)
-	payload = append(payload, minorVersion[:n]...)
-
-	// Protocol version (varint)
-	protocolVersion := make([]byte, binary.MaxVarintLen64)
-	n = binary.PutUvarint(protocolVersion, 54460)
-	payload = append(payload, protocolVersion[:n]...)
-
-	// Now write the complete message with correct length
-	// Message length = 1 (message type) + payload length
-	totalLength := 1 + len(payload)
-
-	// Debug logging
-
-	// Write message length (4 bytes, big endian)
-	if err := c.writeUint32BigEndian(uint32(totalLength)); err != nil {
-		return fmt.Errorf("failed to write message length: %w", err)
-	}
-
-	// Write message type
-	if err := c.writeByte(ClientHello); err != nil {
-		return err
-	}
-
-	// Write payload
-	if _, err := c.conn.Write(payload); err != nil {
-		return fmt.Errorf("failed to write payload: %w", err)
-	}
-
-	return nil
-}
-
-func (c *connection) sendQuery(query string) error {
-	// ClickHouse ClientQuery format: query string only
-	// The payload should contain just the query string, not length-prefixed
-
-	// Convert query to bytes
-	queryBytes := []byte(query)
-
-	// Now write the complete message with correct length
-	// Message length = 1 (message type) + payload length
-	totalLength := 1 + len(queryBytes)
-
-	// Write message length (4 bytes, big endian)
-	if err := c.writeUint32BigEndian(uint32(totalLength)); err != nil {
-		return fmt.Errorf("failed to write message length: %w", err)
-	}
-
-	// Write message type
-	if err := c.writeByte(ClientQuery); err != nil {
-		return err
-	}
-
-	// Write payload (just the query string)
-	if _, err := c.conn.Write(queryBytes); err != nil {
-		return fmt.Errorf("failed to write payload: %w", err)
-	}
-
-	return nil
-}
-
-func (c *connection) sendPing() error {
-	// Ping has no payload, so message length = 1 (just the message type)
-
-	// Write message length (4 bytes, big endian)
-	if err := c.writeUint32BigEndian(1); err != nil {
-		return fmt.Errorf("failed to write message length: %w", err)
-	}
-
-	// Write message type
-	if err := c.writeByte(ClientPing); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *connection) readUint32BigEndian() (uint32, error) {
-	buf := make([]byte, 4)
-	n, err := c.conn.Read(buf)
-	if err != nil {
-		return 0, err
-	}
-	if n != 4 {
-		return 0, fmt.Errorf("expected to read 4 bytes, got %d", n)
-	}
-	value := binary.BigEndian.Uint32(buf)
-
-	return value, nil
-}
-
-func (c *connection) readServerHello() error {
-	// Read message length (4 bytes, big endian)
-	_, err := c.readUint32BigEndian()
-	if err != nil {
-		return fmt.Errorf("failed to read message length: %w", err)
-	}
-
-	// Read packet type
-	packetType, err := c.readByte()
-	if err != nil {
-		return err
-	}
-
-	if packetType != ServerHello {
-		return fmt.Errorf("expected ServerHello packet, got %d", packetType)
-	}
-
-	// Read server name
-	_, err = c.readString()
-	if err != nil {
-		return err
-	}
-
-	// Read server version (as single bytes, not varints)
-	_, err = c.readByte() // Major
-	if err != nil {
-		return err
-	}
-
-	_, err = c.readByte() // Minor
-	if err != nil {
-		return err
-	}
-
-	// Read revision (varint)
-	_, err = c.readUvarint()
-	if err != nil {
-		return err
-	}
-
-	// Read timezone
-	_, err = c.readString()
-	if err != nil {
-		return err
-	}
-
-	// Read display name
-	_, err = c.readString()
-	if err != nil {
-		return err
-	}
-
-	// Read version patch (varint)
-	_, err = c.readUvarint()
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *connection) readPong() error {
-	// Read message length (4 bytes, big endian)
-	_, err := c.readUint32BigEndian()
-	if err != nil {
-		return fmt.Errorf("failed to read message length: %w", err)
-	}
-
-	// Read packet type
-	packetType, err := c.readByte()
-	if err != nil {
-		return err
-	}
-
-	if packetType != ServerPong {
-		return fmt.Errorf("expected ServerPong packet, got %d", packetType)
-	}
-
-	return nil
-}
-
-func (c *connection) readQueryResponse(query string) (*Rows, error) {
-	// Read response packets until EndOfStream
-	var allColumns []Column
-	var allData [][]interface{}
-	var queryErr error // Store any error encountered during query execution
-
-	for {
-		// Read message length (4 bytes, big endian)
-		_, err := c.readUint32BigEndian()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read message length: %w", err)
-		}
-
-		// Read packet type
-		packetType, err := c.readByte()
-		if err != nil {
-			return nil, err
-		}
-
-		switch packetType {
-		case ServerEndOfStream:
-			// Return the accumulated rows
-			return &Rows{
-				Client:   c.client,
-				Query:    Query{Body: query, QueryID: GenerateQueryID()},
-				Cols:     allColumns,
-				Data:     allData,
-				Current:  0,
-				Closed:   false,
-				QueryErr: queryErr, // Store any error encountered
-			}, nil
-		case ServerException:
-			// Read exception details and store the error
-			errorMsg, err := c.readString() // Error message
-			if err != nil {
-				return nil, err
-			}
-			errorCode, err := c.readUvarint() // Error code
-			if err != nil {
-				return nil, err
-			}
-			queryErr = fmt.Errorf("server exception [%d]: %s", errorCode, errorMsg)
-			// Continue reading to get EndOfStream
-			continue
-		case ServerData:
-			// Parse the data payload according to the format sent by the server
-			// Format: column_count (uvarint) + column_name (uvarint length + string) + column_type (uvarint length + string) + data_block (uvarint) + row_count (uvarint) + data (uvarint length + string)
-
-			// Read column count (uvarint) - should always be 1 for single column
-			_, err = c.readUvarint()
-			if err != nil {
-				return nil, fmt.Errorf("failed to read column count: %w", err)
-			}
-
-			// Read column name (uvarint length + string)
-			columnNameLen, err := c.readUvarint()
-			if err != nil {
-				return nil, fmt.Errorf("failed to read column name length: %w", err)
-			}
-			columnNameBytes := make([]byte, columnNameLen)
-			_, err = c.conn.Read(columnNameBytes)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read column name: %w", err)
-			}
-			columnName := string(columnNameBytes)
-
-			// Read column type (uvarint length + string)
-			columnTypeLen, err := c.readUvarint()
-			if err != nil {
-				return nil, fmt.Errorf("failed to read column type length: %w", err)
-			}
-			columnTypeBytes := make([]byte, columnTypeLen)
-			_, err = c.conn.Read(columnTypeBytes)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read column type: %w", err)
-			}
-			columnType := string(columnTypeBytes)
-
-			// Read data block (uvarint)
-			_, err = c.readUvarint()
-			if err != nil {
-				return nil, fmt.Errorf("failed to read data block: %w", err)
-			}
-
-			// Read row count (uvarint)
-			_, err = c.readUvarint()
-			if err != nil {
-				return nil, fmt.Errorf("failed to read row count: %w", err)
-			}
-
-			// Read data (uvarint length + string)
-			dataLen, err := c.readUvarint()
-			if err != nil {
-				return nil, fmt.Errorf("failed to read data length: %w", err)
-			}
-			dataBytes := make([]byte, dataLen)
-			_, err = c.conn.Read(dataBytes)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read data: %w", err)
-			}
-			data := string(dataBytes)
-
-			// Add this column to our collection
-			allColumns = append(allColumns, Column{Name: columnName, Type: columnType})
-
-			// Parse the data string to extract row values for this column
-			// The server sends data like "1,2,3" for the id column
-			rowValues := strings.Split(data, ",")
-
-			// Initialize allData if this is the first column
-			if len(allData) == 0 {
-				allData = make([][]interface{}, len(rowValues))
-				for i := range allData {
-					allData[i] = make([]interface{}, 0, 10) // Start with capacity for 10 columns, will grow as needed
-				}
-			}
-
-			// Add the values for this column to each row
-			for i, value := range rowValues {
-				if i < len(allData) {
-					allData[i] = append(allData[i], strings.TrimSpace(value))
-				} else {
-					// If we have more values than expected rows, extend allData
-					allData = append(allData, make([]interface{}, 0, 10))
-					allData[i] = append(allData[i], strings.TrimSpace(value))
-				}
-			}
-
-			// Continue reading for more packets (should be more ServerData packets, then ServerEndOfStream)
-			continue
-		default:
-			// Skip other packet types for now
-			continue
-		}
-	}
-}
-
 func (c *connection) readExecResponse() error {
-	// Read response packets until EndOfStream
+	// Read response packets using unified protocol until EndOfStream
 	for {
-		// Read message length (4 bytes, big endian) - we need this to know packet boundaries
-		_, err := c.readUint32BigEndian()
+		// Read and decode message using unified protocol
+		message, err := c.codec.ReadMessage(c.conn)
 		if err != nil {
-			return fmt.Errorf("failed to read message length: %w", err)
+			if err == io.EOF {
+				break // Client disconnected, stop reading
+			}
+			return fmt.Errorf("failed to read message: %w", err)
 		}
 
-		// Read packet type
-		packetType, err := c.readByte()
+		// Unpack the message into a signal
+		signal, err := c.codec.UnpackSignal(message)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to unpack message: %w", err)
 		}
 
-		switch packetType {
-		case ServerEndOfStream:
+		switch signal.Type() {
+		case protocol.ServerEndOfStream:
 			return nil
-		case ServerException:
-			// Read exception details
-			errorMsg, err := c.readString() // Error message
-			if err != nil {
-				return err
-			}
-			errorCode, err := c.readUvarint() // Error code
-			if err != nil {
-				return err
-			}
-			return fmt.Errorf("server exception [%d]: %s", errorCode, errorMsg)
-		case ServerData:
-			// Parse the ServerData packet according to the server's format:
-			// columnCount (uvarint) + columnName (string) + columnType (string) + dataBlock (uvarint) + rowCount (uvarint) + data (string)
-
-			// Read column count
-			columnCount, err := c.readUvarint()
-			if err != nil {
-				return fmt.Errorf("failed to read column count: %w", err)
-			}
-
-			// Read column names and types
-			for i := uint64(0); i < columnCount; i++ {
-				// Read column name
-				_, err = c.readString()
-				if err != nil {
-					return fmt.Errorf("failed to read column %d name: %w", i, err)
-				}
-
-				// Read column type
-				_, err = c.readString()
-				if err != nil {
-					return fmt.Errorf("failed to read column %d type: %w", i, err)
-				}
-			}
-
-			// Read data block
-			_, err = c.readUvarint()
-			if err != nil {
-				return fmt.Errorf("failed to read data block: %w", err)
-			}
-
-			// Read row count
-			_, err = c.readUvarint()
-			if err != nil {
-				return fmt.Errorf("failed to read row count: %w", err)
-			}
-
-			// Read data (raw string)
-			_, err = c.readString()
-			if err != nil {
-				return fmt.Errorf("failed to read data: %w", err)
-			}
-
-			// Continue reading for more packets
+		case protocol.ServerException:
+			// Handle exception signal
+			exception := signal.(*signals.ServerException)
+			return fmt.Errorf("server exception [%d]: %s", exception.ErrorCode, exception.ErrorMessage)
+		case protocol.ServerData:
+			// Handle data signal - just continue reading
+			continue
+		case protocol.ServerProgress:
+			// Handle progress signal - just continue reading
 			continue
 		default:
 			// Skip other packet types for now
 			continue
 		}
 	}
-}
 
-// Helper methods for reading/writing protocol data
-
-func (c *connection) writeByte(b byte) error {
-	_, err := c.conn.Write([]byte{b})
-	return err
-}
-
-func (c *connection) writeUvarint(v uint64) error {
-	buf := make([]byte, 10)
-	n := binary.PutUvarint(buf, v)
-	_, err := c.conn.Write(buf[:n])
-	return err
-}
-
-func (c *connection) writeUint32(n uint32) error {
-	// Write uint32 as 4 bytes, big endian
-	buf := make([]byte, 4)
-	binary.BigEndian.PutUint32(buf, n)
-	if _, err := c.conn.Write(buf); err != nil {
-		return fmt.Errorf("failed to write uint32: %w", err)
-	}
 	return nil
-}
-
-func (c *connection) writeUint32BigEndian(value uint32) error {
-	buf := make([]byte, 4)
-	binary.BigEndian.PutUint32(buf, value)
-	_, err := c.conn.Write(buf)
-	return err
-}
-
-func (c *connection) writeString(s string) error {
-	if err := c.writeUint32BigEndian(uint32(len(s))); err != nil {
-		return err
-	}
-	_, err := c.conn.Write([]byte(s))
-	return err
-}
-
-func (c *connection) readByte() (byte, error) {
-	buf := make([]byte, 1)
-	_, err := c.conn.Read(buf)
-	if err != nil {
-		return 0, err
-	}
-	return buf[0], nil
-}
-
-func (c *connection) readUvarint() (uint64, error) {
-	reader := &netConnReader{conn: c.conn}
-	return binary.ReadUvarint(reader)
 }
 
 // netConnReader implements io.ByteReader for reading from net.Conn
@@ -1049,118 +461,59 @@ func (r *netConnReader) ReadByte() (byte, error) {
 	return buf[0], nil
 }
 
-func (c *connection) readString() (string, error) {
-	// Read string length as 4 bytes, big endian (not varint)
-	length, err := c.readUint32BigEndian()
-	if err != nil {
-		return "", err
-	}
-
-	buf := make([]byte, length)
-	_, err = c.conn.Read(buf)
-	if err != nil {
-		return "", err
-	}
-
-	return string(buf), nil
-}
-
-func (c *connection) isBad() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.bad
-}
-
-func (c *connection) markBad() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.bad = true
-}
-
-func (c *connection) updateLastUsed() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.lastUsed = time.Now()
-}
-
-func (c *connection) close() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.conn != nil {
-		c.conn.Close()
-	}
-}
-
-// sendBatchData sends batch data to the server using ClickHouse native protocol
+// sendBatchData sends batch data to the server using unified protocol
 func (c *connection) sendBatchData(batch *Batch) error {
-	// First, we need to calculate the total payload size
-	// Start with table name (4 bytes for length + string content)
-	payloadSize := 4 + len(batch.TableName)
+	// Create ClientData signal using unified protocol
+	clientData := signals.NewClientData(
+		batch.TableName,
+		batch.Columns,
+		batch.Data,
+	)
 
-	// Add column count (4 bytes)
-	payloadSize += 4
-
-	// Add row count (4 bytes)
-	payloadSize += 4
-
-	// Add column names (4 bytes for length + string content for each column)
-	for _, col := range batch.Columns {
-		colSize := 4 + len(col)
-		payloadSize += colSize
+	// Use unified codec to encode and send the message
+	message, err := c.codec.EncodeMessage(clientData)
+	if err != nil {
+		return fmt.Errorf("failed to encode client data: %w", err)
 	}
 
-	// Add row data (4 bytes for length + string content for each value)
-	for _, row := range batch.Data {
-		for _, value := range row {
-			strValue := fmt.Sprintf("%v", value)
-			valueSize := 4 + len(strValue)
-			payloadSize += valueSize
-		}
+	if err := c.codec.WriteMessage(c.conn, message); err != nil {
+		return fmt.Errorf("failed to send client data: %w", err)
 	}
 
-	// Total message length = 1 byte (packet type) + payload
-	// The 4-byte length prefix itself is NOT included in this calculation
-	totalMessageLength := 1 + payloadSize
-
-	// Write the total message length (4 bytes, big endian)
-	if err := binary.Write(c.conn, binary.BigEndian, uint32(totalMessageLength)); err != nil {
-		return fmt.Errorf("failed to write message length: %w", err)
-	}
-
-	// Write the packet type
-	if _, err := c.conn.Write([]byte{ClientData}); err != nil {
-		return fmt.Errorf("failed to write packet type: %w", err)
-	}
-
-	// Write table name
-	if err := c.writeString(batch.TableName); err != nil {
-		return fmt.Errorf("failed to write table name: %w", err)
-	}
-
-	// Write column count
-	if err := binary.Write(c.conn, binary.BigEndian, uint32(len(batch.Columns))); err != nil {
-		return fmt.Errorf("failed to write column count: %w", err)
-	}
-
-	// Write row count
-	if err := binary.Write(c.conn, binary.BigEndian, uint32(len(batch.Data))); err != nil {
-		return fmt.Errorf("failed to write row count: %w", err)
-	}
-
-	// Write column names
-	for _, col := range batch.Columns {
-		if err := c.writeString(col); err != nil {
-			return fmt.Errorf("failed to write column name %s: %w", col, err)
-		}
-	}
-
-	// Write row data
-	for _, row := range batch.Data {
-		for _, value := range row {
-			strValue := fmt.Sprintf("%v", value)
-			if err := c.writeString(strValue); err != nil {
-				return fmt.Errorf("failed to write value: %w", err)
+	// Read response packets using unified protocol until EndOfStream
+	for {
+		// Read and decode message using unified protocol
+		message, err := c.codec.ReadMessage(c.conn)
+		if err != nil {
+			if err == io.EOF {
+				break // Client disconnected, stop reading
 			}
+			return fmt.Errorf("failed to read message: %w", err)
+		}
+
+		// Unpack the message into a signal
+		signal, err := c.codec.UnpackSignal(message)
+		if err != nil {
+			return fmt.Errorf("failed to unpack message: %w", err)
+		}
+
+		switch signal.Type() {
+		case protocol.ServerEndOfStream:
+			// End of response, batch operation successful
+			return nil
+		case protocol.ServerException:
+			// Handle exception signal
+			exception := signal.(*signals.ServerException)
+			return fmt.Errorf("server exception [%d]: %s", exception.ErrorCode, exception.ErrorMessage)
+		case protocol.ServerData:
+			// Handle data signal - just continue reading for batch operations
+			continue
+		case protocol.ServerProgress:
+			// Handle progress signal - just continue reading
+			continue
+		default:
+			// Skip other packet types for now
+			continue
 		}
 	}
 

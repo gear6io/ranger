@@ -2,15 +2,15 @@ package signals
 
 import (
 	"fmt"
+
 	"github.com/TFMV/icebox/server/protocols/native/protocol"
 )
 
 // ClientData represents a client data message for batch insertion
 type ClientData struct {
-	TableName   string
-	Columns     []string
-	ColumnTypes []string
-	Rows        [][]interface{}
+	TableName string
+	Columns   []string
+	Rows      [][]interface{}
 }
 
 // Type returns the signal type
@@ -52,14 +52,7 @@ func (d *ClientData) Pack() ([]byte, error) {
 		buf = append(buf, colBytes...)
 	}
 
-	// Pack column types (4 bytes length + string for each type)
-	for _, colType := range d.ColumnTypes {
-		typeBytes := []byte(colType)
-		typeLenBytes := make([]byte, 4)
-		protocol.WriteUint32BigEndian(typeLenBytes, uint32(len(typeBytes)))
-		buf = append(buf, typeLenBytes...)
-		buf = append(buf, typeBytes...)
-	}
+	// Column types are not sent - Icebox knows the schema
 
 	// Pack row data (4 bytes length + string for each value)
 	for _, row := range d.Rows {
@@ -128,21 +121,7 @@ func (d *ClientData) Unpack(data []byte) error {
 		pos += int(colLen)
 	}
 
-	// Read column types
-	d.ColumnTypes = make([]string, columnCount)
-	for i := uint32(0); i < columnCount; i++ {
-		if pos+4 > len(data) {
-			return fmt.Errorf("insufficient data for column %d type length", i)
-		}
-		typeLen := protocol.ReadUint32BigEndian(data[pos:])
-		pos += 4
-
-		if pos+int(typeLen) > len(data) {
-			return fmt.Errorf("insufficient data for column %d type", i)
-		}
-		d.ColumnTypes[i] = string(data[pos : pos+int(typeLen)])
-		pos += int(typeLen)
-	}
+	// Column types are not read - Icebox knows the schema
 
 	// Read row data
 	d.Rows = make([][]interface{}, rowCount)
@@ -170,12 +149,9 @@ func (d *ClientData) Unpack(data []byte) error {
 func (d *ClientData) Size() int {
 	size := 4 + len(d.TableName) + 4 + 4 // table name + column count + row count
 
-	// Add column names and types
+	// Add column names
 	for _, col := range d.Columns {
 		size += 4 + len(col)
-	}
-	for _, colType := range d.ColumnTypes {
-		size += 4 + len(colType)
 	}
 
 	// Add row data
@@ -190,11 +166,25 @@ func (d *ClientData) Size() int {
 }
 
 // NewClientData creates a new client data message
-func NewClientData(tableName string, columns []string, columnTypes []string, rows [][]interface{}) *ClientData {
+func NewClientData(tableName string, columns []string, rows [][]interface{}) *ClientData {
 	return &ClientData{
-		TableName:   tableName,
-		Columns:     columns,
-		ColumnTypes: columnTypes,
-		Rows:        rows,
+		TableName: tableName,
+		Columns:   columns,
+		Rows:      rows,
 	}
+}
+
+// Register registers this signal type in both registry and factory
+func (d *ClientData) Register(registry *protocol.Registry, factory *protocol.SignalFactory) error {
+	// Register in registry
+	if err := registry.RegisterClientSignal(d, &protocol.SignalInfo{Name: "ClientData"}); err != nil {
+		return fmt.Errorf("failed to register ClientData in registry: %w", err)
+	}
+
+	// Register constructor in factory
+	factory.RegisterConstructor(protocol.ClientData, func() protocol.Signal {
+		return &ClientData{}
+	})
+
+	return nil
 }

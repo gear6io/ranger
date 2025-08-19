@@ -6,13 +6,27 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/TFMV/icebox/server/protocols/native/middleware"
+	"github.com/TFMV/icebox/server/protocols/native/protocol"
+	"github.com/TFMV/icebox/server/protocols/native/protocol/signals"
 	"github.com/TFMV/icebox/server/query"
 	"github.com/rs/zerolog"
+)
+
+// DataBlock represents a block of data for transfer
+type DataBlock struct {
+	TableName string
+	Columns   []string
+	Rows      [][]interface{}
+}
+
+// Protocol constants for backward compatibility
+const (
+	DBMS_TCP_PROTOCOL_VERSION = 54460
 )
 
 // ConnectionHandler handles a single client connection
@@ -20,323 +34,163 @@ type ConnectionHandler struct {
 	conn         net.Conn
 	queryEngine  *query.Engine
 	logger       zerolog.Logger
-	reader       *PacketReader
-	writer       *PacketWriter
+	codec        *protocol.DefaultCodec
 	helloSent    bool
 	currentQuery string
 	// In-memory storage for tables (fallback)
 	tables map[string][][]interface{}
 	mu     sync.RWMutex
 
-	// Execution tracking
-	executionStart   time.Time
-	currentOperation string
-	isExecuting      bool
+	// Middleware system
+	connCtx    *middleware.ConnectionContext
+	middleware *middleware.Chain
 }
 
 // NewConnectionHandler creates a new connection handler
-func NewConnectionHandler(conn net.Conn, queryEngine *query.Engine, logger zerolog.Logger) *ConnectionHandler {
+func NewConnectionHandler(conn net.Conn, queryEngine *query.Engine, logger zerolog.Logger, middlewareChain *middleware.Chain) *ConnectionHandler {
+	// Create registry and factory
+	registry := protocol.NewRegistry()
+	factory := protocol.NewSignalFactory()
+
+	// Create signal instances for auto-registration
+	signals := []protocol.Signal{
+		&signals.ClientHello{},
+		&signals.ClientQuery{},
+		&signals.ClientData{},
+		&signals.ClientCancel{},
+		&signals.ClientPing{},
+		&signals.ServerHello{},
+		&signals.ServerData{},
+		&signals.ServerException{},
+		&signals.ServerProgress{},
+		&signals.ServerPong{},
+		&signals.ServerEndOfStream{},
+		&signals.ServerProfileInfo{},
+	}
+
+	// Auto-register all signals with proper error handling
+	if err := protocol.RegisterMultipleSignals(signals, registry, factory); err != nil {
+		logger.Error().Err(err).Msg("Failed to register signals")
+		// In a real implementation, you might want to handle this error more gracefully
+		// For now, we'll log it and continue, but this could cause issues
+	}
+
+	// Create codec with factory
+	codec := protocol.NewDefaultCodec(registry, factory)
+
+	// Create connection context
+	connCtx := &middleware.ConnectionContext{
+		ClientAddr:   conn.RemoteAddr().String(),
+		ConnectionID: generateConnectionID(),
+		StartTime:    time.Now(),
+		State:        middleware.StateHandshaking,
+	}
+
 	return &ConnectionHandler{
 		conn:        conn,
 		queryEngine: queryEngine,
 		logger:      logger,
-		reader:      NewPacketReader(conn),
-		writer:      NewPacketWriter(conn),
+		codec:       codec,
 		tables:      make(map[string][][]interface{}),
+		connCtx:     connCtx,
+		middleware:  middlewareChain,
 	}
 }
 
-// startExecution tracks the start of an operation
-func (h *ConnectionHandler) startExecution(operation string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	h.executionStart = time.Now()
-	h.currentOperation = operation
-	h.isExecuting = true
-
-	if h.logger.GetLevel() <= zerolog.DebugLevel {
-		h.logger.Debug().
-			Str("client", h.conn.RemoteAddr().String()).
-			Str("operation", operation).
-			Time("start_time", h.executionStart).
-			Msg("Operation started")
-	}
-}
-
-// endExecution marks the completion of an operation
-func (h *ConnectionHandler) endExecution() {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	if h.isExecuting {
-		duration := time.Since(h.executionStart)
-		h.isExecuting = false
-
-		if h.logger.GetLevel() <= zerolog.DebugLevel {
-			h.logger.Debug().
-				Str("client", h.conn.RemoteAddr().String()).
-				Str("operation", h.currentOperation).
-				Dur("duration", duration).
-				Msg("Operation completed")
-		}
-	}
-}
-
-// logAbruptDisconnection logs when a connection closes during execution
-func (h *ConnectionHandler) logAbruptDisconnection() {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	if h.isExecuting && h.logger.GetLevel() <= zerolog.DebugLevel {
-		duration := time.Since(h.executionStart)
-		h.logger.Error().
-			Str("client", h.conn.RemoteAddr().String()).
-			Str("operation", h.currentOperation).
-			Dur("duration", duration).
-			Str("stack_trace", string(debug.Stack())).
-			Msg("Client disconnected during operation execution")
-	}
+// generateConnectionID generates a unique connection ID
+func generateConnectionID() string {
+	// Simple implementation - in production you might want a more robust ID
+	return fmt.Sprintf("conn_%d", time.Now().UnixNano())
 }
 
 // Handle handles the client connection
 func (h *ConnectionHandler) Handle() error {
 	defer func() {
-		h.logAbruptDisconnection()
+		// Notify middleware of disconnection
+		h.middleware.Execute(context.Background(), h.connCtx, middleware.EventDisconnected, nil)
 		h.conn.Close()
 	}()
+
+	// Notify middleware of connection
+	if err := h.middleware.Execute(context.Background(), h.connCtx, middleware.EventConnected, nil); err != nil {
+		h.logger.Error().Err(err).Msg("Middleware rejected connection")
+		return err
+	}
+
 	h.logger.Debug().Str("client", h.conn.RemoteAddr().String()).Msg("New client connected")
 
 	for {
-		// Read message length (4 bytes, big endian)
-		messageLength, err := h.reader.ReadUint32()
-		if err != nil {
-			h.logger.Debug().Str("client", h.conn.RemoteAddr().String()).Msg("Client disconnected")
-			return nil
-		}
-
-		// Read message type (1 byte)
-		messageType, err := h.reader.ReadByte()
-		if err != nil {
-			h.logger.Error().Err(err).Msg("Failed to read message type")
+		// Notify middleware before read
+		if err := h.middleware.ExecuteRead(context.Background(), h.connCtx); err != nil {
+			h.logger.Error().Err(err).Msg("Middleware rejected read operation")
 			return err
 		}
 
-		// Read message payload
-		var payload []byte
-		if messageLength > 1 {
-			// Read the payload directly (without length prefix)
-			expectedPayloadLength := int(messageLength - 1)
-			h.logger.Info().
-				Uint32("message_length", messageLength).
-				Int("expected_payload_length", expectedPayloadLength).
-				Msg("About to read payload")
-
-			payload = make([]byte, expectedPayloadLength)
-			h.logger.Info().Msg("Created payload buffer, about to call io.ReadFull")
-
-			if _, err := io.ReadFull(h.conn, payload); err != nil {
-				h.logger.Error().
-					Err(err).
-					Uint32("message_length", messageLength).
-					Int("expected_payload_length", expectedPayloadLength).
-					Msg("Failed to read message payload")
-				return err
+		// Read and decode message using unified protocol
+		message, err := h.codec.ReadMessage(h.conn)
+		if err != nil {
+			if err == io.EOF {
+				h.logger.Debug().Str("client", h.conn.RemoteAddr().String()).Msg("Client disconnected")
+				return nil
 			}
-			h.logger.Info().
-				Int("payload_length", len(payload)).
-				Bytes("payload_bytes", payload).
-				Msg("Read message payload")
+
+			// Notify middleware of read error
+			h.middleware.ExecuteError(context.Background(), h.connCtx, err)
+			h.logger.Error().Err(err).Msg("Failed to read message")
+			return err
 		}
 
-		h.logger.Debug().Uint8("message_type", messageType).Uint32("length", messageLength).Msg("Received message")
+		// Unpack the message into a signal
+		signal, err := h.codec.UnpackSignal(message)
+		if err != nil {
+			// Notify middleware of protocol error
+			h.middleware.ExecuteError(context.Background(), h.connCtx, err)
+			h.logger.Error().Err(err).Msg("Failed to unpack message")
+			return err
+		}
+
+		h.logger.Debug().Uint8("message_type", uint8(signal.Type())).Msg("Received message")
 
 		// Handle message based on type
-		switch messageType {
-		case ClientHello:
+		switch signal.Type() {
+		case protocol.ClientHello:
 			h.logger.Debug().Msg("Handling ClientHello message")
-			if err := h.handleClientHello(payload); err != nil {
+			if err := h.handleClientHelloSignal(signal.(*signals.ClientHello)); err != nil {
 				h.logger.Error().Err(err).Msg("Failed to handle client hello")
 				return err
 			}
-		case ClientQuery:
+		case protocol.ClientQuery:
 			h.logger.Debug().Msg("Handling ClientQuery message")
-			h.startExecution("ClientQuery")
-			if err := h.handleClientQuery(context.Background(), payload); err != nil {
-				h.endExecution()
+			if err := h.handleClientQuerySignal(context.Background(), signal.(*signals.ClientQuery)); err != nil {
 				h.logger.Error().Err(err).Msg("Failed to handle client query")
 				return err
 			}
-			h.endExecution()
-		case ClientData:
+		case protocol.ClientData:
 			h.logger.Debug().Msg("Handling ClientData message")
-			h.startExecution("ClientData")
-			if err := h.handleClientData(payload); err != nil {
-				h.endExecution()
+			if err := h.handleClientDataSignal(signal.(*signals.ClientData)); err != nil {
 				h.logger.Error().Err(err).Msg("Failed to handle client data")
 				return err
 			}
-			h.endExecution()
-		case ClientPing:
+		case protocol.ClientPing:
 			h.logger.Debug().Msg("Handling ClientPing message")
 			if err := h.handleClientPing(); err != nil {
 				h.logger.Error().Err(err).Msg("Failed to handle client ping")
 				return err
 			}
+		case protocol.ClientCancel:
+			h.logger.Debug().Msg("Handling ClientCancel message")
+			if err := h.handleClientCancelSignal(signal.(*signals.ClientCancel)); err != nil {
+				h.logger.Error().Err(err).Msg("Failed to handle client cancel")
+				return err
+			}
 		default:
-			h.logger.Warn().Uint8("message_type", messageType).Msg("Unknown message type")
-			if err := h.sendException(fmt.Sprintf("Unknown message type: %d", messageType)); err != nil {
+			h.logger.Warn().Uint8("message_type", uint8(signal.Type())).Msg("Unknown message type")
+			if err := h.sendException(fmt.Sprintf("Unknown message type: %d", signal.Type())); err != nil {
 				h.logger.Error().Err(err).Msg("Failed to send exception for unknown message type")
 				return err
 			}
 		}
 	}
-}
-
-// handleClientHello handles client hello message
-func (h *ConnectionHandler) handleClientHello(payload []byte) error {
-	// Parse ClientHello message according to ClickHouse protocol
-	// Format: client_name (string) + major_version (varint) + minor_version (varint) + protocol_version (varint)
-
-	h.logger.Debug().
-		Int("payload_length", len(payload)).
-		Bytes("payload_bytes", payload).
-		Msg("Processing ClientHello payload")
-
-	reader := &payloadReader{data: payload}
-
-	// Read client name
-	clientName, err := h.readStringFromReader(reader)
-	if err != nil {
-		return fmt.Errorf("failed to read client name: %w", err)
-	}
-
-	// Read client version major
-	clientVersionMajor, err := h.readUVarIntFromReader(reader)
-	if err != nil {
-		return fmt.Errorf("failed to read client version major: %w", err)
-	}
-
-	// Read client version minor
-	clientVersionMinor, err := h.readUVarIntFromReader(reader)
-	if err != nil {
-		return fmt.Errorf("failed to read client version minor: %w", err)
-	}
-
-	// Read protocol version
-	protocolVersion, err := h.readUVarIntFromReader(reader)
-	if err != nil {
-		return fmt.Errorf("failed to read protocol version: %w", err)
-	}
-
-	h.logger.Debug().
-		Str("client", clientName).
-		Uint64("version", clientVersionMajor).
-		Uint64("minor", clientVersionMinor).
-		Uint64("protocol", protocolVersion).
-		Msg("Client hello received")
-
-	h.logger.Debug().Msg("About to call sendServerHello()")
-
-	// Send server hello response
-	err = h.sendServerHello()
-	if err != nil {
-		h.logger.Error().Err(err).Msg("Failed to send ServerHello")
-		return err
-	}
-
-	h.logger.Debug().Msg("sendServerHello() completed successfully")
-	return nil
-}
-
-// handleClientQuery handles client query message
-func (h *ConnectionHandler) handleClientQuery(ctx context.Context, payload []byte) error {
-	// Parse ClientQuery payload according to ClickHouse protocol
-	// Format: query string only (no length prefix)
-
-	// Convert payload to query string
-	query := string(payload)
-
-	h.logger.Debug().
-		Int("payload_length", len(payload)).
-		Str("query", query).
-		Msg("Query received")
-
-	// Store current query for batch operations
-	h.currentQuery = query
-
-	// Execute ALL queries through the QueryEngine
-	result, err := h.queryEngine.ExecuteQuery(ctx, query)
-	if err != nil {
-		h.logger.Error().Err(err).Str("query", query).Msg("Query engine failed")
-		return h.sendErrorResponse(fmt.Sprintf("Query execution failed: %v", err))
-	}
-
-	// Send results from QueryEngine
-	if err := h.sendQueryEngineResults(result); err != nil {
-		h.logger.Error().Err(err).Msg("Failed to send query results")
-		return err
-	}
-
-	return nil
-}
-
-// sendSimpleExpressionResult sends a simple expression result
-func (h *ConnectionHandler) sendSimpleExpressionResult(columnName, columnType, value string) error {
-	h.logger.Debug().Msg("Sending simple expression result")
-
-	// Send ServerData with column metadata and data
-	// Format: columnCount (uvarint) + columnName (string) + columnType (string) + dataBlock (uvarint) + rowCount (uvarint) + data (string)
-
-	// Create payload
-	payload := make([]byte, 0, 256)
-
-	// Column count = 1 (as uvarint)
-	columnCountBytes := make([]byte, binary.MaxVarintLen64)
-	n := binary.PutUvarint(columnCountBytes, 1)
-	payload = append(payload, columnCountBytes[:n]...)
-
-	// Column name (as uvarint length + content)
-	nameLenBytes := make([]byte, binary.MaxVarintLen64)
-	nameLenN := binary.PutUvarint(nameLenBytes, uint64(len(columnName)))
-	payload = append(payload, nameLenBytes[:nameLenN]...)
-	payload = append(payload, []byte(columnName)...)
-
-	// Column type (as uvarint length + content)
-	typeLenBytes := make([]byte, binary.MaxVarintLen64)
-	typeLenN := binary.PutUvarint(typeLenBytes, uint64(len(columnType)))
-	payload = append(payload, typeLenBytes[:typeLenN]...)
-	payload = append(payload, []byte(columnType)...)
-
-	// Data block = 0 (as uvarint)
-	dataBlockBytes := make([]byte, binary.MaxVarintLen64)
-	n2 := binary.PutUvarint(dataBlockBytes, 0)
-	payload = append(payload, dataBlockBytes[:n2]...)
-
-	// Row count = 1 (as uvarint)
-	rowCountBytes := make([]byte, binary.MaxVarintLen64)
-	n3 := binary.PutUvarint(rowCountBytes, 1)
-	payload = append(payload, rowCountBytes[:n3]...)
-
-	// Data (as uvarint length + content)
-	dataLenBytes := make([]byte, binary.MaxVarintLen64)
-	dataLenN := binary.PutUvarint(dataLenBytes, uint64(len(value)))
-	payload = append(payload, dataLenBytes[:dataLenN]...)
-	payload = append(payload, []byte(value)...)
-
-	if err := h.writer.WriteMessage(ServerData, payload); err != nil {
-		h.logger.Error().Err(err).Msg("Failed to write ServerData message")
-		return err
-	}
-
-	// Send EndOfStream
-	if err := h.writer.WriteMessage(ServerEndOfStream, nil); err != nil {
-		h.logger.Error().Err(err).Msg("Failed to write ServerEndOfStream message")
-		return err
-	}
-
-	h.logger.Debug().Msg("Simple expression result sent successfully")
-	return nil
 }
 
 // sendEmptyResultSet sends an empty result set
@@ -372,12 +226,12 @@ func (h *ConnectionHandler) sendEmptyResultSet() error {
 	payload = append(payload, dataLenBytes[:dataLenN]...)
 
 	// Send ServerData with proper payload
-	if err := h.writer.WriteMessage(ServerData, payload); err != nil {
+	if err := h.sendServerDataWithPayload(payload); err != nil {
 		return err
 	}
 
 	// Send EndOfStream
-	return h.writer.WriteMessage(ServerEndOfStream, nil)
+	return h.sendServerEndOfStreamSignal()
 }
 
 // sendQueryResults sends query results as ServerData packets
@@ -453,7 +307,7 @@ func (h *ConnectionHandler) sendQueryResults(tableName string, rows [][]interfac
 			Msg("Sending ServerData for column")
 
 		// Send ServerData packet for this column
-		if err := h.writer.WriteMessage(ServerData, payload); err != nil {
+		if err := h.sendServerDataWithPayload(payload); err != nil {
 			h.logger.Error().Err(err).Msg("Failed to write ServerData message")
 			return err
 		}
@@ -461,7 +315,7 @@ func (h *ConnectionHandler) sendQueryResults(tableName string, rows [][]interfac
 
 	h.logger.Debug().Msg("Sending ServerEndOfStream after all columns")
 	// Send EndOfStream after all columns
-	return h.writer.WriteMessage(ServerEndOfStream, nil)
+	return h.sendServerEndOfStreamSignal()
 }
 
 // handleClientData handles client data message
@@ -494,7 +348,7 @@ func (h *ConnectionHandler) handleClientData(payload []byte) error {
 // handleClientPing handles client ping message
 func (h *ConnectionHandler) handleClientPing() error {
 	h.logger.Debug().Msg("Ping received")
-	return h.sendPong()
+	return h.sendServerPongSignal()
 }
 
 // parseDataBlock parses the data block from payload
@@ -551,10 +405,9 @@ func (h *ConnectionHandler) parseDataBlock(payload []byte) (*DataBlock, error) {
 	}
 
 	return &DataBlock{
-		TableName:   tableName,
-		Columns:     columns,
-		ColumnTypes: columnTypes,
-		Rows:        rows,
+		TableName: tableName,
+		Columns:   columns,
+		Rows:      rows,
 	}, nil
 }
 
@@ -648,7 +501,7 @@ func (h *ConnectionHandler) sendServerHello() error {
 		Bytes("payload_bytes", payload).
 		Msg("Sending ServerHello response")
 
-	err := h.writer.WriteMessage(ServerHello, payload)
+	err := h.sendServerHelloSignal()
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to send ServerHello")
 		return err
@@ -667,13 +520,13 @@ func (h *ConnectionHandler) sendQueryResponse(query string) error {
 
 	h.logger.Debug().Msg("Sending ServerData response")
 	// Send the data response
-	if err := h.writer.WriteMessage(ServerData, payload); err != nil {
+	if err := h.sendServerDataWithPayload(payload); err != nil {
 		return err
 	}
 
 	h.logger.Debug().Msg("Sending ServerEndOfStream response")
 	// Send EndOfStream to indicate completion
-	return h.writer.WriteMessage(ServerEndOfStream, nil)
+	return h.sendServerEndOfStreamSignal()
 }
 
 // sendDataResponse sends data processing response
@@ -713,14 +566,14 @@ func (h *ConnectionHandler) sendDataResponse() error {
 	ackPayload = append(ackPayload, []byte(response)...)
 
 	h.logger.Debug().Msg("Sending ServerData response")
-	if err := h.writer.WriteMessage(ServerData, ackPayload); err != nil {
+	if err := h.sendServerDataWithPayload(ackPayload); err != nil {
 		h.logger.Error().Err(err).Msg("Failed to write ServerData message")
 		return err
 	}
 
 	h.logger.Debug().Msg("Sending ServerEndOfStream response")
 	// Send EndOfStream to indicate completion
-	if err := h.writer.WriteMessage(ServerEndOfStream, nil); err != nil {
+	if err := h.sendServerEndOfStreamSignal(); err != nil {
 		h.logger.Error().Err(err).Msg("Failed to write ServerEndOfStream message")
 		return err
 	}
@@ -729,18 +582,9 @@ func (h *ConnectionHandler) sendDataResponse() error {
 	return nil
 }
 
-// sendPong sends pong response
-func (h *ConnectionHandler) sendPong() error {
-	h.logger.Debug().
-		Uint8("packet_type", ServerPong).
-		Msg("Sending pong response")
-	return h.writer.WriteMessage(ServerPong, nil)
-}
-
 // sendException sends exception response
 func (h *ConnectionHandler) sendException(errorMsg string) error {
-	payload := []byte(errorMsg)
-	return h.writer.WriteMessage(ServerException, payload)
+	return h.sendExceptionSignal(errorMsg)
 }
 
 // payloadReader is a helper to read from a byte slice
@@ -901,14 +745,14 @@ func (h *ConnectionHandler) sendQueryEngineResults(result *query.QueryResult) er
 		payload = append(payload, []byte(dataString)...)
 
 		// Send ServerData for this column
-		if err := h.writer.WriteMessage(ServerData, payload); err != nil {
+		if err := h.sendServerDataWithPayload(payload); err != nil {
 			h.logger.Error().Err(err).Msg("Failed to send ServerData for column")
 			return err
 		}
 	}
 
 	// Send EndOfStream
-	if err := h.writer.WriteMessage(ServerEndOfStream, nil); err != nil {
+	if err := h.sendServerEndOfStreamSignal(); err != nil {
 		h.logger.Error().Err(err).Msg("Failed to send EndOfStream")
 		return err
 	}
@@ -975,23 +819,38 @@ func (h *ConnectionHandler) sendTableResult(columns [][]string, data [][]interfa
 	}
 
 	// Send EndOfStream
-	return h.writer.WriteMessage(ServerEndOfStream, nil)
+	return h.sendServerEndOfStreamSignal()
 }
 
 // sendColumns sends column information
 func (h *ConnectionHandler) sendColumns(columns [][]string) error {
-	// TODO: Implement proper column sending
-	// For now, just log
+	// Send column metadata using unified protocol
 	h.logger.Debug().Int("column_count", len(columns)).Msg("Sending columns")
-	return nil
+
+	// Create empty data for column metadata message
+	emptyData := [][]interface{}{}
+	return h.sendServerDataSignal(columns, emptyData)
 }
 
 // sendData sends data rows
 func (h *ConnectionHandler) sendData(data [][]interface{}) error {
-	// TODO: Implement proper data sending
-	// For now, just log
+	// Send data rows using unified protocol
 	h.logger.Debug().Int("row_count", len(data)).Msg("Sending data")
-	return nil
+
+	if len(data) == 0 {
+		// Send empty data
+		return h.sendServerDataSignal([][]string{}, [][]interface{}{})
+	}
+
+	// Create simple columns based on data structure
+	columns := [][]string{}
+	if len(data) > 0 {
+		for i := range data[0] {
+			columns = append(columns, []string{fmt.Sprintf("col_%d", i), "String"})
+		}
+	}
+
+	return h.sendServerDataSignal(columns, data)
 }
 
 // sendSimpleAcknowledgment sends a simple acknowledgment
@@ -1025,17 +884,250 @@ func (h *ConnectionHandler) sendErrorResponse(message string) error {
 	payload = append(payload, codeBytes[:n]...)
 
 	// Send ServerException packet
-	if err := h.writer.WriteMessage(ServerException, payload); err != nil {
+	if err := h.sendExceptionSignal(string(messageBytes)); err != nil {
 		h.logger.Error().Err(err).Msg("Failed to write ServerException message")
 		return err
 	}
 
 	// Send EndOfStream to indicate end of response
-	if err := h.writer.WriteMessage(ServerEndOfStream, nil); err != nil {
+	if err := h.sendServerEndOfStreamSignal(); err != nil {
 		h.logger.Error().Err(err).Msg("Failed to write ServerEndOfStream message")
 		return err
 	}
 
 	h.logger.Debug().Msg("Error response sent successfully")
 	return nil
+}
+
+// handleClientHelloSignal handles client hello message using decoded signal
+func (h *ConnectionHandler) handleClientHelloSignal(hello *signals.ClientHello) error {
+	h.logger.Debug().
+		Str("client_name", hello.ClientName).
+		Uint64("major_version", hello.MajorVersion).
+		Uint64("minor_version", hello.MinorVersion).
+		Uint64("protocol_version", hello.ProtocolVersion).
+		Str("database", hello.Database).
+		Str("user", hello.User).
+		Msg("Processing ClientHello signal")
+
+	// Send server hello response
+	return h.sendServerHelloSignal()
+}
+
+// handleClientQuerySignal handles client query message using decoded signal
+func (h *ConnectionHandler) handleClientQuerySignal(ctx context.Context, query *signals.ClientQuery) error {
+	h.logger.Debug().
+		Str("query", query.Query).
+		Str("query_id", query.QueryID).
+		Str("database", query.Database).
+		Str("user", query.User).
+		Msg("Processing ClientQuery signal")
+
+	// Store current query
+	h.currentQuery = query.Query
+
+	// Execute query using query engine
+	result, err := h.queryEngine.ExecuteQuery(ctx, query.Query)
+	if err != nil {
+		h.logger.Error().Err(err).Str("query", query.Query).Msg("Query execution failed")
+		return h.sendExceptionSignal(fmt.Sprintf("Query execution failed: %v", err))
+	}
+
+	// Send query results
+	return h.sendQueryEngineResultsSignal(result)
+}
+
+// handleClientDataSignal handles client data message using decoded signal
+func (h *ConnectionHandler) handleClientDataSignal(data *signals.ClientData) error {
+	h.logger.Debug().
+		Str("table_name", data.TableName).
+		Int("column_count", len(data.Columns)).
+		Int("row_count", len(data.Rows)).
+		Msg("Processing ClientData signal")
+
+	// Process the data block
+	block := &DataBlock{
+		TableName: data.TableName,
+		Columns:   data.Columns,
+		Rows:      data.Rows,
+	}
+
+	return h.processDataBlock(block)
+}
+
+// handleClientCancelSignal handles client cancel message using decoded signal
+func (h *ConnectionHandler) handleClientCancelSignal(cancel *signals.ClientCancel) error {
+	h.logger.Debug().
+		Str("query_id", cancel.QueryID).
+		Msg("Processing ClientCancel signal")
+
+	// Implement query cancellation logic using query engine
+	h.logger.Info().Str("query_id", cancel.QueryID).Msg("Query cancellation requested")
+
+	// Try to cancel the query using the query engine
+	if err := h.queryEngine.CancelQuery(cancel.QueryID); err != nil {
+		h.logger.Warn().Err(err).Str("query_id", cancel.QueryID).Msg("Failed to cancel query")
+		return h.sendSimpleAcknowledgment(fmt.Sprintf("Query %s cancellation failed: %v", cancel.QueryID, err))
+	}
+
+	// Send acknowledgment
+	return h.sendSimpleAcknowledgment(fmt.Sprintf("Query %s cancelled successfully", cancel.QueryID))
+}
+
+// sendServerHelloSignal sends server hello using unified protocol
+func (h *ConnectionHandler) sendServerHelloSignal() error {
+	hello := signals.NewServerHello("Icebox Server", "UTC", "Icebox Database Server")
+
+	message, err := h.codec.EncodeMessage(hello)
+	if err != nil {
+		return fmt.Errorf("failed to encode server hello: %w", err)
+	}
+
+	return h.codec.WriteMessage(h.conn, message)
+}
+
+// sendExceptionSignal sends server exception using unified protocol
+func (h *ConnectionHandler) sendExceptionSignal(errorMsg string) error {
+	exception := signals.NewServerException(1001, errorMsg, "")
+
+	message, err := h.codec.EncodeMessage(exception)
+	if err != nil {
+		return fmt.Errorf("failed to encode server exception: %w", err)
+	}
+
+	return h.codec.WriteMessage(h.conn, message)
+}
+
+// sendQueryEngineResultsSignal sends query results using unified protocol
+func (h *ConnectionHandler) sendQueryEngineResultsSignal(result *query.QueryResult) error {
+	// Implement proper result sending using unified protocol
+	h.logger.Debug().
+		Int("column_count", len(result.Columns)).
+		Int64("row_count", result.RowCount).
+		Msg("Sending query results using unified protocol")
+
+	// Convert query result to protocol format
+	columns := make([][]string, len(result.Columns))
+	for i, colName := range result.Columns {
+		columns[i] = []string{colName, "String"} // Default type to String
+	}
+
+	// Convert data interface{} to [][]interface{}
+	var data [][]interface{}
+	if result.Data != nil {
+		// Try to assert as [][]interface{} first
+		if rowData, ok := result.Data.([][]interface{}); ok {
+			data = rowData
+		} else {
+			// Fallback: create single row with the data as string
+			data = [][]interface{}{{fmt.Sprintf("%v", result.Data)}}
+		}
+	}
+
+	// Send the data
+	if err := h.sendServerDataSignal(columns, data); err != nil {
+		return err
+	}
+
+	// Send end of stream
+	return h.sendServerEndOfStreamSignal()
+}
+
+// sendServerDataSignal sends server data using unified protocol
+func (h *ConnectionHandler) sendServerDataSignal(columns [][]string, data [][]interface{}) error {
+	// Convert [][]string to []signals.Column
+	signalColumns := make([]signals.Column, len(columns))
+	for i, col := range columns {
+		if len(col) >= 2 {
+			signalColumns[i] = signals.Column{
+				Name: col[0],
+				Type: col[1],
+			}
+		} else {
+			signalColumns[i] = signals.Column{
+				Name: "unknown",
+				Type: "String",
+			}
+		}
+	}
+
+	serverData := signals.NewServerData(signalColumns, data)
+
+	message, err := h.codec.EncodeMessage(serverData)
+	if err != nil {
+		return fmt.Errorf("failed to encode server data: %w", err)
+	}
+
+	return h.codec.WriteMessage(h.conn, message)
+}
+
+// sendServerEndOfStreamSignal sends server end of stream using unified protocol
+func (h *ConnectionHandler) sendServerEndOfStreamSignal() error {
+	eos := signals.NewServerEndOfStream()
+
+	message, err := h.codec.EncodeMessage(eos)
+	if err != nil {
+		return fmt.Errorf("failed to encode server end of stream: %w", err)
+	}
+
+	return h.codec.WriteMessage(h.conn, message)
+}
+
+// sendServerPongSignal sends server pong using unified protocol
+func (h *ConnectionHandler) sendServerPongSignal() error {
+	pong := signals.NewServerPong(time.Now().Unix())
+
+	message, err := h.codec.EncodeMessage(pong)
+	if err != nil {
+		return fmt.Errorf("failed to encode server pong: %w", err)
+	}
+
+	return h.codec.WriteMessage(h.conn, message)
+}
+
+// sendServerDataWithPayload sends server data with custom payload (for backward compatibility)
+func (h *ConnectionHandler) sendServerDataWithPayload(payload []byte) error {
+	// Parse payload and create appropriate ServerData signal
+	// For backward compatibility, we'll create a simple single-column result with the payload as string data
+	h.logger.Debug().Int("payload_size", len(payload)).Msg("Sending server data with custom payload")
+
+	columns := []signals.Column{
+		{Name: "data", Type: "String"},
+	}
+
+	// Convert payload to string and send as single row
+	data := [][]interface{}{
+		{string(payload)},
+	}
+
+	serverData := signals.NewServerData(columns, data)
+
+	message, err := h.codec.EncodeMessage(serverData)
+	if err != nil {
+		return fmt.Errorf("failed to encode server data: %w", err)
+	}
+
+	return h.codec.WriteMessage(h.conn, message)
+}
+
+// sendServerExceptionWithPayload sends server exception with custom payload (for backward compatibility)
+func (h *ConnectionHandler) sendServerExceptionWithPayload(payload []byte) error {
+	// Parse payload to extract error information
+	// For backward compatibility, assume the payload contains the error message
+	h.logger.Debug().Int("payload_size", len(payload)).Msg("Sending server exception with custom payload")
+
+	errorMsg := string(payload)
+	if len(errorMsg) == 0 {
+		errorMsg = "Unknown error occurred"
+	}
+
+	// Create exception with parsed error message
+	exception := signals.NewServerException(1001, errorMsg, "")
+
+	message, err := h.codec.EncodeMessage(exception)
+	if err != nil {
+		return fmt.Errorf("failed to encode server exception: %w", err)
+	}
+
+	return h.codec.WriteMessage(h.conn, message)
 }

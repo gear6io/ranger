@@ -1,0 +1,151 @@
+# Pre-commit configuration for Icebox project
+# This file defines automated checks that run before each commit
+# Install with: pip install pre-commit && pre-commit install
+
+repos:
+  # Go-specific hooks
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+        args: [--fix]
+        description: "Format Go code with go fmt"
+      
+      - id: go-vet
+        description: "Run go vet on Go files"
+      
+      - id: go-imports
+        args: [--fix]
+        description: "Fix Go imports with goimports"
+      
+      - id: go-mod-tidy
+        description: "Tidy go.mod and go.sum files"
+      
+      - id: go-mod-download
+        description: "Download Go module dependencies"
+      
+      - id: golangci-lint
+        description: "Run golangci-lint on Go files"
+        args: [--fast]
+
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        description: "Remove trailing whitespace"
+      
+      - id: end-of-file-fixer
+        description: "Ensure files end with newline"
+      
+      - id: check-yaml
+        description: "Check YAML syntax"
+      
+      - id: check-json
+        description: "Check JSON syntax"
+      
+      - id: check-merge-conflict
+        description: "Check for merge conflict markers"
+      
+      - id: check-case-conflict
+        description: "Check for case conflicts in filenames"
+      
+      - id: check-added-large-files
+        description: "Prevent large files from being committed"
+        args: [--maxkb=1000]
+
+  # Shell script checks
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.9.0.5
+    hooks:
+      - id: shellcheck
+        description: "Check shell scripts for common errors"
+        args: [--severity=warning]
+
+  # File formatting and organization
+  - repo: https://github.com/psf/black
+    rev: 23.12.1
+    hooks:
+      - id: black
+        description: "Format Python code with Black"
+        language_version: python3
+        types: [python]
+
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.1.0
+    hooks:
+      - id: prettier
+        description: "Format JavaScript, TypeScript, JSON, CSS, HTML, and Markdown files"
+        types: [javascript, jsx, ts, tsx, json, css, scss, html, markdown, yaml]
+        args: [--write]
+
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.38.0
+    hooks:
+      - id: markdownlint
+        description: "Lint Markdown files"
+        args: [--fix]
+        types: [markdown]
+
+  - repo: https://github.com/pre-commit/mirrors-yapf
+    rev: v0.2.0
+    hooks:
+      - id: yapf
+        description: "Format Python code with YAPF (alternative to Black)"
+        types: [python]
+        args: [--in-place]
+
+  - repo: https://github.com/pre-commit/mirrors-autopep8
+    rev: v2.0.4
+    hooks:
+      - id: autopep8
+        description: "Format Python code with autopep8"
+        types: [python]
+        args: [--in-place, --max-line-length=88]
+
+  - repo: https://github.com/pre-commit/mirrors-isort
+    rev: v5.13.2
+    hooks:
+      - id: isort
+        description: "Sort Python imports"
+        types: [python]
+        args: [--profile=black]
+
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v17.0.6
+    hooks:
+      - id: clang-format
+        description: "Format C/C++ code"
+        types: [c, c++]
+        args: [--style=Google, -i]
+
+  - repo: https://github.com/pre-commit/mirrors-rustfmt
+    rev: v1.6.0
+    hooks:
+      - id: rustfmt
+        description: "Format Rust code"
+        types: [rust]
+
+  - repo: https://github.com/pre-commit/mirrors-gofmt
+    rev: v1.5.4
+    hooks:
+      - id: gofmt
+        description: "Format Go code (alternative to pre-commit-golang)"
+        types: [go]
+        args: [--write]
+
+  - repo: https://github.com/pre-commit/mirrors-goimports
+    rev: v0.1.5
+    hooks:
+      - id: goimports
+        description: "Format Go imports (alternative to pre-commit-golang)"
+        types: [go]
+        args: [--write]
+
+# Default settings
+default_language_version:
+  python: python3
+  golang: "1.21"
+
+# Hook execution order
+fail_fast: false

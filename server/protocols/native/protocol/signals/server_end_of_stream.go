@@ -41,3 +41,18 @@ func (e *ServerEndOfStream) Size() int {
 func NewServerEndOfStream() *ServerEndOfStream {
 	return &ServerEndOfStream{}
 }
+
+// Register registers this signal type in both registry and factory
+func (e *ServerEndOfStream) Register(registry *protocol.Registry, factory *protocol.SignalFactory) error {
+	// Register in registry
+	if err := registry.RegisterServerSignal(e, &protocol.SignalInfo{Name: "ServerEndOfStream"}); err != nil {
+		return fmt.Errorf("failed to register ServerEndOfStream in registry: %w", err)
+	}
+
+	// Register constructor in factory
+	factory.RegisterConstructor(protocol.ServerEndOfStream, func() protocol.Signal {
+		return &ServerEndOfStream{}
+	})
+
+	return nil
+}

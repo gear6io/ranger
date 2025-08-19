@@ -192,3 +192,18 @@ func NewServerHello(serverName, timezone, displayName string) *ServerHello {
 		VersionPatch: 0,
 	}
 }
+
+// Register registers this signal type in both registry and factory
+func (h *ServerHello) Register(registry *protocol.Registry, factory *protocol.SignalFactory) error {
+	// Register in registry
+	if err := registry.RegisterServerSignal(h, &protocol.SignalInfo{Name: "ServerHello"}); err != nil {
+		return fmt.Errorf("failed to register ServerHello in registry: %w", err)
+	}
+
+	// Register constructor in factory
+	factory.RegisterConstructor(protocol.ServerHello, func() protocol.Signal {
+		return &ServerHello{}
+	})
+
+	return nil
+}

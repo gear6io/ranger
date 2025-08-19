@@ -53,3 +53,18 @@ func NewServerPong(timestamp int64) *ServerPong {
 		Timestamp: timestamp,
 	}
 }
+
+// Register registers this signal type in both registry and factory
+func (p *ServerPong) Register(registry *protocol.Registry, factory *protocol.SignalFactory) error {
+	// Register in registry
+	if err := registry.RegisterServerSignal(p, &protocol.SignalInfo{Name: "ServerPong"}); err != nil {
+		return fmt.Errorf("failed to register ServerPong in registry: %w", err)
+	}
+
+	// Register constructor in factory
+	factory.RegisterConstructor(protocol.ServerPong, func() protocol.Signal {
+		return &ServerPong{}
+	})
+
+	return nil
+}

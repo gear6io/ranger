@@ -3,6 +3,7 @@ package protocol
 import (
 	"fmt"
 	"reflect"
+	"strings"
 )
 
 // SignalFactory creates new instances of signals
@@ -71,4 +72,26 @@ func (f *SignalFactory) ListRegisteredTypes() []SignalType {
 // Clear removes all registered constructors (useful for testing)
 func (f *SignalFactory) Clear() {
 	f.constructors = make(map[SignalType]func() Signal)
+}
+
+// RegisterSignal is a helper function to register a signal in both registry and factory
+func RegisterSignal(signal Signal, registry *Registry, factory *SignalFactory) error {
+	return signal.Register(registry, factory)
+}
+
+// RegisterMultipleSignals registers multiple signals with error handling
+func RegisterMultipleSignals(signals []Signal, registry *Registry, factory *SignalFactory) error {
+	var errors []string
+
+	for _, signal := range signals {
+		if err := signal.Register(registry, factory); err != nil {
+			errors = append(errors, fmt.Sprintf("failed to register %T: %v", signal, err))
+		}
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("signal registration errors: %s", strings.Join(errors, "; "))
+	}
+
+	return nil
 }
