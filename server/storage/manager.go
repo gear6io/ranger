@@ -205,6 +205,28 @@ func (m *Manager) GetFileSystem() FileSystem {
 	return engine
 }
 
+// GetEngineForTable returns the appropriate storage engine for a specific table
+func (m *Manager) GetEngineForTable(ctx context.Context, database, tableName string) (FileSystem, error) {
+	// Check if table exists in metadata
+	if !m.meta.TableExists(ctx, database, tableName) {
+		return nil, errors.New(errors.CommonNotFound, "table does not exist").AddContext("database", database).AddContext("tableName", tableName)
+	}
+
+	// Get table metadata to determine storage engine
+	metadata, err := m.meta.LoadTableMetadata(ctx, database, tableName)
+	if err != nil {
+		return nil, errors.New(errors.CommonInternal, "failed to load table metadata").AddContext("database", database).AddContext("tableName", tableName)
+	}
+
+	// Get the appropriate storage engine for this table
+	engine, err := m.engineRegistry.GetEngine(metadata.StorageEngine)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get storage engine %s: %w", metadata.StorageEngine, err)
+	}
+
+	return engine, nil
+}
+
 // ============================================================================
 // INTERNAL UTILITIES (moved from utils to storage package)
 // ============================================================================

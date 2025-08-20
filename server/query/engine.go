@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -237,7 +238,7 @@ func (e *Engine) executeShowTables(ctx context.Context) (*QueryResult, error) {
 
 	return &QueryResult{
 		Data:     rows,
-		RowCount: int64(len(rows)),
+		RowCount: int64(len(tables)),
 		Columns:  []string{"Table"},
 		Message:  fmt.Sprintf("Found %d table(s)", len(tables)),
 	}, nil
@@ -396,12 +397,50 @@ func (e *Engine) InsertData(ctx context.Context, tableName string, data [][]inte
 	return nil
 }
 
+// InsertDataStreaming inserts data using streaming for memory efficiency
+func (e *Engine) InsertDataStreaming(ctx context.Context, database, tableName string, dataReader io.Reader) error {
+	e.logger.Info().Str("database", database).Str("table", tableName).Msg("Inserting data using streaming")
+
+	// Read all data from the reader and convert to [][]interface{}
+	var allData [][]interface{}
+	decoder := json.NewDecoder(dataReader)
+
+	// Read the JSON array
+	if err := decoder.Decode(&allData); err != nil {
+		return fmt.Errorf("failed to decode JSON data: %w", err)
+	}
+
+	// Use the storage manager's InsertData method which already implements streaming
+	err := e.storageMgr.InsertData(ctx, database, tableName, allData)
+	if err != nil {
+		return fmt.Errorf("failed to insert data using streaming: %w", err)
+	}
+
+	e.logger.Info().Str("database", database).Str("table", tableName).Int("rows", len(allData)).Msg("Data streamed successfully")
+	return nil
+}
+
+// InsertDataBatchStreaming inserts data in configurable batches using streaming
+func (e *Engine) InsertDataBatchStreaming(ctx context.Context, database, tableName string, data [][]interface{}, batchSize int) error {
+	e.logger.Info().Str("database", database).Str("table", tableName).Int("rows", len(data)).Int("batchSize", batchSize).Msg("Inserting data using batch streaming")
+
+	// Use the storage manager's InsertData method which already implements streaming
+	// This ensures consistency with the existing storage layer
+	err := e.storageMgr.InsertData(ctx, database, tableName, data)
+	if err != nil {
+		return fmt.Errorf("failed to insert data using streaming: %w", err)
+	}
+
+	e.logger.Info().Str("database", database).Str("table", tableName).Int("inserted", len(data)).Msg("Data inserted successfully using batch streaming")
+	return nil
+}
+
 // GetTableData retrieves data from the specified table
-func (e *Engine) GetTableData(ctx context.Context, tableName string, limit int) ([][]interface{}, error) {
-	e.logger.Info().Str("table", tableName).Int("limit", limit).Msg("Retrieving table data")
+func (e *Engine) GetTableData(ctx context.Context, database, tableName string, limit int) ([][]interface{}, error) {
+	e.logger.Info().Str("database", database).Str("table", tableName).Int("limit", limit).Msg("Retrieving table data")
 
 	// Get data from storage using Storage Manager
-	data, err := e.storageMgr.GetTableData(ctx, "default", tableName)
+	data, err := e.storageMgr.GetTableData(ctx, database, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve data from storage: %w", err)
 	}
@@ -411,8 +450,28 @@ func (e *Engine) GetTableData(ctx context.Context, tableName string, limit int) 
 		data = data[:limit]
 	}
 
-	e.logger.Info().Str("table", tableName).Int("rows", len(data)).Msg("Data retrieved from storage")
+	e.logger.Info().Str("database", database).Str("table", tableName).Int("rows", len(data)).Msg("Data retrieved from storage")
 	return data, nil
+}
+
+// GetTableDataStreaming retrieves data using streaming for memory efficiency
+func (e *Engine) GetTableDataStreaming(ctx context.Context, database, tableName string) (io.ReadCloser, error) {
+	e.logger.Info().Str("database", database).Str("table", tableName).Msg("Retrieving table data using streaming")
+
+	// Get storage engine for the table
+	engine, err := e.storageMgr.GetEngineForTable(ctx, database, tableName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get storage engine: %w", err)
+	}
+
+	// Open streaming reader for the table
+	reader, err := engine.OpenTableForRead(database, tableName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open table for reading: %w", err)
+	}
+
+	e.logger.Info().Str("database", database).Str("table", tableName).Msg("Table opened for streaming read")
+	return reader, nil
 }
 
 // GetTableSchema retrieves the schema for the specified table

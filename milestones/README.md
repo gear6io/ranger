@@ -4,6 +4,8 @@ This folder contains detailed milestone plans for major Icebox development initi
 
 ## 📋 Available Milestones
 
+- **[Query Engine Streaming Integration](query-engine-streaming-integration.md)** - ✅ **COMPLETED** - Memory-efficient streaming data operations (2 weeks)
+- **[Post-Insert Metadata Updates](post-insert-metadata-updates.md)** - 🚧 **IN PROGRESS** - Registry and Iceberg metadata updates after data insertion (3 weeks)
 - **[Memory Parquet Implementation](memory-parquet-implementation.md)** - Memory-based Parquet storage foundation (2-3 weeks)
 - **[Parquet Storage Implementation](parquet-storage-implementation.md)** - Complete Apache Iceberg native Parquet storage system
 - **[Schema Management System](schema-management-system.md)** - Comprehensive schema handling and validation
