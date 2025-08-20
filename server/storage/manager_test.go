@@ -30,64 +30,85 @@ func TestStorageManagerCreateTableWithEngines(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("CreateDatabase", func(t *testing.T) {
-		// Create a test database using metadata manager
-		err := storageMgr.GetMetadataManager().CreateDatabase(ctx, "testdb")
+		// Create a test database using metadata manager with unique name
+		dbName := "testdb_create"
+		err := storageMgr.GetMetadataManager().CreateDatabase(ctx, dbName)
 		assert.NoError(t, err, "Should create database successfully")
 
 		// Verify database was created
-		exists := storageMgr.GetMetadataManager().DatabaseExists(ctx, "testdb")
+		exists := storageMgr.GetMetadataManager().DatabaseExists(ctx, dbName)
 		assert.True(t, exists, "Database should exist after creation")
 	})
 
 	t.Run("CreateTableWithMemoryEngine", func(t *testing.T) {
+		// Create database first
+		dbName := "testdb_memory"
+		err := storageMgr.GetMetadataManager().CreateDatabase(ctx, dbName)
+		require.NoError(t, err, "Should create database successfully")
+
 		// Create table with MEMORY storage engine
 		// Serialize schema (simplified for testing)
 		schemaData := []byte(`{"columns":{"id":{"type":"INT","nullable":false},"name":{"type":"VARCHAR","length":255,"nullable":true},"value":{"type":"DECIMAL","nullable":true}}}`)
 
-		err := storageMgr.CreateTable(ctx, "testdb", "my_memory_table", schemaData, "MEMORY", nil)
+		err = storageMgr.CreateTable(ctx, dbName, "my_memory_table", schemaData, "MEMORY", nil)
 		assert.NoError(t, err, "Should create table with MEMORY engine")
 
 		// Verify table was created
-		tables, err := storageMgr.GetMetadataManager().ListTables(ctx, "testdb")
+		tables, err := storageMgr.GetMetadataManager().ListTables(ctx, dbName)
 		assert.NoError(t, err, "Should list tables successfully")
 		assert.Contains(t, tables, "my_memory_table", "Table should exist in metadata")
 	})
 
 	t.Run("CreateTableWithFilesystemEngine", func(t *testing.T) {
+		// Create database first
+		dbName := "testdb_filesystem"
+		err := storageMgr.GetMetadataManager().CreateDatabase(ctx, dbName)
+		require.NoError(t, err, "Should create database successfully")
+
 		// Create table with FILESYSTEM storage engine
 		// Serialize schema (simplified for testing)
 		schemaData := []byte(`{"columns":{"id":{"type":"INT","nullable":false},"description":{"type":"TEXT","nullable":true},"amount":{"type":"DOUBLE","nullable":true}}}`)
 
-		err := storageMgr.CreateTable(ctx, "testdb", "my_filesystem_table", schemaData, "FILESYSTEM", nil)
+		err = storageMgr.CreateTable(ctx, dbName, "my_filesystem_table", schemaData, "FILESYSTEM", nil)
 		assert.NoError(t, err, "Should create table with FILESYSTEM engine")
 
 		// Verify table was created
-		tables, err := storageMgr.GetMetadataManager().ListTables(ctx, "testdb")
+		tables, err := storageMgr.GetMetadataManager().ListTables(ctx, dbName)
 		assert.NoError(t, err, "Should list tables successfully")
 		assert.Contains(t, tables, "my_filesystem_table", "Table should exist in metadata")
 	})
 
 	t.Run("TestTableDataOperations", func(t *testing.T) {
+		// Create database and table for data operations test
+		dbName := "testdb_data"
+		err := storageMgr.GetMetadataManager().CreateDatabase(ctx, dbName)
+		require.NoError(t, err, "Should create database successfully")
+
+		// Create table with MEMORY storage engine for data ops test
+		schemaData := []byte(`{"columns":{"id":{"type":"INT","nullable":false},"name":{"type":"VARCHAR","length":255,"nullable":true},"value":{"type":"DECIMAL","nullable":true}}}`)
+		err = storageMgr.CreateTable(ctx, dbName, "my_memory_table", schemaData, "MEMORY", nil)
+		require.NoError(t, err, "Should create table with MEMORY engine")
+
 		// Test inserting data into memory table
 		data := [][]interface{}{
 			{1, "Test User 1", 100.50},
 			{2, "Test User 2", 200.75},
 		}
 
-		err := storageMgr.InsertData(ctx, "testdb", "my_memory_table", data)
+		err = storageMgr.InsertData(ctx, dbName, "my_memory_table", data)
 		assert.NoError(t, err, "Should insert data into memory table")
 
 		// Test querying data from memory table
-		retrievedData, err := storageMgr.GetTableData(ctx, "testdb", "my_memory_table")
+		retrievedData, err := storageMgr.GetTableData(ctx, dbName, "my_memory_table")
 		assert.NoError(t, err, "Should get data from memory table")
 		assert.NotNil(t, retrievedData, "Data should not be nil")
 		assert.GreaterOrEqual(t, len(retrievedData), 2, "Should have at least 2 rows")
 
-		// Verify the data
+		// Verify the data (JSON unmarshaling converts integers to float64)
 		if len(retrievedData) >= 2 {
-			assert.Equal(t, 1, retrievedData[0][0], "First row ID should be 1")
+			assert.Equal(t, float64(1), retrievedData[0][0], "First row ID should be 1")
 			assert.Equal(t, "Test User 1", retrievedData[0][1], "First row name should match")
-			assert.Equal(t, 2, retrievedData[1][0], "Second row ID should be 2")
+			assert.Equal(t, float64(2), retrievedData[1][0], "Second row ID should be 2")
 			assert.Equal(t, "Test User 2", retrievedData[1][1], "Second row name should match")
 		}
 	})

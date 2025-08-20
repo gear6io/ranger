@@ -6,14 +6,20 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"time"
+
+	"bufio"
+	"strings"
 
 	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/catalog"
 	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/metadata"
 	"github.com/TFMV/icebox/server/metadata/types"
+	"github.com/TFMV/icebox/server/storage/filesystem"
+	"github.com/TFMV/icebox/server/storage/memory"
+	"github.com/TFMV/icebox/server/storage/paths"
+	"github.com/TFMV/icebox/server/storage/s3"
 	"github.com/rs/zerolog"
 )
 
@@ -23,7 +29,7 @@ type Manager struct {
 	logger         zerolog.Logger
 	engineRegistry *StorageEngineRegistry
 	meta           metadata.MetadataManagerInterface
-	pathManager    *PathManager
+	pathManager    paths.PathManager
 	catalog        catalog.CatalogInterface
 }
 
@@ -34,23 +40,16 @@ type Config struct {
 
 // FileSystem interface for data storage operations
 type FileSystem interface {
-	// Core file operations
-	WriteFile(path string, data []byte) error
-	ReadFile(path string) ([]byte, error)
-	MkdirAll(path string) error // No perm parameter, always succeeds
-
-	// Streaming operations for large files
+	// Core streaming operations for large files
 	OpenForRead(path string) (io.ReadCloser, error)
 	OpenForWrite(path string) (io.WriteCloser, error)
 
-	// Utility operations
-	Remove(path string) error
-	Exists(path string) (bool, error)
+	// Streaming table operations
+	OpenTableForWrite(database, tableName string) (io.WriteCloser, error)
+	OpenTableForRead(database, tableName string) (io.ReadCloser, error)
 
 	// Storage environment preparation
-	PrepareTableEnvironment(database, tableName string) error
-	StoreTableData(database, tableName string, data []byte) error
-	GetTableData(database, tableName string) ([]byte, error)
+	SetupTable(database, tableName string) error
 	RemoveTableEnvironment(database, tableName string) error
 }
 
@@ -60,18 +59,15 @@ func NewManager(cfg *config.Config, logger zerolog.Logger) (*Manager, error) {
 	basePath := cfg.GetStoragePath()
 
 	// Create path manager
-	pathManager := NewPathManager(basePath)
+	pathManager := paths.NewManager(basePath)
 
 	// Create storage config from server config
 	storageCfg := &Config{
 		Path: pathManager.GetDataPath(), // Use PathManager for data path
 	}
 
-	// Create storage engine registry (initializes all available engines)
-	engineRegistry, err := NewStorageEngineRegistry(cfg, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create storage engine registry: %w", err)
-	}
+	// Create storage engine registry (without initializing engines)
+	engineRegistry := NewStorageEngineRegistry(logger)
 
 	// Initialize catalog
 	catalog, err := catalog.NewCatalog(cfg, pathManager)
@@ -93,14 +89,54 @@ func NewManager(cfg *config.Config, logger zerolog.Logger) (*Manager, error) {
 		Str("catalog_uri", pathManager.GetCatalogURI(cfg.GetCatalogType())).
 		Msg("Storage manager initialized with multi-engine support")
 
-	return &Manager{
+	manager := &Manager{
 		config:         storageCfg,
 		logger:         logger,
 		engineRegistry: engineRegistry,
 		meta:           meta,
 		pathManager:    pathManager,
 		catalog:        catalog,
-	}, nil
+	}
+
+	// Initialize storage engines with the PathManager
+	if err := manager.initializeStorageEngines(cfg); err != nil {
+		return nil, fmt.Errorf("failed to initialize storage engines: %w", err)
+	}
+
+	return manager, nil
+}
+
+// initializeStorageEngines initializes all available storage engines with proper dependencies
+func (m *Manager) initializeStorageEngines(cfg *config.Config) error {
+	// Initialize filesystem engine with PathManager
+	fsEngine := filesystem.NewFileStorage(m.pathManager)
+	m.engineRegistry.RegisterEngine(filesystem.Type, fsEngine)
+
+	// Initialize memory engine (no dependencies needed)
+	memEngine, err := memory.NewMemoryStorage()
+	if err != nil {
+		return fmt.Errorf("failed to initialize memory engine: %w", err)
+	}
+	m.engineRegistry.RegisterEngine(memory.Type, memEngine)
+
+	// Initialize S3 engine (if credentials are available)
+	if s3Engine, err := s3.NewS3FileSystem(cfg); err == nil {
+		m.engineRegistry.RegisterEngine(s3.Type, s3Engine)
+		m.logger.Info().Msg("S3 storage engine initialized successfully")
+	} else {
+		m.logger.Warn().Err(err).Msg("S3 storage engine not available (credentials missing or invalid)")
+	}
+
+	// Set default engine based on available engines
+	if _, exists := m.engineRegistry.engines[filesystem.Type]; exists {
+		m.engineRegistry.defaultEngine = filesystem.Type
+	} else if _, exists := m.engineRegistry.engines[memory.Type]; exists {
+		m.engineRegistry.defaultEngine = memory.Type
+	} else {
+		return fmt.Errorf("no storage engines available")
+	}
+
+	return nil
 }
 
 // Initialize initializes the data storage
@@ -112,22 +148,8 @@ func (m *Manager) Initialize(ctx context.Context) error {
 		return fmt.Errorf("failed to create directory structure: %w", err)
 	}
 
-	// Get default engine for initialization
-	defaultEngine, err := m.engineRegistry.GetDefaultEngine()
-	if err != nil {
-		return fmt.Errorf("failed to get default storage engine: %w", err)
-	}
-
-	// Ensure base directory exists for filesystem operations
-	if err := defaultEngine.MkdirAll(m.config.Path); err != nil {
-		return fmt.Errorf("failed to create base directory: %w", err)
-	}
-
-	// Ensure tables directory exists
-	tablesPath := filepath.Join(m.config.Path, "")
-	if err := defaultEngine.MkdirAll(tablesPath); err != nil {
-		return fmt.Errorf("failed to create tables directory: %w", err)
-	}
+	// Storage engines handle their own directory creation during SetupTable
+	// No need to create generic directories here
 
 	return nil
 }
@@ -159,7 +181,7 @@ func (m *Manager) GetStatus() map[string]interface{} {
 }
 
 // GetPathManager returns the path manager for external use
-func (m *Manager) GetPathManager() *PathManager {
+func (m *Manager) GetPathManager() paths.PathManager {
 	return m.pathManager
 }
 
@@ -222,10 +244,10 @@ func (m *Manager) CreateTable(ctx context.Context, database, tableName string, s
 	}
 
 	// Then prepare storage environment using the specified engine
-	if err := engine.PrepareTableEnvironment(database, tableName); err != nil {
+	if err := engine.SetupTable(database, tableName); err != nil {
 		// Clean up metadata if storage preparation fails
 		// TODO: Add RemoveTableMetadata method to MetadataManager
-		return fmt.Errorf("failed to prepare table storage environment: %w", err)
+		return fmt.Errorf("failed to setup table storage environment: %w", err)
 	}
 
 	// Create Iceberg metadata structure
@@ -242,23 +264,23 @@ func (m *Manager) CreateTable(ctx context.Context, database, tableName string, s
 	return nil
 }
 
-// InsertData inserts data into a table
+// InsertData inserts data into a table using streaming for memory efficiency
 func (m *Manager) InsertData(ctx context.Context, database, tableName string, data [][]interface{}) error {
 	m.logger.Info().
 		Str("database", database).
 		Str("table", tableName).
 		Int("rows", len(data)).
-		Msg("Inserting data into table")
+		Msg("Inserting data into table using streaming")
 
 	// Check if table exists in metadata
 	if !m.meta.TableExists(ctx, database, tableName) {
-		return errors.New(errors.CommonNotFound, "table does not exist").AddContext("database", database).AddContext("table", tableName)
+		return errors.New(errors.CommonNotFound, "table does not exist").AddContext("database", database).AddContext("tableName", tableName)
 	}
 
 	// Get table metadata to determine storage engine
 	metadata, err := m.meta.LoadTableMetadata(ctx, database, tableName)
 	if err != nil {
-		return errors.New(errors.CommonInternal, "failed to load table metadata").AddContext("database", database).AddContext("table", tableName)
+		return errors.New(errors.CommonInternal, "failed to load table metadata").AddContext("database", database).AddContext("tableName", tableName)
 	}
 
 	// Get the appropriate storage engine for this table
@@ -267,15 +289,62 @@ func (m *Manager) InsertData(ctx context.Context, database, tableName string, da
 		return fmt.Errorf("failed to get storage engine %s: %w", metadata.StorageEngine, err)
 	}
 
-	// Serialize data to bytes
-	dataBytes, err := json.Marshal(data)
+	// Open streaming writer for the table
+	writer, err := engine.OpenTableForWrite(database, tableName)
 	if err != nil {
-		return fmt.Errorf("failed to serialize data: %w", err)
+		return fmt.Errorf("failed to open table for writing: %w", err)
 	}
 
-	// Store data in storage using the appropriate engine
-	if err := engine.StoreTableData(database, tableName, dataBytes); err != nil {
-		return fmt.Errorf("failed to store data in storage: %w", err)
+	// Ensure writer is closed and handle rollback on failure
+	var writeErr error
+	defer func() {
+		if writeErr != nil {
+			// Rollback: remove any partially written data
+			m.logger.Warn().
+				Str("database", database).
+				Str("table", tableName).
+				Err(writeErr).
+				Msg("Rolling back failed data insertion")
+
+			if rollbackErr := engine.RemoveTableEnvironment(database, tableName); rollbackErr != nil {
+				m.logger.Error().
+					Err(rollbackErr).
+					Str("database", database).
+					Str("table", tableName).
+					Msg("Failed to rollback table environment")
+			}
+		}
+		writer.Close()
+	}()
+
+	// Stream data in batches to avoid memory buildup
+	batchSize := 1000 // Configurable batch size
+	for i := 0; i < len(data); i += batchSize {
+		end := i + batchSize
+		if end > len(data) {
+			end = len(data)
+		}
+
+		batch := data[i:end]
+
+		// Convert batch to JSON and write directly to storage
+		batchBytes, err := json.Marshal(batch)
+		if err != nil {
+			writeErr = fmt.Errorf("failed to serialize batch %d-%d: %w", i, end-1, err)
+			return writeErr
+		}
+
+		// Write batch directly to storage without intermediate buffering
+		if _, err := writer.Write(batchBytes); err != nil {
+			writeErr = fmt.Errorf("failed to write batch %d-%d: %w", i, end-1, err)
+			return writeErr
+		}
+
+		// Add newline separator between batches for readability
+		if _, err := writer.Write([]byte("\n")); err != nil {
+			writeErr = fmt.Errorf("failed to write batch separator: %w", err)
+			return writeErr
+		}
 	}
 
 	m.logger.Info().
@@ -283,7 +352,7 @@ func (m *Manager) InsertData(ctx context.Context, database, tableName string, da
 		Str("table", tableName).
 		Str("storage_engine", metadata.StorageEngine).
 		Int("rows", len(data)).
-		Msg("Data inserted successfully")
+		Msg("Data inserted successfully using streaming")
 
 	return nil
 }
@@ -308,17 +377,22 @@ func (m *Manager) ListTableFiles(ctx context.Context, database, tableName string
 	return files, nil
 }
 
-// GetTableData returns data from a table
+// GetTableData retrieves data from a table using streaming for memory efficiency
 func (m *Manager) GetTableData(ctx context.Context, database, tableName string) ([][]interface{}, error) {
+	m.logger.Info().
+		Str("database", database).
+		Str("table", tableName).
+		Msg("Retrieving table data using streaming")
+
 	// Check if table exists in metadata
 	if !m.meta.TableExists(ctx, database, tableName) {
-		return nil, errors.New(errors.CommonNotFound, "table does not exist").AddContext("database", database).AddContext("table", tableName)
+		return nil, errors.New(errors.CommonNotFound, "table does not exist").AddContext("database", database).AddContext("tableName", tableName)
 	}
 
 	// Get table metadata to determine storage engine
 	metadata, err := m.meta.LoadTableMetadata(ctx, database, tableName)
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to load table metadata").AddContext("database", database).AddContext("table", tableName)
+		return nil, errors.New(errors.CommonInternal, "failed to load table metadata").AddContext("database", database).AddContext("tableName", tableName)
 	}
 
 	// Get the appropriate storage engine for this table
@@ -327,19 +401,48 @@ func (m *Manager) GetTableData(ctx context.Context, database, tableName string) 
 		return nil, fmt.Errorf("failed to get storage engine %s: %w", metadata.StorageEngine, err)
 	}
 
-	// Get data from storage using the appropriate engine
-	dataBytes, err := engine.GetTableData(database, tableName)
+	// Open streaming reader for the table
+	reader, err := engine.OpenTableForRead(database, tableName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get data from storage: %w", err)
+		return nil, fmt.Errorf("failed to open table for reading: %w", err)
+	}
+	defer reader.Close()
+
+	// Read data in streaming fashion
+	var allData [][]interface{}
+	scanner := bufio.NewScanner(reader)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		// Parse each line as a JSON batch
+		var batch [][]interface{}
+		if err := json.Unmarshal([]byte(line), &batch); err != nil {
+			m.logger.Warn().
+				Err(err).
+				Str("line", line).
+				Msg("Failed to parse data line, skipping")
+			continue
+		}
+
+		allData = append(allData, batch...)
 	}
 
-	// Deserialize data
-	var data [][]interface{}
-	if err := json.Unmarshal(dataBytes, &data); err != nil {
-		return nil, fmt.Errorf("failed to deserialize data: %w", err)
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading table data: %w", err)
 	}
 
-	return data, nil
+	m.logger.Info().
+		Str("database", database).
+		Str("table", tableName).
+		Str("storage_engine", metadata.StorageEngine).
+		Int("rows", len(allData)).
+		Msg("Data retrieved successfully using streaming")
+
+	return allData, nil
 }
 
 // GetTableSchema retrieves the schema for the specified table

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/TFMV/icebox/server/storage/parquet"
+	"github.com/TFMV/icebox/server/storage/paths"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"
@@ -19,7 +20,9 @@ type ParquetManager struct {
 	schema      *arrow.Schema
 	config      *parquet.ParquetConfig
 	memoryPool  memory.Allocator
-	basePath    string
+	pathManager paths.PathManager
+	database    string
+	tableName   string
 	currentFile *ParquetFile
 	fileCount   int
 	stats       *parquet.WriteStats
@@ -39,21 +42,24 @@ type ParquetFile struct {
 }
 
 // NewParquetManager creates a new filesystem Parquet manager
-func NewParquetManager(schema *arrow.Schema, config *parquet.ParquetConfig, basePath string) (*ParquetManager, error) {
+func NewParquetManager(schema *arrow.Schema, config *parquet.ParquetConfig, pathManager paths.PathManager, database, tableName string) (*ParquetManager, error) {
 	if config == nil {
 		config = parquet.DefaultParquetConfig()
 	}
 
-	// Create base directory if it doesn't exist
-	if err := os.MkdirAll(basePath, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create base directory %s: %w", basePath, err)
+	// Create base directory using PathManager if it doesn't exist
+	dataPath := pathManager.GetParquetDataPath(database, tableName)
+	if err := os.MkdirAll(dataPath, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create data directory %s: %w", dataPath, err)
 	}
 
 	return &ParquetManager{
-		schema:     schema,
-		config:     config,
-		memoryPool: memory.NewGoAllocator(),
-		basePath:   basePath,
+		schema:      schema,
+		config:      config,
+		memoryPool:  memory.NewGoAllocator(),
+		pathManager: pathManager,
+		database:    database,
+		tableName:   tableName,
 		stats: &parquet.WriteStats{
 			RowsWritten:      0,
 			BytesWritten:     0,
@@ -126,10 +132,10 @@ func (fm *ParquetManager) ensureActiveFile() error {
 		return nil
 	}
 
-	// Generate file path
+	// Generate file path using PathManager
 	timestamp := time.Now().Format("20060102_150405")
-	filename := fmt.Sprintf("data_%s_%04d.parquet", timestamp, fm.fileCount)
-	filePath := filepath.Join(fm.basePath, filename)
+	filename := fm.pathManager.GetParquetFileName(timestamp, fm.fileCount)
+	filePath := fm.pathManager.GetParquetFilePath(fm.database, fm.tableName, filename)
 
 	// Create the file
 	file, err := os.Create(filePath)
@@ -235,7 +241,8 @@ func (fm *ParquetManager) GetFiles() ([]*parquet.FileInfo, error) {
 	fm.mu.RLock()
 	defer fm.mu.RUnlock()
 
-	files, err := filepath.Glob(filepath.Join(fm.basePath, "*.parquet"))
+	pattern := fm.pathManager.GetParquetFilePattern(fm.database, fm.tableName)
+	files, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list Parquet files: %w", err)
 	}
