@@ -1,0 +1,16 @@
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /app
+COPY . .
+
+# Build client
+RUN go build -o icebox-client cmd/icebox-client/main.go
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /root/
+COPY --from=builder /app/icebox-client .
+COPY --from=builder /app/icebox-client.yml .
+
+CMD ["./icebox-client", "--help"]

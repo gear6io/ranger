@@ -7,6 +7,11 @@
 *.dll
 *.so
 *.dylib
+icebox
+icebox-client
+icebox-server
+native_client
+clickhouse_example
 
 # Test binary, built with `go test -c`
 *.test
@@ -27,3 +32,8 @@ iceberg-go/
 go-duckdb/
 art/
 gocheck_artifacts/
+my-lakehouse/
+logs/
+.vscode/
+bin/
+workspace/

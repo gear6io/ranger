@@ -1,0 +1,32 @@
+# Icebox Server Configuration
+version: "0.1.0"
+
+# Logging Configuration
+log:
+  level: "debug"           # debug, info, warn, error, fatal
+  format: "console"        # console (human readable) or json
+  file_path: "logs/icebox-server.log"
+  console: true            # Whether to log to console
+  max_size: 100            # Max file size in MB
+  max_backups: 3           # Max number of backup files
+  max_age: 7               # Max age in days
+  cleanup: true            # Whether to cleanup log file on startup
+
+# Storage Configuration
+storage:
+  # Single data path for all storage
+  data_path: "./workspace"
+  
+  # Catalog configuration
+  catalog:
+    type: "json"           # Catalog type: json, sqlite, rest
+    # Catalog will be automatically created at {data_path}/catalog/
+  
+  # Data storage configuration
+  data:
+    # Storage engine is now specified per-table at runtime
+    # All engines (memory, filesystem, s3) are available
+    # Data will be automatically stored at {data_path}/data/
+  
+  # Internal metadata is always SQLite (not configurable)
+  # Internal metadata will be automatically stored at {data_path}/.icebox/metadata.db 
