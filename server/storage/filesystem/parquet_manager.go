@@ -1,0 +1,482 @@
+package filesystem
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/TFMV/icebox/server/storage/parquet"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
+)
+
+// ParquetManager manages Parquet data operations for filesystem storage
+type ParquetManager struct {
+	schema      *arrow.Schema
+	config      *parquet.ParquetConfig
+	memoryPool  memory.Allocator
+	basePath    string
+	currentFile *ParquetFile
+	fileCount   int
+	stats       *parquet.WriteStats
+	mu          sync.RWMutex
+	closed      bool
+}
+
+// ParquetFile represents an active Parquet file
+type ParquetFile struct {
+	Path      string
+	Writer    *pqarrow.FileWriter
+	File      *os.File
+	RowCount  int64
+	FileSize  int64
+	CreatedAt time.Time
+	LastWrite time.Time
+}
+
+// NewParquetManager creates a new filesystem Parquet manager
+func NewParquetManager(schema *arrow.Schema, config *parquet.ParquetConfig, basePath string) (*ParquetManager, error) {
+	if config == nil {
+		config = parquet.DefaultParquetConfig()
+	}
+
+	// Create base directory if it doesn't exist
+	if err := os.MkdirAll(basePath, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create base directory %s: %w", basePath, err)
+	}
+
+	return &ParquetManager{
+		schema:     schema,
+		config:     config,
+		memoryPool: memory.NewGoAllocator(),
+		basePath:   basePath,
+		stats: &parquet.WriteStats{
+			RowsWritten:      0,
+			BytesWritten:     0,
+			WriteDuration:    0,
+			CompressionRatio: 1.0,
+			MemoryUsage:      0,
+		},
+	}, nil
+}
+
+// StoreData stores data as Parquet files on disk
+func (fm *ParquetManager) StoreData(data [][]interface{}) error {
+	if fm.closed {
+		return fmt.Errorf("parquet manager is closed")
+	}
+
+	if len(data) == 0 {
+		return nil
+	}
+
+	startTime := time.Now()
+
+	// Validate data against schema
+	schemaManager := parquet.NewSchemaManager(fm.config)
+	if err := schemaManager.ValidateData(data, fm.schema); err != nil {
+		return fmt.Errorf("data validation failed: %w", err)
+	}
+
+	// Convert data to Arrow record
+	arrays, err := fm.convertDataToArrays(data)
+	if err != nil {
+		return fmt.Errorf("failed to convert data to arrays: %w", err)
+	}
+
+	record := array.NewRecord(fm.schema, arrays, int64(len(data)))
+	defer record.Release()
+
+	// Ensure we have an active file
+	if err := fm.ensureActiveFile(); err != nil {
+		return fmt.Errorf("failed to ensure active file: %w", err)
+	}
+
+	// Write the record to the current file
+	if err := fm.currentFile.Writer.Write(record); err != nil {
+		return fmt.Errorf("failed to write record to Parquet file: %w", err)
+	}
+
+	// Update statistics
+	fm.mu.Lock()
+	fm.currentFile.RowCount += int64(len(data))
+	fm.currentFile.LastWrite = time.Now()
+	fm.stats.RowsWritten += int64(len(data))
+	fm.stats.WriteDuration = time.Since(startTime).Nanoseconds()
+	fm.mu.Unlock()
+
+	// Check if we need to rotate files
+	if err := fm.checkFileRotation(); err != nil {
+		return fmt.Errorf("failed to check file rotation: %w", err)
+	}
+
+	return nil
+}
+
+// ensureActiveFile ensures there's an active Parquet file for writing
+func (fm *ParquetManager) ensureActiveFile() error {
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
+
+	if fm.currentFile != nil {
+		return nil
+	}
+
+	// Generate file path
+	timestamp := time.Now().Format("20060102_150405")
+	filename := fmt.Sprintf("data_%s_%04d.parquet", timestamp, fm.fileCount)
+	filePath := filepath.Join(fm.basePath, filename)
+
+	// Create the file
+	file, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to create Parquet file %s: %w", filePath, err)
+	}
+
+	// Create Parquet writer with compression settings
+	_, err = parquet.CreateWriterProperties(fm.config, fm.schema)
+	if err != nil {
+		file.Close()
+		return fmt.Errorf("failed to create writer properties: %w", err)
+	}
+
+	// For now, use default writer properties
+	// TODO: Apply compression settings from CreateWriterProperties
+	writer, err := pqarrow.NewFileWriter(fm.schema, file, nil, pqarrow.DefaultWriterProps())
+	if err != nil {
+		file.Close()
+		return fmt.Errorf("failed to create Parquet writer: %w", err)
+	}
+
+	// Store compression info for stats
+	fm.stats.CompressionRatio = parquet.GetCompressionRatio(fm.config.Compression)
+
+	fm.currentFile = &ParquetFile{
+		Path:      filePath,
+		Writer:    writer,
+		File:      file,
+		RowCount:  0,
+		FileSize:  0,
+		CreatedAt: time.Now(),
+		LastWrite: time.Now(),
+	}
+
+	fm.fileCount++
+	return nil
+}
+
+// checkFileRotation checks if the current file should be rotated
+func (fm *ParquetManager) checkFileRotation() error {
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
+
+	if fm.currentFile == nil {
+		return nil
+	}
+
+	// Check file size
+	fileInfo, err := fm.currentFile.File.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to get file size: %w", err)
+	}
+
+	fm.currentFile.FileSize = fileInfo.Size()
+
+	// Rotate if file is too large
+	if fm.currentFile.FileSize >= fm.config.MaxFileSize {
+		return fm.rotateFile("size limit reached")
+	}
+
+	// Rotate if timeout reached (only if there's data and we haven't written recently)
+	if fm.currentFile.RowCount > 0 {
+		timeSinceLastWrite := time.Since(fm.currentFile.LastWrite)
+		if timeSinceLastWrite.Seconds() >= float64(fm.config.RotationTimeout) {
+			return fm.rotateFile("timeout reached")
+		}
+	}
+
+	return nil
+}
+
+// rotateFile closes the current file and prepares for a new one
+func (fm *ParquetManager) rotateFile(reason string) error {
+	if fm.currentFile == nil {
+		return nil
+	}
+
+	// Close the Parquet writer (this also closes the underlying file)
+	if err := fm.currentFile.Writer.Close(); err != nil {
+		return fmt.Errorf("failed to close Parquet writer: %w", err)
+	}
+
+	// Update final file size
+	fileInfo, err := os.Stat(fm.currentFile.Path)
+	if err == nil {
+		fm.currentFile.FileSize = fileInfo.Size()
+		fm.stats.BytesWritten += fm.currentFile.FileSize
+	}
+
+	// Log rotation (could be replaced with proper logging)
+	fmt.Printf("Rotated Parquet file %s (reason: %s, rows: %d, size: %d bytes)\n",
+		fm.currentFile.Path, reason, fm.currentFile.RowCount, fm.currentFile.FileSize)
+
+	// Clear current file to force creation of new one
+	fm.currentFile = nil
+
+	return nil
+}
+
+// GetFiles returns information about all Parquet files
+func (fm *ParquetManager) GetFiles() ([]*parquet.FileInfo, error) {
+	fm.mu.RLock()
+	defer fm.mu.RUnlock()
+
+	files, err := filepath.Glob(filepath.Join(fm.basePath, "*.parquet"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to list Parquet files: %w", err)
+	}
+
+	var fileInfos []*parquet.FileInfo
+	for _, filePath := range files {
+		fileInfo, err := os.Stat(filePath)
+		if err != nil {
+			continue // Skip files we can't stat
+		}
+
+		fileInfos = append(fileInfos, &parquet.FileInfo{
+			Path:     filePath,
+			Size:     fileInfo.Size(),
+			Created:  fileInfo.ModTime().Unix(),
+			Modified: fileInfo.ModTime().Unix(),
+			Schema:   fm.schema,
+		})
+	}
+
+	return fileInfos, nil
+}
+
+// GetStats returns writing statistics
+func (fm *ParquetManager) GetStats() *parquet.WriteStats {
+	fm.mu.RLock()
+	defer fm.mu.RUnlock()
+
+	// Create a copy to avoid race conditions
+	stats := *fm.stats
+	return &stats
+}
+
+// GetRowCount returns the total number of rows written
+func (fm *ParquetManager) GetRowCount() int64 {
+	fm.mu.RLock()
+	defer fm.mu.RUnlock()
+	return fm.stats.RowsWritten
+}
+
+// GetMemoryUsage returns current memory usage (minimal for filesystem)
+func (fm *ParquetManager) GetMemoryUsage() int64 {
+	fm.mu.RLock()
+	defer fm.mu.RUnlock()
+	return fm.stats.MemoryUsage
+}
+
+// Close closes the Parquet manager and any open files
+func (fm *ParquetManager) Close() error {
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
+
+	if fm.closed {
+		return nil
+	}
+
+	fm.closed = true
+
+	// Close current file if any
+	if fm.currentFile != nil {
+		if err := fm.rotateFile("manager closing"); err != nil {
+			return fmt.Errorf("failed to close current file: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// convertDataToArrays converts data to Arrow arrays (same as memory implementation)
+func (fm *ParquetManager) convertDataToArrays(data [][]interface{}) ([]arrow.Array, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+
+	if fm.schema == nil {
+		return nil, fmt.Errorf("schema is nil")
+	}
+
+	numCols := len(fm.schema.Fields())
+	arrays := make([]arrow.Array, numCols)
+
+	for colIdx := 0; colIdx < numCols; colIdx++ {
+		field := fm.schema.Field(colIdx)
+
+		array, err := fm.convertColumnToArray(data, colIdx, field)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert column %s: %w", field.Name, err)
+		}
+		arrays[colIdx] = array
+	}
+
+	return arrays, nil
+}
+
+// convertColumnToArray converts a single column to Arrow array
+func (fm *ParquetManager) convertColumnToArray(data [][]interface{}, colIdx int, field arrow.Field) (arrow.Array, error) {
+	numRows := len(data)
+
+	// Create array builder
+	builder := array.NewBuilder(fm.memoryPool, field.Type)
+	defer builder.Release()
+
+	// Convert each value in the column
+	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		if colIdx >= len(data[rowIdx]) {
+			return nil, fmt.Errorf("row %d has insufficient columns", rowIdx)
+		}
+
+		value := data[rowIdx][colIdx]
+		if err := fm.appendValueToBuilder(builder, value, field.Type); err != nil {
+			return nil, fmt.Errorf("failed to append value at row %d: %w", rowIdx, err)
+		}
+	}
+
+	// Build the array
+	array := builder.NewArray()
+	return array, nil
+}
+
+// appendValueToBuilder appends a value to an Arrow array builder
+func (fm *ParquetManager) appendValueToBuilder(builder array.Builder, value interface{}, dataType arrow.DataType) error {
+	if value == nil {
+		builder.AppendNull()
+		return nil
+	}
+
+	switch dataType.(type) {
+	case *arrow.BooleanType:
+		if boolVal, ok := value.(bool); ok {
+			builder.(*array.BooleanBuilder).Append(boolVal)
+		} else {
+			return fmt.Errorf("expected bool, got %T", value)
+		}
+
+	case *arrow.Int32Type:
+		if intVal, ok := fm.convertToInt32(value); ok {
+			builder.(*array.Int32Builder).Append(intVal)
+		} else {
+			return fmt.Errorf("expected int32, got %T", value)
+		}
+
+	case *arrow.Int64Type:
+		if intVal, ok := fm.convertToInt64(value); ok {
+			builder.(*array.Int64Builder).Append(intVal)
+		} else {
+			return fmt.Errorf("expected int64, got %T", value)
+		}
+
+	case *arrow.Float32Type:
+		if floatVal, ok := fm.convertToFloat32(value); ok {
+			builder.(*array.Float32Builder).Append(floatVal)
+		} else {
+			return fmt.Errorf("expected float32, got %T", value)
+		}
+
+	case *arrow.Float64Type:
+		if floatVal, ok := fm.convertToFloat64(value); ok {
+			builder.(*array.Float64Builder).Append(floatVal)
+		} else {
+			return fmt.Errorf("expected float64, got %T", value)
+		}
+
+	case *arrow.StringType:
+		if strVal, ok := value.(string); ok {
+			builder.(*array.StringBuilder).Append(strVal)
+		} else {
+			return fmt.Errorf("expected string, got %T", value)
+		}
+
+	default:
+		return fmt.Errorf("unsupported data type: %T", dataType)
+	}
+
+	return nil
+}
+
+// Type conversion helpers (same as memory implementation)
+func (fm *ParquetManager) convertToInt32(value interface{}) (int32, bool) {
+	switch v := value.(type) {
+	case int32:
+		return v, true
+	case int:
+		return int32(v), true
+	case int64:
+		return int32(v), true
+	case float32:
+		return int32(v), true
+	case float64:
+		return int32(v), true
+	default:
+		return 0, false
+	}
+}
+
+func (fm *ParquetManager) convertToInt64(value interface{}) (int64, bool) {
+	switch v := value.(type) {
+	case int64:
+		return v, true
+	case int:
+		return int64(v), true
+	case int32:
+		return int64(v), true
+	case float32:
+		return int64(v), true
+	case float64:
+		return int64(v), true
+	default:
+		return 0, false
+	}
+}
+
+func (fm *ParquetManager) convertToFloat32(value interface{}) (float32, bool) {
+	switch v := value.(type) {
+	case float32:
+		return v, true
+	case float64:
+		return float32(v), true
+	case int:
+		return float32(v), true
+	case int32:
+		return float32(v), true
+	case int64:
+		return float32(v), true
+	default:
+		return 0, false
+	}
+}
+
+func (fm *ParquetManager) convertToFloat64(value interface{}) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	default:
+		return 0, false
+	}
+}
