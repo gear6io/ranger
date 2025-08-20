@@ -31,6 +31,7 @@ help: ## Show this help message
 	@echo "  make install-formatting-tools # Install formatting tools"
 	@echo "  make install-hooks       # Install git pre-commit and commit-msg hooks"
 	@echo "  make install-pre-commit-framework # Install pre-commit framework hooks"
+	@echo "  make uninstall-pre-commit-framework # Uninstall pre-commit framework hooks"
 	@echo "  make pre-commit          # Run pre-commit checks"
 	@echo "  make release-build       # Build release binaries"
 	@echo "  make release-clean       # Clean release binaries"
@@ -244,16 +245,15 @@ install-pre-commit-framework: ## Install pre-commit framework hooks
 	@pre-commit install
 	@echo "✅ Pre-commit framework hooks installed"
 
-.PHONY: install-formatting-tools
-install-formatting-tools: ## Install all formatting tools
-	@echo "Installing formatting tools..."
-	@echo "📦 Installing Go formatting tools..."
-	@go install golang.org/x/tools/cmd/goimports@latest
-	@echo "📦 Installing Python formatting tools..."
-	@pip install black autopep8 isort yapf
-	@echo "📦 Installing JavaScript/TypeScript formatting tools..."
-	@npm install -g prettier markdownlint-cli
-	@echo "✅ All formatting tools installed"
+.PHONY: uninstall-pre-commit-framework
+uninstall-pre-commit-framework: ## Uninstall pre-commit framework hooks
+	@echo "Uninstalling pre-commit framework hooks..."
+	@if command -v pre-commit &> /dev/null; then \
+		pre-commit uninstall; \
+		echo "✅ Pre-commit framework hooks uninstalled"; \
+	else \
+		echo "⚠️  pre-commit framework not found"; \
+	fi
 
 .PHONY: pre-commit
 pre-commit: fmt-all vet mod-tidy mod-verify deps ## Run pre-commit checks
