@@ -1,10 +1,14 @@
 package paths
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
 )
+
+// ComponentType defines the path manager component type identifier
+const ComponentType = "paths"
 
 // Manager implements the PathManager interface
 type Manager struct {
@@ -156,5 +160,17 @@ func (pm *Manager) EnsureDirectoryStructure() error {
 func ensureDir(path string) error {
 	// This will be implemented by the filesystem interface
 	// For now, we'll return nil and let the filesystem handle it
+	return nil
+}
+
+// GetType returns the component type identifier
+func (pm *Manager) GetType() string {
+	return ComponentType
+}
+
+// Shutdown gracefully shuts down the path manager
+func (pm *Manager) Shutdown(ctx context.Context) error {
+	// Path manager doesn't have any resources to clean up
+	// Just log the shutdown for consistency
 	return nil
 }

@@ -12,8 +12,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/TFMV/icebox/server/catalog/shared"
+	catalogshared "github.com/TFMV/icebox/server/catalog/shared"
 	"github.com/TFMV/icebox/server/config"
+	"github.com/TFMV/icebox/server/paths"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/catalog"
 	icebergio "github.com/apache/iceberg-go/io"
@@ -21,18 +22,21 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// ComponentType defines the SQLite catalog component type identifier
+const ComponentType = "catalog"
+
 // Catalog implements the iceberg-go catalog.Catalog interface using SQLite
 type Catalog struct {
 	name        string
 	dbPath      string
 	db          *sql.DB
 	fileIO      icebergio.IO
-	pathManager shared.PathManager
+	pathManager paths.PathManager
 	config      *config.Config
 }
 
 // NewCatalog creates a new SQLite-based catalog
-func NewCatalog(cfg *config.Config, pathManager shared.PathManager) (*Catalog, error) {
+func NewCatalog(cfg *config.Config, pathManager paths.PathManager) (*Catalog, error) {
 	// Validate catalog type
 	catalogType := cfg.GetCatalogType()
 	if catalogType != "sqlite" {
@@ -42,7 +46,7 @@ func NewCatalog(cfg *config.Config, pathManager shared.PathManager) (*Catalog, e
 	// Get catalog URI from path manager
 	catalogURI := pathManager.GetCatalogURI("sqlite")
 	if catalogURI == "" {
-		return nil, shared.NewCatalogValidation("catalog_uri", "catalog URI is required for SQLite catalog")
+		return nil, catalogshared.NewCatalogValidation("catalog_uri", "catalog URI is required for SQLite catalog")
 	}
 
 	// Ensure the directory exists
@@ -62,7 +66,7 @@ func NewCatalog(cfg *config.Config, pathManager shared.PathManager) (*Catalog, e
 }
 
 // NewCatalogWithIO creates a new SQLite-based catalog with custom file IO
-func NewCatalogWithIO(name, dbPath string, db *sql.DB, fileIO icebergio.IO, pathManager shared.PathManager, cfg *config.Config) (*Catalog, error) {
+func NewCatalogWithIO(name, dbPath string, db *sql.DB, fileIO icebergio.IO, pathManager paths.PathManager, cfg *config.Config) (*Catalog, error) {
 	cat := &Catalog{
 		name:        name,
 		dbPath:      dbPath,
@@ -95,6 +99,24 @@ func (c *Catalog) Close() error {
 	if c.db != nil {
 		return c.db.Close()
 	}
+	return nil
+}
+
+// GetType returns the component type identifier
+func (c *Catalog) GetType() string {
+	return ComponentType
+}
+
+// Shutdown gracefully shuts down the SQLite catalog
+func (c *Catalog) Shutdown(ctx context.Context) error {
+	log.Printf("Shutting down SQLite catalog")
+
+	// Close catalog
+	if err := c.Close(); err != nil {
+		return fmt.Errorf("failed to close SQLite catalog: %w", err)
+	}
+
+	log.Printf("SQLite catalog shut down successfully")
 	return nil
 }
 
@@ -135,7 +157,7 @@ func (c *Catalog) initializeDatabase() error {
 // CreateTable creates a new table in the catalog
 func (c *Catalog) CreateTable(ctx context.Context, identifier table.Identifier, schema *iceberg.Schema, opts ...catalog.CreateTableOpt) (*table.Table, error) {
 	if len(identifier) == 0 {
-		return nil, shared.NewCatalogValidation("table_identifier", "table identifier cannot be empty")
+		return nil, catalogshared.NewCatalogValidation("table_identifier", "table identifier cannot be empty")
 	}
 
 	namespace := catalog.NamespaceFromIdent(identifier)
@@ -286,7 +308,7 @@ func (c *Catalog) LoadTable(ctx context.Context, identifier table.Identifier, pr
 	}
 
 	if !metadataLocation.Valid {
-		return nil, shared.NewCatalogValidation("table_metadata_location", "table metadata location is null")
+		return nil, catalogshared.NewCatalogValidation("table_metadata_location", "table metadata location is null")
 	}
 
 	// Load table using iceberg-go APIs

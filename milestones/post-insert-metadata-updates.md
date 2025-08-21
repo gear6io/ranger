@@ -429,12 +429,31 @@ The existing production schema already supports this implementation:
 - **No schema changes**: Only data changes, not structural changes
 - **Table schema dependent**: Event filtering based on actual table structure
 
+### **CDC Architecture (Based on sqlite-cdc)**
+- **Registry Integration**: CDC setup becomes part of Registry's own setup
+- **Trigger-Based Capture**: Automatic triggers on INSERT/UPDATE/DELETE operations
+- **Change Log Table**: `__cdc_log` table stores all changes with before/after images
+- **Immediate Cleanup**: Logs deleted immediately after successful processing (no TTL needed)
+- **ACID Guarantees**: Cleanup happens in same transaction as processing
+- **Ordered Processing**: Changes processed in strict ID order (ORDER BY id ASC)
+- **Batch Processing**: Configurable batch sizes (default: 256 changes per batch)
+- **No Data Loss**: Failed batches are not cleaned up, allowing retry
+- **Crash Recovery**: Unprocessed logs preserved if Astha crashes
+
 ### **Component Interface Requirements**
 - **Subscriber[T] interface**: All components must implement this interface
 - **Generic type events**: Event[T] where T matches table schema type
 - **Three required methods**: OnEvent(), OnHealth(), OnRefresh()
 - **Type safety**: Compile-time type checking prevents runtime errors
 - **No marshaling**: Components receive typed data directly
+
+### **Registry CDC Integration**
+- **CDC Table**: `__cdc_log` with columns: id, timestamp, tablename, operation, before, after, created_at
+- **Automatic Triggers**: Created for each monitored table (INSERT, UPDATE, DELETE)
+- **Updated_at Triggers**: Automatically update `updated_at` column on any table modification
+- **JSON Storage**: Before/after images stored as JSON objects for complete change tracking
+- **No TTL Required**: Immediate cleanup after successful processing eliminates need for time-based retention
+- **Integrated Setup**: CDC setup happens during Registry initialization, not as separate service
 
 ### **Circuit Breaker Implementation**
 - **Health monitoring**: Detect unresponsive components
@@ -443,6 +462,17 @@ The existing production schema already supports this implementation:
 - **Direct refresh**: Tell components to refresh from Registry if timeout reached
 - **Self-reinitialization**: Astha reinitializes itself after recovery
 
+### **Astha CDC Consumer (Core Functionality)**
+- **Change Detection**: Polls `__cdc_log` table for new changes at configurable intervals
+- **Batch Processing**: Collects changes up to configurable batch size (default: 256)
+- **Ordered Processing**: Processes changes in strict ID order (ORDER BY id ASC)
+- **Event Conversion**: Converts CDC changes to Astha events with proper typing
+- **Immediate Cleanup**: Deletes processed logs immediately after successful processing
+- **ACID Transactions**: Cleanup happens in same transaction as event processing
+- **Error Handling**: Failed batches are not cleaned up, allowing automatic retry
+- **Crash Recovery**: Unprocessed logs preserved for recovery after restart
+- **No External Dependencies**: Pure Go implementation integrated into Astha core
+
 ### **Event Routing Logic**
 - **Hardcoded subscriptions**: Component-table mappings are static
 - **Table-based routing**: Route events based on affected table
@@ -450,12 +480,27 @@ The existing production schema already supports this implementation:
 - **Event ordering**: Maintain event order within table scope
 - **Delivery guarantees**: Ensure events reach all subscribed components
 
+### **CDC Log Processing Flow**
+- **Change Capture**: SQLite triggers automatically populate `__cdc_log` table
+- **Change Detection**: Astha polls log table at configurable intervals (e.g., 100ms)
+- **Batch Collection**: Collects changes up to batch size limit (default: 256)
+- **Event Processing**: Converts CDC changes to typed Astha events
+- **Component Delivery**: Routes events to subscribed components
+- **Immediate Cleanup**: Deletes processed logs after successful delivery
+- **Retry Logic**: Failed deliveries preserve logs for retry attempts
+- **Order Preservation**: Maintains strict chronological order of changes
+
 ### **Performance Considerations**
 - **No event persistence**: Events are fire-and-forget
 - **Direct type access**: No JSON parsing overhead in components
 - **Efficient routing**: O(1) lookup for component subscriptions
 - **Minimal memory footprint**: Events processed immediately, not stored
 - **Concurrent processing**: Handle multiple events simultaneously
+- **Batch optimization**: Process up to 256 changes per batch for efficiency
+- **Immediate cleanup**: CDC logs don't accumulate, keeping table size small
+- **Ordered processing**: Sequential processing eliminates need for complex ordering logic
+- **Configurable polling**: Adjustable polling intervals for performance tuning
+- **Memory efficiency**: Process and discard changes immediately, no long-term storage
 
 ### **Error Handling & Recovery**
 - **Component failures**: Detect and handle individual component failures
@@ -463,6 +508,11 @@ The existing production schema already supports this implementation:
 - **Circuit breaker**: Prevent cascade failures
 - **State recovery**: Components can refresh from Registry
 - **Astha recovery**: Self-healing mechanisms for scheduler
+- **CDC processing failures**: Failed batches are not cleaned up, allowing retry
+- **Log corruption handling**: Malformed CDC log entries are logged and skipped
+- **Database connection failures**: Automatic reconnection with exponential backoff
+- **Partial processing recovery**: Failed event conversions don't block entire batch
+- **Crash recovery**: Unprocessed CDC logs preserved for recovery after restart
 
 ### **Integration Points**
 - **Registry watcher**: Subscribe to SQLite table changes
@@ -470,6 +520,11 @@ The existing production schema already supports this implementation:
 - **Storage manager**: Coordinate with data insertion flow
 - **Path manager**: Use existing path resolution logic
 - **Existing metadata**: Leverage current Registry infrastructure
+- **Registry CDC setup**: CDC triggers and log table created during Registry initialization
+- **Storage manager integration**: Post-insert metadata updates trigger CDC events automatically
+- **Astha core integration**: CDC consumer becomes part of Astha's main event processing loop
+- **Component subscription**: Hardcoded table subscriptions determine event routing
+- **Event store integration**: CDC events flow directly into Astha's event distribution system
 
 ## 🎯 **Architectural Decisions & Future Plans**
 
@@ -522,6 +577,376 @@ Subscribe        Health Monitor   Metadata Orchestrator
 4. **Future**: Snapshotter, Compaction Service, and Metadata Orchestrator
 
 **Note**: This milestone focuses on foundational metadata updates. Advanced features like intelligent snapshots and compaction will be separate, more sophisticated components.
+
+## ⚙️ **Configuration & Implementation Details**
+
+### **Registry CDC Configuration**
+```go
+// Registry CDC setup options
+type RegistryCDCOptions struct {
+    LogTableName    string        // Default: "__cdc_log"
+    BatchSize       int           // Default: 256
+    PollInterval    time.Duration // Default: 100ms
+    EnableBlobs     bool          // Default: false (performance)
+    SubsecondTime   bool          // Default: true (precision)
+}
+
+// Default configuration
+var DefaultRegistryCDCOptions = RegistryCDCOptions{
+    LogTableName:    "__cdc_log",
+    BatchSize:       256,
+    PollInterval:    100 * time.Millisecond,
+    EnableBlobs:     false,
+    SubsecondTime:   true,
+}
+```
+
+### **Monitored Tables Configuration**
+```go
+// Tables to monitor with CDC (hardcoded for Phase 1)
+var MonitoredTables = []string{
+    "tables",           // Table-level statistics
+    "table_files",      // File tracking information
+    "file_statistics",  // File-level statistics
+    "table_metadata",   // Schema and engine info
+}
+
+// Component subscription mappings
+var ComponentSubscriptions = map[string][]string{
+    "iceberg_updater": {"tables", "table_files", "table_metadata"},
+    "compactor":       {"tables", "table_files", "file_statistics"},
+    "snapshotter":     {"tables", "table_files", "file_statistics", "table_metadata"},
+    "metadata_orchestrator": {"tables", "table_metadata"},
+}
+```
+
+### **Performance Tuning Parameters**
+```go
+// Performance configuration for CDC processing
+type CDCPerformanceConfig struct {
+    // Batch processing
+    MaxBatchSize        int           // Maximum changes per batch
+    MinBatchSize        int           // Minimum changes to trigger processing
+    
+    // Polling configuration
+    PollInterval        time.Duration // How often to check for changes
+    MaxPollDelay        time.Duration // Maximum delay between polls
+    
+    // Memory management
+    MaxMemoryUsage      int64         // Maximum memory for CDC processing
+    GarbageCollection   time.Duration // How often to run GC
+    
+    // Error handling
+    MaxRetryAttempts    int           // Maximum retry attempts for failed batches
+    RetryBackoff        time.Duration // Backoff delay between retries
+}
+
+// Default performance settings
+var DefaultCDCPerformanceConfig = CDCPerformanceConfig{
+    MaxBatchSize:     256,
+    MinBatchSize:     1,
+    PollInterval:     100 * time.Millisecond,
+    MaxPollDelay:     1 * time.Second,
+    MaxMemoryUsage:   100 * 1024 * 1024, // 100MB
+    GarbageCollection: 5 * time.Minute,
+    MaxRetryAttempts: 3,
+    RetryBackoff:     1 * time.Second,
+}
+```
+
+### **Error Handling & Logging**
+```go
+// CDC error types
+type CDCError struct {
+    Type        string    `json:"type"`
+    Message     string    `json:"message"`
+    TableName   string    `json:"table_name"`
+    Operation   string    `json:"operation"`
+    Timestamp   time.Time `json:"timestamp"`
+    RetryCount  int       `json:"retry_count"`
+}
+
+// Error handling strategies
+const (
+    ErrorTypeProcessingFailed = "processing_failed"
+    ErrorTypeConversionFailed = "conversion_failed"
+    ErrorTypeDeliveryFailed   = "delivery_failed"
+    ErrorTypeDatabaseError     = "database_error"
+    ErrorTypeCorruption        = "data_corruption"
+)
+
+// Logging levels for CDC operations
+const (
+    LogLevelCDCInfo     = "info"      // General CDC information
+    LogLevelCDCWarning  = "warning"   // Non-critical issues
+    LogLevelCDCError    = "error"     // Processing failures
+    LogLevelCDCDebug    = "debug"     // Detailed processing info
+    LogLevelCDCTrace    = "trace"     // Full change details
+)
+```
+
+### **Monitoring & Metrics**
+```go
+// CDC metrics for monitoring
+type CDCMetrics struct {
+    // Processing metrics
+    ChangesProcessed    int64         // Total changes processed
+    ChangesFailed       int64         // Total changes that failed
+    ProcessingLatency   time.Duration // Average processing time
+    
+    // Batch metrics
+    BatchesProcessed    int64         // Total batches processed
+    AverageBatchSize    float64       // Average batch size
+    MaxBatchSize        int64         // Largest batch processed
+    
+    // Cleanup metrics
+    LogsCleaned         int64         // Total logs cleaned up
+    CleanupLatency      time.Duration // Average cleanup time
+    
+    // Error metrics
+    RetryCount          int64         // Total retry attempts
+    ErrorRate           float64       // Error rate percentage
+    LastErrorTime       time.Time     // Timestamp of last error
+}
+
+// Metrics collection interface
+type MetricsCollector interface {
+    RecordChangeProcessed(tableName string, operation string, duration time.Duration)
+    RecordChangeFailed(tableName string, operation string, errorType string)
+    RecordBatchProcessed(batchSize int, duration time.Duration)
+    RecordLogCleanup(count int, duration time.Duration)
+    GetMetrics() CDCMetrics
+}
+```
+
+## 🔧 **Technical Implementation Details**
+
+### **Registry CDC Table Schema**
+```sql
+-- CDC log table for capturing all table changes
+CREATE TABLE __cdc_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,                    -- Change timestamp with subsecond precision
+    tablename TEXT NOT NULL,                    -- Name of the table that changed
+    operation TEXT NOT NULL,                    -- INSERT, UPDATE, DELETE
+    before TEXT,                                -- JSON of OLD values (UPDATE/DELETE)
+    after TEXT,                                 -- JSON of NEW values (INSERT/UPDATE)
+    created_at TEXT NOT NULL                    -- When this log entry was created
+);
+
+-- Indexes for efficient CDC processing
+CREATE INDEX idx_cdc_log_timestamp ON __cdc_log(timestamp);
+CREATE INDEX idx_cdc_log_tablename ON __cdc_log(tablename);
+CREATE INDEX idx_cdc_log_operation ON __cdc_log(operation);
+CREATE INDEX idx_cdc_log_created ON __cdc_log(created_at);
+```
+
+### **CDC Trigger Examples**
+```sql
+-- Example: CDC triggers for 'tables' table
+CREATE TRIGGER IF NOT EXISTS tables__cdc_insert 
+AFTER INSERT ON tables 
+BEGIN
+    INSERT INTO __cdc_log (timestamp, tablename, operation, before, after, created_at) 
+    VALUES (datetime('now', 'subsec'), 'tables', 'INSERT', NULL, 
+            json_object('id', NEW.id, 'name', NEW.name, 'database_id', NEW.database_id), 
+            datetime('now'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS tables__cdc_update 
+AFTER UPDATE ON tables 
+BEGIN
+    INSERT INTO __cdc_log (timestamp, tablename, operation, before, after, created_at) 
+    VALUES (datetime('now', 'subsec'), 'tables', 'UPDATE', 
+            json_object('id', OLD.id, 'name', OLD.name, 'database_id', OLD.database_id), 
+            json_object('id', NEW.id, 'name', NEW.name, 'database_id', NEW.database_id), 
+            datetime('now'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS tables__cdc_delete 
+AFTER DELETE ON tables 
+BEGIN
+    INSERT INTO __cdc_log (timestamp, tablename, operation, before, after, created_at) 
+    VALUES (datetime('now', 'subsec'), 'tables', 'DELETE', 
+            json_object('id', OLD.id, 'name', OLD.name, 'database_id', OLD.database_id), 
+            NULL, datetime('now'));
+END;
+
+-- Updated_at trigger for automatic timestamp updates
+CREATE TRIGGER IF NOT EXISTS tables__updated_at 
+AFTER UPDATE ON tables 
+BEGIN
+    UPDATE tables SET updated_at = datetime('now') WHERE id = NEW.id;
+END;
+```
+
+### **Astha CDC Consumer Implementation**
+```go
+// server/astha/cdc_consumer.go
+type CDCConsumer struct {
+    db          *sql.DB
+    logTable    string
+    batchSize   int                    // Default: 256
+    pollInterval time.Duration         // Default: 100ms
+    logger      zerolog.Logger
+    eventStore  EventStore
+}
+
+// Main processing loop
+func (c *CDCConsumer) Start(ctx context.Context) error {
+    ticker := time.NewTicker(c.pollInterval)
+    defer ticker.Stop()
+    
+    for {
+        select {
+        case <-ctx.Done():
+            return nil
+        case <-ticker.C:
+            if err := c.processChanges(ctx); err != nil {
+                c.logger.Error().Err(err).Msg("Failed to process CDC changes")
+            }
+        }
+    }
+}
+
+// Process changes with immediate cleanup
+func (c *CDCConsumer) processChanges(ctx context.Context) error {
+    for {
+        // 1. Get unprocessed changes (ordered by ID, limited by batch size)
+        changes, err := c.getUnprocessedChanges(ctx)
+        if err != nil {
+            return fmt.Errorf("failed to get unprocessed changes: %w", err)
+        }
+        
+        if len(changes) == 0 {
+            return nil // No changes to process
+        }
+        
+        // 2. Process the batch
+        if err := c.processBatch(ctx, changes); err != nil {
+            return fmt.Errorf("failed to process batch: %w", err)
+        }
+        
+        // 3. ONLY if processing succeeds, delete processed logs
+        if err := c.deleteProcessedLogs(ctx, changes); err != nil {
+            return fmt.Errorf("failed to delete processed logs: %w", err)
+        }
+    }
+}
+
+// Get unprocessed changes
+func (c *CDCConsumer) getUnprocessedChanges(ctx context.Context) ([]CDCLogEntry, error) {
+    query := fmt.Sprintf(`
+        SELECT id, timestamp, tablename, operation, before, after, created_at 
+        FROM %s 
+        ORDER BY id ASC 
+        LIMIT ?
+    `, c.logTable)
+    
+    rows, err := c.db.QueryContext(ctx, query, c.batchSize)
+    if err != nil {
+        return nil, fmt.Errorf("failed to query CDC log: %w", err)
+    }
+    defer rows.Close()
+    
+    var changes []CDCLogEntry
+    for rows.Next() {
+        var change CDCLogEntry
+        if err := rows.Scan(&change.ID, &change.Timestamp, &change.TableName, 
+                           &change.Operation, &change.Before, &change.After, &change.CreatedAt); err != nil {
+            return nil, fmt.Errorf("failed to scan CDC log entry: %w", err)
+        }
+        changes = append(changes, change)
+    }
+    
+    return changes, nil
+}
+
+// Delete processed logs (immediate cleanup)
+func (c *CDCConsumer) deleteProcessedLogs(ctx context.Context, changes []CDCLogEntry) error {
+    if len(changes) == 0 {
+        return nil
+    }
+    
+    // Get the highest ID we processed
+    maxID := changes[len(changes)-1].ID
+    
+    tx, err := c.db.BeginTx(ctx, nil)
+    if err != nil {
+        return fmt.Errorf("failed to begin transaction: %w", err)
+    }
+    defer tx.Rollback()
+    
+    // Delete logs up to the highest processed ID
+    deleteQuery := fmt.Sprintf(`DELETE FROM %s WHERE id <= ?`, c.logTable)
+    _, err = tx.ExecContext(ctx, deleteQuery, maxID)
+    if err != nil {
+        return fmt.Errorf("failed to delete processed logs: %w", err)
+    }
+    
+    if err = tx.Commit(); err != nil {
+        return fmt.Errorf("failed to commit deletion: %w", err)
+    }
+    
+    c.logger.Debug().Int64("max_id", maxID).Int("deleted_count", len(changes)).
+        Msg("Deleted processed CDC logs")
+    
+    return nil
+}
+```
+
+### **Event Conversion Logic**
+```go
+// Convert CDC changes to Astha events
+func (c *CDCConsumer) convertChangeToEvent(change CDCLogEntry) (Event[any], error) {
+    var event Event[any]
+    
+    // Parse timestamp
+    timestamp, err := time.Parse("2006-01-02 15:04:05.999999999", change.Timestamp)
+    if err != nil {
+        return Event[any]{}, fmt.Errorf("failed to parse timestamp: %w", err)
+    }
+    
+    // Parse table-specific data based on operation
+    switch change.TableName {
+    case "tables":
+        event = c.convertTableChange(change, timestamp)
+    case "table_files":
+        event = c.convertTableFileChange(change, timestamp)
+    case "file_statistics":
+        event = c.convertFileStatisticsChange(change, timestamp)
+    default:
+        return Event[any]{}, fmt.Errorf("unknown table: %s", change.TableName)
+    }
+    
+    return event, nil
+}
+
+// Convert table change to event
+func (c *CDCConsumer) convertTableChange(change CDCLogEntry, timestamp time.Time) Event[any] {
+    var data TableStats
+    
+    switch change.Operation {
+    case "INSERT", "UPDATE":
+        // Parse 'after' JSON to get current table stats
+        if err := json.Unmarshal([]byte(change.After), &data); err != nil {
+            c.logger.Error().Err(err).Msg("Failed to parse table change data")
+        }
+    case "DELETE":
+        // Parse 'before' JSON to get deleted table stats
+        if err := json.Unmarshal([]byte(change.Before), &data); err != nil {
+            c.logger.Error().Err(err).Msg("Failed to parse table change data")
+        }
+    }
+    
+    return Event[any]{
+        Table:     "tables",
+        Operation: string(change.Operation),
+        Data:      data,
+        Timestamp: timestamp,
+    }
+}
+```
 
 ## 🔧 **Component Implementation Examples**
 

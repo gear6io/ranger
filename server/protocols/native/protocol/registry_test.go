@@ -27,7 +27,7 @@ func (m *MockSignal) Size() int {
 	return len(m.data)
 }
 
-func (m *MockSignal) Register(registry *Registry, info *SignalInfo) error {
+func (m *MockSignal) Register(registry *Registry, info *SignalFactory) error {
 	return nil
 }
 

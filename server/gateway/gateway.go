@@ -13,6 +13,9 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// ComponentType defines the gateway component type identifier
+const ComponentType = "gateway"
+
 // Gateway manages the lifecycle of all protocol servers
 type Gateway struct {
 	queryEngine  *query.Engine
@@ -208,6 +211,24 @@ func (g *Gateway) GetStatus() map[string]interface{} {
 // GetQueryEngine returns the shared QueryEngine instance
 func (g *Gateway) GetQueryEngine() *query.Engine {
 	return g.queryEngine
+}
+
+// GetType returns the component type identifier
+func (g *Gateway) GetType() string {
+	return ComponentType
+}
+
+// Shutdown gracefully shuts down the gateway
+func (g *Gateway) Shutdown(ctx context.Context) error {
+	g.logger.Info().Msg("Shutting down gateway")
+
+	// Stop gateway
+	if err := g.Stop(); err != nil {
+		return fmt.Errorf("failed to stop gateway: %w", err)
+	}
+
+	g.logger.Info().Msg("Gateway shut down successfully")
+	return nil
 }
 
 // Helper methods to check server enabled states

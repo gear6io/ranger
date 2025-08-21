@@ -7,49 +7,115 @@ import (
 	"github.com/TFMV/icebox/server/catalog"
 	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/gateway"
+	"github.com/TFMV/icebox/server/metadata"
+	"github.com/TFMV/icebox/server/paths"
 	"github.com/TFMV/icebox/server/query"
+	"github.com/TFMV/icebox/server/shared"
 	"github.com/TFMV/icebox/server/storage"
 	"github.com/rs/zerolog"
 )
 
+// InitFunction defines the function type for initializing components
+type InitFunction func(loader LoaderInterface) (shared.Component, error)
+
+// LoaderInterface defines the interface that components can use to access other components
+type LoaderInterface interface {
+	GetStorage() *storage.Manager
+	GetCatalog() catalog.CatalogInterface
+	GetQueryEngine() *query.Engine
+	GetGateway() *gateway.Gateway
+	GetPathManager() paths.PathManager
+	GetMetadataManager() metadata.MetadataManagerInterface
+	GetConfig() *config.Config
+	GetLogger() zerolog.Logger
+}
+
 // Loader initializes and manages all core components
 type Loader struct {
-	config      *config.Config
-	catalog     catalog.CatalogInterface
-	queryEngine *query.Engine
-	gateway     *gateway.Gateway
-	storage     *storage.Manager
-	logger      zerolog.Logger
+	config *config.Config
+	logger zerolog.Logger
+
+	// Component registry for the new initialization system
+	initFunctions []InitFunction
+	components    map[string]shared.Component
+	initOrder     []string // Store initialization order for shutdown
 }
 
 // NewLoader creates a new Loader instance
 func NewLoader(cfg *config.Config, logger zerolog.Logger) (*Loader, error) {
-	// Initialize storage manager based on configuration
-	storageManager, err := storage.NewManager(cfg, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create storage manager: %w", err)
+	loader := &Loader{
+		config:        cfg,
+		logger:        logger.With().Str("component", "loader").Logger(),
+		initFunctions: make([]InitFunction, 0),
+		components:    make(map[string]shared.Component),
+		initOrder:     make([]string, 0),
 	}
 
-	// Initialize QueryEngine with storage manager (which provides catalog)
-	queryEngine, err := query.NewEngine(cfg, storageManager, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create query engine: %w", err)
+	// Register components in initialization order
+	loader.registerComponents()
+
+	// Initialize all components
+	if err := loader.Initialize(); err != nil {
+		return nil, fmt.Errorf("failed to initialize components: %w", err)
 	}
 
-	// Initialize Gateway with QueryEngine
-	gatewayInstance, err := gateway.NewGateway(queryEngine, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create gateway: %w", err)
+	return loader, nil
+}
+
+// RegisterComponent registers a component initialization function with its name
+func (l *Loader) RegisterComponent(name string, initFunc InitFunction) {
+	l.initFunctions = append(l.initFunctions, initFunc)
+	l.initOrder = append(l.initOrder, name)
+}
+
+// registerComponents registers all components in the correct initialization order
+func (l *Loader) registerComponents() {
+	// This order determines initialization sequence
+	l.RegisterComponent("paths", func(loader LoaderInterface) (shared.Component, error) {
+		return paths.NewManager(loader.GetConfig().GetStoragePath()), nil
+	})
+
+	l.RegisterComponent("catalog", func(loader LoaderInterface) (shared.Component, error) {
+		return catalog.NewCatalog(loader.GetConfig(), loader.GetPathManager())
+	})
+
+	l.RegisterComponent("metadata", func(loader LoaderInterface) (shared.Component, error) {
+		return metadata.NewMetadataManager(loader.GetCatalog(),
+			loader.GetPathManager().GetInternalMetadataDBPath(),
+			loader.GetConfig().GetStoragePath())
+	})
+
+	l.RegisterComponent("storage", func(loader LoaderInterface) (shared.Component, error) {
+		return storage.NewManager(loader.GetConfig(), loader.GetLogger())
+	})
+
+	l.RegisterComponent("query", func(loader LoaderInterface) (shared.Component, error) {
+		return query.NewEngine(loader.GetConfig(), loader.GetStorage(), loader.GetLogger())
+	})
+
+	l.RegisterComponent("gateway", func(loader LoaderInterface) (shared.Component, error) {
+		return gateway.NewGateway(loader.GetQueryEngine(), loader.GetLogger())
+	})
+}
+
+// Initialize initializes all components in registration order
+func (l *Loader) Initialize() error {
+	l.logger.Info().Msg("Initializing components...")
+
+	for i, initFunc := range l.initFunctions {
+		component, err := initFunc(l)
+		if err != nil {
+			return fmt.Errorf("failed to initialize component %d: %w", i, err)
+		}
+
+		// Store component by its type
+		componentType := component.GetType()
+		l.components[componentType] = component
+		l.logger.Info().Str("type", componentType).Msg("Component initialized successfully")
 	}
 
-	return &Loader{
-		config:      cfg,
-		catalog:     storageManager.GetCatalog(), // Get catalog from storage manager
-		queryEngine: queryEngine,
-		gateway:     gatewayInstance,
-		storage:     storageManager,
-		logger:      logger.With().Str("component", "loader").Logger(),
-	}, nil
+	l.logger.Info().Msg("All components initialized successfully")
+	return nil
 }
 
 // Start initializes and starts all components
@@ -57,24 +123,39 @@ func (l *Loader) Start() error {
 	l.logger.Info().Msg("Starting Loader...")
 
 	// Start the Gateway (which manages all servers)
-	if err := l.gateway.Start(l.logger.WithContext(context.Background())); err != nil {
-		return fmt.Errorf("failed to start gateway: %w", err)
+	gateway := l.GetGateway()
+	if gateway != nil {
+		if err := gateway.Start(l.logger.WithContext(context.Background())); err != nil {
+			return fmt.Errorf("failed to start gateway: %w", err)
+		}
 	}
 
 	l.logger.Info().Msg("Loader started successfully")
 	return nil
 }
 
-// Stop gracefully shuts down all components
-func (l *Loader) Stop() error {
-	l.logger.Info().Msg("Stopping Loader...")
+// Shutdown gracefully shuts down all components in reverse initialization order
+func (l *Loader) Shutdown(ctx context.Context) error {
+	l.logger.Info().Msg("Shutting down components...")
 
-	// Stop the Gateway (which will stop all servers)
-	if err := l.gateway.Stop(); err != nil {
-		l.logger.Error().Err(err).Msg("Error stopping gateway")
+	// Shutdown components in reverse order (LIFO - Last In, First Out)
+	for i := len(l.initOrder) - 1; i >= 0; i-- {
+		componentType := l.initOrder[i]
+
+		if component, exists := l.components[componentType]; exists {
+			l.logger.Info().Str("type", componentType).Msg("Shutting down component")
+			if err := component.Shutdown(ctx); err != nil {
+				// Log error but continue with other components
+				l.logger.Error().Err(err).Str("type", componentType).Msg("Component shutdown failed")
+			} else {
+				l.logger.Info().Str("type", componentType).Msg("Component shut down successfully")
+			}
+		} else {
+			l.logger.Warn().Str("type", componentType).Msg("Component not found during shutdown")
+		}
 	}
 
-	l.logger.Info().Msg("Loader stopped successfully")
+	l.logger.Info().Msg("All components shut down")
 	return nil
 }
 
@@ -83,24 +164,59 @@ func (l *Loader) GetConfig() *config.Config {
 	return l.config
 }
 
+// GetLogger returns the logger instance
+func (l *Loader) GetLogger() zerolog.Logger {
+	return l.logger
+}
+
 // GetCatalog returns the catalog instance
 func (l *Loader) GetCatalog() catalog.CatalogInterface {
-	return l.catalog
+	if comp, exists := l.components[storage.ComponentType]; exists {
+		// Catalog comes from storage manager
+		storageManager := comp.(*storage.Manager)
+		return storageManager.GetCatalog()
+	}
+	return nil
 }
 
 // GetQueryEngine returns the QueryEngine instance
 func (l *Loader) GetQueryEngine() *query.Engine {
-	return l.queryEngine
+	if comp, exists := l.components[query.ComponentType]; exists {
+		return comp.(*query.Engine)
+	}
+	return nil
 }
 
 // GetGateway returns the Gateway instance
 func (l *Loader) GetGateway() *gateway.Gateway {
-	return l.gateway
+	if comp, exists := l.components[gateway.ComponentType]; exists {
+		return comp.(*gateway.Gateway)
+	}
+	return nil
 }
 
 // GetStorage returns the storage manager
 func (l *Loader) GetStorage() *storage.Manager {
-	return l.storage
+	if comp, exists := l.components[storage.ComponentType]; exists {
+		return comp.(*storage.Manager)
+	}
+	return nil
+}
+
+// GetPathManager returns the path manager from component registry
+func (l *Loader) GetPathManager() paths.PathManager {
+	if comp, exists := l.components[paths.ComponentType]; exists {
+		return comp.(*paths.Manager)
+	}
+	return nil
+}
+
+// GetMetadataManager returns the metadata manager from component registry
+func (l *Loader) GetMetadataManager() metadata.MetadataManagerInterface {
+	if comp, exists := l.components[metadata.ComponentType]; exists {
+		return comp.(*metadata.MetadataManager)
+	}
+	return nil
 }
 
 // GetStatus returns the status of all components
@@ -109,8 +225,9 @@ func (l *Loader) GetStatus() map[string]interface{} {
 		"config": l.config,
 	}
 
-	if l.gateway != nil {
-		status["gateway"] = l.gateway.GetStatus()
+	gateway := l.GetGateway()
+	if gateway != nil {
+		status["gateway"] = gateway.GetStatus()
 	}
 
 	return status

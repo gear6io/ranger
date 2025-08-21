@@ -6,8 +6,8 @@ import (
 	"iter"
 	"net/url"
 
-	"github.com/TFMV/icebox/server/catalog/shared"
 	"github.com/TFMV/icebox/server/config"
+	"github.com/TFMV/icebox/server/paths"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 	icebergrest "github.com/apache/iceberg-go/catalog/rest"
@@ -15,17 +15,20 @@ import (
 	"github.com/apache/iceberg-go/table"
 )
 
+// ComponentType defines the REST catalog component type identifier
+const ComponentType = "catalog"
+
 // Catalog implements the iceberg-go catalog.Catalog interface using a REST catalog
 type Catalog struct {
 	name        string
 	restCatalog *icebergrest.Catalog
 	fileIO      icebergio.IO
-	pathManager shared.PathManager
+	pathManager paths.PathManager
 	config      *config.Config
 }
 
 // NewCatalog creates a new REST catalog wrapper
-func NewCatalog(cfg *config.Config, pathManager shared.PathManager) (*Catalog, error) {
+func NewCatalog(cfg *config.Config, pathManager paths.PathManager) (*Catalog, error) {
 	// Validate catalog type
 	catalogType := cfg.GetCatalogType()
 	if catalogType != "rest" {
@@ -142,6 +145,17 @@ func (c *Catalog) ListNamespaces(ctx context.Context, parent table.Identifier) (
 
 // Close cleans up any resources used by the catalog
 func (c *Catalog) Close() error {
+	// The iceberg-go REST catalog doesn't have a Close method, so this is a no-op
+	return nil
+}
+
+// GetType returns the component type identifier
+func (c *Catalog) GetType() string {
+	return ComponentType
+}
+
+// Shutdown gracefully shuts down the REST catalog
+func (c *Catalog) Shutdown(ctx context.Context) error {
 	// The iceberg-go REST catalog doesn't have a Close method, so this is a no-op
 	return nil
 }

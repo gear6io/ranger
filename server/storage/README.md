@@ -66,7 +66,7 @@ type FileSystem interface {
 func (m *Manager) InsertData(ctx context.Context, database, tableName string, data [][]interface{}) error {
     // Open streaming writer
     writer, err := engine.OpenTableForWrite(database, tableName)
-    if err != nil {
+if err != nil {
         return err
     }
     defer writer.Close()

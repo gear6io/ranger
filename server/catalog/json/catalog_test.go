@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TFMV/icebox/server/catalog/shared"
 	"github.com/TFMV/icebox/server/config"
+	"github.com/TFMV/icebox/server/paths"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/table"
@@ -45,7 +45,7 @@ func createTestCatalog(t *testing.T) (*Catalog, string) {
 	})
 
 	cfg := createTestConfig(tempDir)
-	pathManager := &shared.MockPathManager{BasePath: tempDir}
+	pathManager := &paths.MockPathManager{BasePath: tempDir}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestNewCatalogMissingConfig(t *testing.T) {
 			},
 		},
 	}
-	pathManager := &shared.MockPathManager{BasePath: tempDir2}
+	pathManager := &paths.MockPathManager{BasePath: tempDir2}
 
 	_, err2 := NewCatalog(cfg, pathManager)
 	assert.Error(t, err2)
@@ -771,7 +771,7 @@ func TestIndexConfigurationSupport(t *testing.T) {
 
 	// Test loading configuration from index
 	cfg := createTestConfig(tempDir)
-	pathManager := &shared.MockPathManager{BasePath: tempDir}
+	pathManager := &paths.MockPathManager{BasePath: tempDir}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	require.NoError(t, err)
@@ -826,7 +826,7 @@ func TestConfigurationValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pathManager := &shared.MockPathManager{BasePath: tempDir}
+			pathManager := &paths.MockPathManager{BasePath: tempDir}
 			_, err := NewCatalog(tt.config, pathManager)
 			if tt.expectError {
 				assert.Error(t, err)
@@ -915,7 +915,7 @@ func TestCorruptedCatalogFile(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := createTestConfig(tempDir)
-	pathManager := &shared.MockPathManager{BasePath: tempDir}
+	pathManager := &paths.MockPathManager{BasePath: tempDir}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	require.NoError(t, err) // Catalog creation should succeed
@@ -1527,7 +1527,7 @@ func TestIndexConfigurationEdgeCases(t *testing.T) {
 		defer os.RemoveAll(tempDir)
 
 		cfg := createTestConfig(tempDir)
-		pathManager := &shared.MockPathManager{BasePath: tempDir}
+		pathManager := &paths.MockPathManager{BasePath: tempDir}
 
 		catalog, err := NewCatalog(cfg, pathManager)
 		require.NoError(t, err)

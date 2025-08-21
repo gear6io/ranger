@@ -11,6 +11,9 @@ import (
 	"github.com/uptrace/bun"
 )
 
+// ComponentType defines the metadata manager component type identifier
+const ComponentType = "metadata"
+
 // MetadataManager coordinates between Iceberg catalog and personal metadata storage
 type MetadataManager struct {
 	iceberg catalog.CatalogInterface
@@ -129,6 +132,24 @@ func (mm *MetadataManager) Close() error {
 	if mm.storage != nil {
 		return mm.storage.Close()
 	}
+	return nil
+}
+
+// GetType returns the component type identifier
+func (mm *MetadataManager) GetType() string {
+	return ComponentType
+}
+
+// Shutdown gracefully shuts down the metadata manager
+func (mm *MetadataManager) Shutdown(ctx context.Context) error {
+	log.Printf("Shutting down metadata manager")
+	
+	// Close metadata manager
+	if err := mm.Close(); err != nil {
+		return fmt.Errorf("failed to close metadata manager: %w", err)
+	}
+	
+	log.Printf("Metadata manager shut down successfully")
 	return nil
 }
 

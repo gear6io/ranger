@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/TFMV/icebox/server/paths"
 	"github.com/TFMV/icebox/server/storage/filesystem"
-	"github.com/TFMV/icebox/server/storage/paths"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

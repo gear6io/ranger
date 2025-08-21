@@ -61,7 +61,7 @@ func (s *TestServer) Start() error {
 // Stop stops the test server
 func (s *TestServer) Stop() error {
 	if s.server != nil {
-		return s.server.Shutdown()
+		return s.server.Shutdown(context.Background())
 	}
 	return nil
 }

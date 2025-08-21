@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TFMV/icebox/server/paths"
 	"github.com/TFMV/icebox/server/storage/parquet"
-	"github.com/TFMV/icebox/server/storage/paths"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"

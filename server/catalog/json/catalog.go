@@ -17,6 +17,7 @@ import (
 	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/catalog/shared"
 	"github.com/TFMV/icebox/server/config"
+	"github.com/TFMV/icebox/server/paths"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/catalog"
 	icebergio "github.com/apache/iceberg-go/io"
@@ -187,13 +188,16 @@ func (v *View) Dialect() string {
 
 // Note: Using shared error package for error handling
 
+// ComponentType defines the catalog component type identifier
+const ComponentType = "catalog"
+
 // Catalog implements the iceberg-go catalog.Catalog interface using JSON file storage
 // This catalog only manages Iceberg catalog and metadata files, not data storage
 type Catalog struct {
 	name        string
 	uri         string
 	fileIO      icebergio.IO
-	pathManager shared.PathManager
+	pathManager paths.PathManager
 	mutex       sync.RWMutex // For concurrent access protection
 	logger      *log.Logger
 	cache       *catalogCache   // Optional caching layer
@@ -354,7 +358,7 @@ func loadIndexConfig() (*IndexConfig, error) {
 }
 
 // NewCatalog creates a new JSON-based catalog with enterprise-grade features
-func NewCatalog(cfg *config.Config, pathManager shared.PathManager) (*Catalog, error) {
+func NewCatalog(cfg *config.Config, pathManager paths.PathManager) (*Catalog, error) {
 	// Validate configuration using the validation function
 	if err := validateJSONConfig(cfg); err != nil {
 		return nil, err
@@ -402,6 +406,26 @@ func isValidURI(uri string) bool {
 // Name returns the catalog name
 func (c *Catalog) Name() string {
 	return c.name
+}
+
+// GetType returns the component type identifier
+func (c *Catalog) GetType() string {
+	return ComponentType
+}
+
+// Shutdown gracefully shuts down the JSON catalog
+
+// Shutdown gracefully shuts down the catalog
+func (c *Catalog) Shutdown(ctx context.Context) error {
+	c.logger.Printf("Shutting down JSON catalog")
+
+	// Close catalog
+	if err := c.Close(); err != nil {
+		return fmt.Errorf("failed to close catalog: %w", err)
+	}
+
+	c.logger.Printf("JSON catalog shut down successfully")
+	return nil
 }
 
 // CatalogType returns the catalog type

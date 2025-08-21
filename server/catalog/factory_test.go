@@ -3,61 +3,16 @@ package catalog
 import (
 	"context"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/TFMV/icebox/server/config"
+	"github.com/TFMV/icebox/server/paths"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/table"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// MockPathManager implements shared.PathManager for testing
-type MockPathManager struct {
-	basePath string
-}
-
-func (m *MockPathManager) GetCatalogURI(catalogType string) string {
-	switch catalogType {
-	case "json":
-		return m.basePath + "/catalog/catalog.json"
-	case "sqlite":
-		return m.basePath + "/catalog/catalog.db"
-	case "rest":
-		return "http://localhost:8181"
-	default:
-		return ""
-	}
-}
-
-func (m *MockPathManager) GetTableMetadataPath(namespace []string, tableName string) string {
-	parts := append(namespace, tableName)
-	return m.basePath + "/metadata/" + strings.Join(parts, "/")
-}
-
-func (m *MockPathManager) GetTableDataPath(namespace []string, tableName string) string {
-	parts := append(namespace, tableName)
-	return m.basePath + "/data/" + strings.Join(parts, "/")
-}
-
-func (m *MockPathManager) GetViewMetadataPath(namespace []string, viewName string) string {
-	parts := append(namespace, viewName)
-	return m.basePath + "/metadata/" + strings.Join(parts, "/")
-}
-
-func (m *MockPathManager) GetNamespacePath(namespace []string) string {
-	return m.basePath + "/data/" + strings.Join(namespace, "/")
-}
-
-func (m *MockPathManager) GetMetadataDir() string {
-	return m.basePath + "/metadata"
-}
-
-func (m *MockPathManager) GetDataDir() string {
-	return m.basePath + "/data"
-}
 
 // Helper function to create test config
 func createTestConfig(catalogType, dataPath string) *config.Config {
@@ -78,7 +33,7 @@ func TestNewCatalogSQLite(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	cfg := createTestConfig("sqlite", tempDir)
-	pathManager := &MockPathManager{basePath: tempDir}
+	pathManager := &paths.MockPathManager{BasePath: tempDir}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
@@ -104,7 +59,7 @@ func TestNewCatalogREST(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	cfg := createTestConfig("rest", tempDir)
-	pathManager := &MockPathManager{basePath: tempDir}
+	pathManager := &paths.MockPathManager{BasePath: tempDir}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
@@ -128,7 +83,7 @@ func TestNewCatalogUnsupportedType(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	cfg := createTestConfig("unsupported", tempDir)
-	pathManager := &MockPathManager{basePath: tempDir}
+	pathManager := &paths.MockPathManager{BasePath: tempDir}
 
 	_, err = NewCatalog(cfg, pathManager)
 	if err == nil {
@@ -144,7 +99,7 @@ func TestNewCatalogUnsupportedType(t *testing.T) {
 func TestNewCatalogWithMissingConfig(t *testing.T) {
 	// Test SQLite catalog with missing config
 	sqliteConfig := createTestConfig("sqlite", "")
-	pathManager := &MockPathManager{basePath: ""}
+	pathManager := &paths.MockPathManager{BasePath: ""}
 
 	_, err := NewCatalog(sqliteConfig, pathManager)
 	if err == nil {
@@ -153,7 +108,7 @@ func TestNewCatalogWithMissingConfig(t *testing.T) {
 
 	// Test REST catalog with missing config
 	restConfig := createTestConfig("rest", "")
-	pathManager2 := &MockPathManager{basePath: ""}
+	pathManager2 := &paths.MockPathManager{BasePath: ""}
 
 	_, err = NewCatalog(restConfig, pathManager2)
 	if err == nil {
@@ -168,7 +123,7 @@ func TestNewCatalogJSON(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	cfg := createTestConfig("json", tempDir)
-	pathManager := &MockPathManager{basePath: tempDir}
+	pathManager := &paths.MockPathManager{BasePath: tempDir}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	require.NoError(t, err)

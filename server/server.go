@@ -58,31 +58,16 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 // Shutdown gracefully shuts down all servers
-func (s *Server) Shutdown() error {
+func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info().Msg("Shutting down server...")
 
 	s.cancel()
 
-	// Stop the Loader which will stop all components including servers
-	if s.loader != nil {
-		if err := s.loader.Stop(); err != nil {
-			s.logger.Error().Err(err).Msg("Error stopping loader")
-		}
+	if err := s.loader.Shutdown(ctx); err != nil {
+		s.logger.Error().Err(err).Msg("Error stopping loader")
 	}
 
-	// Wait for all components to stop
-	done := make(chan struct{})
-	go func() {
-		s.wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		s.logger.Info().Msg("Graceful shutdown completed")
-	case <-time.After(30 * time.Second):
-		s.logger.Warn().Msg("Shutdown timeout, forcing close")
-	}
+	s.logger.Info().Msg("Graceful shutdown completed")
 
 	return nil
 }

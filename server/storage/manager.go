@@ -16,12 +16,15 @@ import (
 	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/metadata"
 	"github.com/TFMV/icebox/server/metadata/types"
+	"github.com/TFMV/icebox/server/paths"
 	"github.com/TFMV/icebox/server/storage/filesystem"
 	"github.com/TFMV/icebox/server/storage/memory"
-	"github.com/TFMV/icebox/server/storage/paths"
 	"github.com/TFMV/icebox/server/storage/s3"
 	"github.com/rs/zerolog"
 )
+
+// ComponentType defines the storage component type identifier
+const ComponentType = "storage"
 
 // Manager manages data storage operations
 type Manager struct {
@@ -151,6 +154,24 @@ func (m *Manager) Initialize(ctx context.Context) error {
 	// Storage engines handle their own directory creation during SetupTable
 	// No need to create generic directories here
 
+	return nil
+}
+
+// GetType returns the component type identifier
+func (m *Manager) GetType() string {
+	return ComponentType
+}
+
+// Shutdown gracefully shuts down the storage manager
+func (m *Manager) Shutdown(ctx context.Context) error {
+	m.logger.Info().Msg("Shutting down storage manager")
+
+	// Close storage manager
+	if err := m.Close(); err != nil {
+		return fmt.Errorf("failed to close storage manager: %w", err)
+	}
+
+	m.logger.Info().Msg("Storage manager shut down successfully")
 	return nil
 }
 

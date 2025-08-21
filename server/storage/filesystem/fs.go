@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/TFMV/icebox/server/storage/paths"
+	"github.com/TFMV/icebox/server/paths"
 )
 
 // StorageType constant for this storage engine

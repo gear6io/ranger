@@ -16,6 +16,9 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// ComponentType defines the query engine component type identifier
+const ComponentType = "query"
+
 // Engine represents the shared query engine service with embedded storage
 type Engine struct {
 	duckdbEngine *duckdb.Engine
@@ -676,6 +679,24 @@ func (e *Engine) ListRunningQueries() []*QueryInfo {
 // GetQueryStats returns statistics about queries
 func (e *Engine) GetQueryStats() map[string]interface{} {
 	return e.queryManager.GetStats()
+}
+
+// GetType returns the component type identifier
+func (e *Engine) GetType() string {
+	return ComponentType
+}
+
+// Shutdown gracefully shuts down the query engine
+func (e *Engine) Shutdown(ctx context.Context) error {
+	e.logger.Info().Msg("Shutting down query engine")
+	
+	// Close query engine
+	if err := e.Close(); err != nil {
+		return fmt.Errorf("failed to close query engine: %w", err)
+	}
+	
+	e.logger.Info().Msg("Query engine shut down successfully")
+	return nil
 }
 
 // Close closes the engine and releases resources
