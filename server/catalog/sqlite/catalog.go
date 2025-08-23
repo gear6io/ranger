@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	catalogshared "github.com/TFMV/icebox/server/catalog/shared"
 	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/paths"
@@ -40,7 +41,7 @@ func NewCatalog(cfg *config.Config, pathManager paths.PathManager) (*Catalog, er
 	// Validate catalog type
 	catalogType := cfg.GetCatalogType()
 	if catalogType != "sqlite" {
-		return nil, fmt.Errorf("expected catalog type 'sqlite', got '%s'", catalogType)
+		return nil, catalogshared.NewCatalogValidation("catalog_type", fmt.Sprintf("expected catalog type 'sqlite', got '%s'", catalogType))
 	}
 
 	// Get catalog URI from path manager
@@ -51,12 +52,12 @@ func NewCatalog(cfg *config.Config, pathManager paths.PathManager) (*Catalog, er
 
 	// Ensure the directory exists
 	if err := os.MkdirAll(filepath.Dir(catalogURI), 0755); err != nil {
-		return nil, fmt.Errorf("failed to create catalog directory: %w", err)
+		return nil, errors.New(ErrCatalogDirectoryCreateFailed, "failed to create catalog directory", err)
 	}
 
 	db, err := sql.Open("sqlite3", catalogURI+"?_foreign_keys=on")
 	if err != nil {
-		return nil, fmt.Errorf("failed to open SQLite database: %w", err)
+		return nil, errors.New(ErrDatabaseOpenFailed, "failed to open SQLite database", err)
 	}
 
 	// Create a local FileIO implementation for iceberg-go compatibility
@@ -78,7 +79,7 @@ func NewCatalogWithIO(name, dbPath string, db *sql.DB, fileIO icebergio.IO, path
 
 	if err := cat.initializeDatabase(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("failed to initialize database: %w", err)
+		return nil, errors.New(ErrDatabaseInitFailed, "failed to initialize database", err)
 	}
 
 	return cat, nil
@@ -97,7 +98,9 @@ func (c *Catalog) Name() string {
 // Close closes the database connection
 func (c *Catalog) Close() error {
 	if c.db != nil {
-		return c.db.Close()
+		if err := c.db.Close(); err != nil {
+			return errors.New(ErrDatabaseCloseFailed, "failed to close SQLite catalog", err)
+		}
 	}
 	return nil
 }
@@ -113,7 +116,7 @@ func (c *Catalog) Shutdown(ctx context.Context) error {
 
 	// Close catalog
 	if err := c.Close(); err != nil {
-		return fmt.Errorf("failed to close SQLite catalog: %w", err)
+		return errors.New(ErrDatabaseCloseFailed, "failed to close SQLite catalog", err)
 	}
 
 	log.Printf("SQLite catalog shut down successfully")
@@ -134,7 +137,7 @@ func (c *Catalog) initializeDatabase() error {
 	)`
 
 	if _, err := c.db.Exec(createTablesSQL); err != nil {
-		return fmt.Errorf("failed to create iceberg_tables table: %w", err)
+		return errors.New(ErrTableCreateFailed, "failed to create iceberg_tables table", err)
 	}
 
 	// Create iceberg_namespace_properties table
@@ -148,7 +151,7 @@ func (c *Catalog) initializeDatabase() error {
 	)`
 
 	if _, err := c.db.Exec(createNamespacePropsSQL); err != nil {
-		return fmt.Errorf("failed to create iceberg_namespace_properties table: %w", err)
+		return errors.New(ErrTableCreateFailed, "failed to create iceberg_namespace_properties table", err)
 	}
 
 	return nil
@@ -166,7 +169,7 @@ func (c *Catalog) CreateTable(ctx context.Context, identifier table.Identifier, 
 	// Check if namespace exists
 	exists, err := c.CheckNamespaceExists(ctx, namespace)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check namespace existence: %w", err)
+		return nil, errors.New(ErrNamespaceCheckFailed, "failed to check namespace existence", err)
 	}
 	if !exists {
 		return nil, catalog.ErrNoSuchNamespace
@@ -175,7 +178,7 @@ func (c *Catalog) CreateTable(ctx context.Context, identifier table.Identifier, 
 	// Check if table already exists
 	tableExists, err := c.CheckTableExists(ctx, identifier)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check table existence: %w", err)
+		return nil, errors.New(ErrTableCheckFailed, "failed to check table existence", err)
 	}
 	if tableExists {
 		return nil, catalog.ErrTableAlreadyExists
@@ -200,7 +203,7 @@ func (c *Catalog) CreateTable(ctx context.Context, identifier table.Identifier, 
 	// Create proper table metadata using iceberg-go APIs
 	metadata, err := table.NewMetadata(schema, iceberg.UnpartitionedSpec, table.UnsortedSortOrder, location, properties)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create table metadata: %w", err)
+		return nil, errors.New(ErrMetadataBuilderFailed, "failed to create table metadata", err)
 	}
 
 	// Generate metadata location
@@ -208,7 +211,7 @@ func (c *Catalog) CreateTable(ctx context.Context, identifier table.Identifier, 
 
 	// Write metadata to storage using proper APIs
 	if err := c.writeMetadataFile(metadata, metadataLocation); err != nil {
-		return nil, fmt.Errorf("failed to write table metadata: %w", err)
+		return nil, errors.New(ErrTableMetadataWriteFailed, "failed to write table metadata", err)
 	}
 
 	// Insert into database
@@ -219,7 +222,7 @@ func (c *Catalog) CreateTable(ctx context.Context, identifier table.Identifier, 
 	namespaceStr := namespaceToString(namespace)
 	_, err = c.db.ExecContext(ctx, insertSQL, c.name, namespaceStr, tableName, metadataLocation, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to insert table record: %w", err)
+		return nil, errors.New(ErrTableInsertFailed, "failed to insert table record", err)
 	}
 
 	// Load and return the table
@@ -241,34 +244,34 @@ func (c *Catalog) CommitTable(ctx context.Context, tbl *table.Table, reqs []tabl
 		if err == sql.ErrNoRows {
 			return nil, "", catalog.ErrNoSuchTable
 		}
-		return nil, "", fmt.Errorf("failed to query current metadata: %w", err)
+		return nil, "", errors.New(ErrMetadataQueryFailed, "failed to query current metadata", err)
 	}
 
 	// Validate requirements against current metadata
 	currentMetadata := tbl.Metadata()
 	for _, req := range reqs {
 		if err := req.Validate(currentMetadata); err != nil {
-			return nil, "", fmt.Errorf("requirement validation failed: %w", err)
+			return nil, "", errors.New(ErrMetadataValidationFailed, "requirement validation failed", err)
 		}
 	}
 
 	// Apply updates to create new metadata
 	metadataBuilder, err := table.MetadataBuilderFromBase(currentMetadata)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create metadata builder: %w", err)
+		return nil, "", errors.New(ErrMetadataBuilderFailed, "failed to create metadata builder", err)
 	}
 
 	// Apply each update to the metadata builder
 	for _, update := range updates {
 		if err := update.Apply(metadataBuilder); err != nil {
-			return nil, "", fmt.Errorf("failed to apply update %s: %w", update.Action(), err)
+			return nil, "", errors.New(ErrMetadataUpdateFailed, fmt.Sprintf("failed to apply update %s", update.Action()), err)
 		}
 	}
 
 	// Build the new metadata
 	newMetadata, err := metadataBuilder.Build()
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to build new metadata: %w", err)
+		return nil, "", errors.New(ErrMetadataBuildFailed, "failed to build new metadata", err)
 	}
 
 	// Determine the new metadata version and location
@@ -277,14 +280,14 @@ func (c *Catalog) CommitTable(ctx context.Context, tbl *table.Table, reqs []tabl
 
 	// Write the new metadata file
 	if err := c.writeMetadataFile(newMetadata, newMetadataLocation); err != nil {
-		return nil, "", fmt.Errorf("failed to write metadata file: %w", err)
+		return nil, "", errors.New(ErrMetadataWriteFailed, "failed to write metadata file", err)
 	}
 
 	// Update database with the new metadata location
 	updateSQL := `UPDATE iceberg_tables SET metadata_location = ?, previous_metadata_location = ? WHERE catalog_name = ? AND table_namespace = ? AND table_name = ?`
 	_, err = c.db.ExecContext(ctx, updateSQL, newMetadataLocation, currentMetadataLocation.String, c.name, namespaceStr, tableName)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to update table metadata location: %w", err)
+		return nil, "", errors.New(ErrMetadataLocationUpdateFailed, "failed to update table metadata location", err)
 	}
 
 	return newMetadata, newMetadataLocation, nil
@@ -304,7 +307,7 @@ func (c *Catalog) LoadTable(ctx context.Context, identifier table.Identifier, pr
 		if err == sql.ErrNoRows {
 			return nil, catalog.ErrNoSuchTable
 		}
-		return nil, fmt.Errorf("failed to query table: %w", err)
+		return nil, errors.New(ErrTableQueryFailed, "failed to query table", err)
 	}
 
 	if !metadataLocation.Valid {
@@ -314,7 +317,7 @@ func (c *Catalog) LoadTable(ctx context.Context, identifier table.Identifier, pr
 	// Load table using iceberg-go APIs
 	tbl, err := table.NewFromLocation(identifier, metadataLocation.String, c.fileIO, c)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load table: %w", err)
+		return nil, errors.New(ErrTableLoadFailed, "failed to load table", err)
 	}
 
 	return tbl, nil
@@ -329,7 +332,7 @@ func (c *Catalog) DropTable(ctx context.Context, identifier table.Identifier) er
 	// Check if table exists
 	exists, err := c.CheckTableExists(ctx, identifier)
 	if err != nil {
-		return fmt.Errorf("failed to check table existence: %w", err)
+		return errors.New(ErrTableCheckFailed, "failed to check table existence", err)
 	}
 	if !exists {
 		return catalog.ErrNoSuchTable
@@ -339,12 +342,12 @@ func (c *Catalog) DropTable(ctx context.Context, identifier table.Identifier) er
 	deleteSQL := `DELETE FROM iceberg_tables WHERE catalog_name = ? AND table_namespace = ? AND table_name = ?`
 	result, err := c.db.ExecContext(ctx, deleteSQL, c.name, namespaceStr, tableName)
 	if err != nil {
-		return fmt.Errorf("failed to delete table record: %w", err)
+		return errors.New(ErrTableDeleteFailed, "failed to delete table record", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
+		return errors.New(ErrTableDeleteFailed, "failed to get rows affected", err)
 	}
 	if rowsAffected == 0 {
 		return catalog.ErrNoSuchTable
@@ -358,14 +361,14 @@ func (c *Catalog) RenameTable(ctx context.Context, from, to table.Identifier) (*
 	// Check if source table exists
 	sourceTable, err := c.LoadTable(ctx, from, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load source table: %w", err)
+		return nil, errors.New(ErrTableLoadFailed, "failed to load source table", err)
 	}
 
 	// Check if destination namespace exists
 	destNamespace := catalog.NamespaceFromIdent(to)
 	nsExists, err := c.CheckNamespaceExists(ctx, destNamespace)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check destination namespace: %w", err)
+		return nil, errors.New(ErrNamespaceCheckFailed, "failed to check destination namespace", err)
 	}
 	if !nsExists {
 		return nil, catalog.ErrNoSuchNamespace
@@ -374,7 +377,7 @@ func (c *Catalog) RenameTable(ctx context.Context, from, to table.Identifier) (*
 	// Check if destination table already exists
 	destExists, err := c.CheckTableExists(ctx, to)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check destination table: %w", err)
+		return nil, errors.New(ErrTableCheckFailed, "failed to check destination table", err)
 	}
 	if destExists {
 		return nil, catalog.ErrTableAlreadyExists
@@ -392,7 +395,7 @@ func (c *Catalog) RenameTable(ctx context.Context, from, to table.Identifier) (*
 	updateSQL := `UPDATE iceberg_tables SET table_namespace = ?, table_name = ? WHERE catalog_name = ? AND table_namespace = ? AND table_name = ?`
 	_, err = c.db.ExecContext(ctx, updateSQL, toNamespaceStr, toTableName, c.name, fromNamespaceStr, fromTableName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to rename table in database: %w", err)
+		return nil, errors.New(ErrTableRenameFailed, "failed to rename table in database", err)
 	}
 
 	// Return the renamed table
@@ -410,7 +413,7 @@ func (c *Catalog) CheckTableExists(ctx context.Context, identifier table.Identif
 	query := `SELECT COUNT(*) FROM iceberg_tables WHERE catalog_name = ? AND table_namespace = ? AND table_name = ?`
 	err := c.db.QueryRowContext(ctx, query, c.name, namespaceStr, tableName).Scan(&count)
 	if err != nil {
-		return false, fmt.Errorf("failed to check table existence: %w", err)
+		return false, errors.New(ErrTableCheckFailed, "failed to check table existence", err)
 	}
 
 	return count > 0, nil
@@ -424,7 +427,7 @@ func (c *Catalog) ListTables(ctx context.Context, namespace table.Identifier) it
 
 		rows, err := c.db.QueryContext(ctx, query, c.name, namespaceStr)
 		if err != nil {
-			yield(nil, fmt.Errorf("failed to list tables: %w", err))
+			yield(nil, errors.New(ErrTableListFailed, "failed to list tables", err))
 			return
 		}
 		defer rows.Close()
@@ -432,7 +435,7 @@ func (c *Catalog) ListTables(ctx context.Context, namespace table.Identifier) it
 		for rows.Next() {
 			var tableNamespace, tableName string
 			if err := rows.Scan(&tableNamespace, &tableName); err != nil {
-				yield(nil, fmt.Errorf("failed to scan table row: %w", err))
+				yield(nil, errors.New(ErrTableScanFailed, "failed to scan table row", err))
 				return
 			}
 
@@ -444,7 +447,7 @@ func (c *Catalog) ListTables(ctx context.Context, namespace table.Identifier) it
 		}
 
 		if err := rows.Err(); err != nil {
-			yield(nil, fmt.Errorf("error iterating table rows: %w", err))
+			yield(nil, errors.New(ErrTableIterationFailed, "error iterating table rows", err))
 		}
 	}
 }
@@ -454,7 +457,7 @@ func (c *Catalog) CreateNamespace(ctx context.Context, namespace table.Identifie
 	// Check if namespace already exists
 	exists, err := c.CheckNamespaceExists(ctx, namespace)
 	if err != nil {
-		return fmt.Errorf("failed to check namespace existence: %w", err)
+		return errors.New(ErrNamespaceCheckFailed, "failed to check namespace existence", err)
 	}
 	if exists {
 		return catalog.ErrNamespaceAlreadyExists
@@ -466,7 +469,7 @@ func (c *Catalog) CreateNamespace(ctx context.Context, namespace table.Identifie
 	insertSQL := `INSERT INTO iceberg_namespace_properties (catalog_name, namespace, property_key, property_value) VALUES (?, ?, 'exists', 'true')`
 	_, err = c.db.ExecContext(ctx, insertSQL, c.name, namespaceStr)
 	if err != nil {
-		return fmt.Errorf("failed to create namespace: %w", err)
+		return errors.New(ErrNamespaceCreateFailed, "failed to create namespace", err)
 	}
 
 	// Insert additional properties
@@ -474,7 +477,7 @@ func (c *Catalog) CreateNamespace(ctx context.Context, namespace table.Identifie
 		insertPropSQL := `INSERT INTO iceberg_namespace_properties (catalog_name, namespace, property_key, property_value) VALUES (?, ?, ?, ?)`
 		_, err = c.db.ExecContext(ctx, insertPropSQL, c.name, namespaceStr, key, value)
 		if err != nil {
-			return fmt.Errorf("failed to insert namespace property: %w", err)
+			return errors.New(ErrNamespaceInsertFailed, "failed to insert namespace property", err)
 		}
 	}
 
@@ -486,7 +489,7 @@ func (c *Catalog) DropNamespace(ctx context.Context, namespace table.Identifier)
 	// Check if namespace exists
 	exists, err := c.CheckNamespaceExists(ctx, namespace)
 	if err != nil {
-		return fmt.Errorf("failed to check namespace existence: %w", err)
+		return errors.New(ErrNamespaceCheckFailed, "failed to check namespace existence", err)
 	}
 	if !exists {
 		return catalog.ErrNoSuchNamespace
@@ -499,7 +502,7 @@ func (c *Catalog) DropNamespace(ctx context.Context, namespace table.Identifier)
 	countQuery := `SELECT COUNT(*) FROM iceberg_tables WHERE catalog_name = ? AND table_namespace = ?`
 	err = c.db.QueryRowContext(ctx, countQuery, c.name, namespaceStr).Scan(&tableCount)
 	if err != nil {
-		return fmt.Errorf("failed to count tables in namespace: %w", err)
+		return errors.New(ErrNamespaceCountFailed, "failed to count tables in namespace", err)
 	}
 	if tableCount > 0 {
 		return catalog.ErrNamespaceNotEmpty
@@ -509,7 +512,7 @@ func (c *Catalog) DropNamespace(ctx context.Context, namespace table.Identifier)
 	deleteSQL := `DELETE FROM iceberg_namespace_properties WHERE catalog_name = ? AND namespace = ?`
 	_, err = c.db.ExecContext(ctx, deleteSQL, c.name, namespaceStr)
 	if err != nil {
-		return fmt.Errorf("failed to delete namespace: %w", err)
+		return errors.New(ErrNamespaceDeleteFailed, "failed to delete namespace", err)
 	}
 
 	return nil
@@ -523,7 +526,7 @@ func (c *Catalog) CheckNamespaceExists(ctx context.Context, namespace table.Iden
 	query := `SELECT COUNT(*) FROM iceberg_namespace_properties WHERE catalog_name = ? AND namespace = ? AND property_key = 'exists'`
 	err := c.db.QueryRowContext(ctx, query, c.name, namespaceStr).Scan(&count)
 	if err != nil {
-		return false, fmt.Errorf("failed to check namespace existence: %w", err)
+		return false, errors.New(ErrNamespaceCheckFailed, "failed to check namespace existence", err)
 	}
 
 	return count > 0, nil
@@ -534,7 +537,7 @@ func (c *Catalog) LoadNamespaceProperties(ctx context.Context, namespace table.I
 	// Check if namespace exists
 	exists, err := c.CheckNamespaceExists(ctx, namespace)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check namespace existence: %w", err)
+		return nil, errors.New(ErrNamespaceCheckFailed, "failed to check namespace existence", err)
 	}
 	if !exists {
 		return nil, catalog.ErrNoSuchNamespace
@@ -546,7 +549,7 @@ func (c *Catalog) LoadNamespaceProperties(ctx context.Context, namespace table.I
 	query := `SELECT property_key, property_value FROM iceberg_namespace_properties WHERE catalog_name = ? AND namespace = ?`
 	rows, err := c.db.QueryContext(ctx, query, c.name, namespaceStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load namespace properties: %w", err)
+		return nil, errors.New(ErrPropertiesLoadFailed, "failed to load namespace properties", err)
 	}
 	defer rows.Close()
 
@@ -554,7 +557,7 @@ func (c *Catalog) LoadNamespaceProperties(ctx context.Context, namespace table.I
 		var key string
 		var value sql.NullString
 		if err := rows.Scan(&key, &value); err != nil {
-			return nil, fmt.Errorf("failed to scan property row: %w", err)
+			return nil, errors.New(ErrPropertiesScanFailed, "failed to scan property row", err)
 		}
 
 		if value.Valid {
@@ -563,7 +566,7 @@ func (c *Catalog) LoadNamespaceProperties(ctx context.Context, namespace table.I
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating property rows: %w", err)
+		return nil, errors.New(ErrPropertiesIterationFailed, "error iterating property rows", err)
 	}
 
 	return props, nil
@@ -574,7 +577,7 @@ func (c *Catalog) UpdateNamespaceProperties(ctx context.Context, namespace table
 	// Check if namespace exists
 	exists, err := c.CheckNamespaceExists(ctx, namespace)
 	if err != nil {
-		return catalog.PropertiesUpdateSummary{}, fmt.Errorf("failed to check namespace existence: %w", err)
+		return catalog.PropertiesUpdateSummary{}, errors.New(ErrNamespaceCheckFailed, "failed to check namespace existence", err)
 	}
 	if !exists {
 		return catalog.PropertiesUpdateSummary{}, catalog.ErrNoSuchNamespace
@@ -586,7 +589,7 @@ func (c *Catalog) UpdateNamespaceProperties(ctx context.Context, namespace table
 	// Begin transaction for atomic updates
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
-		return catalog.PropertiesUpdateSummary{}, fmt.Errorf("failed to begin transaction: %w", err)
+		return catalog.PropertiesUpdateSummary{}, errors.New(ErrPropertiesTransactionFailed, "failed to begin transaction", err)
 	}
 	defer func() {
 		if err := tx.Rollback(); err != nil {
@@ -606,7 +609,7 @@ func (c *Catalog) UpdateNamespaceProperties(ctx context.Context, namespace table
 		deleteSQL := `DELETE FROM iceberg_namespace_properties WHERE catalog_name = ? AND namespace = ? AND property_key = ?`
 		result, err := tx.ExecContext(ctx, deleteSQL, c.name, namespaceStr, key)
 		if err != nil {
-			return catalog.PropertiesUpdateSummary{}, fmt.Errorf("failed to remove property %s: %w", key, err)
+			return catalog.PropertiesUpdateSummary{}, errors.New(ErrPropertiesRemoveFailed, fmt.Sprintf("failed to remove property %s", key), err)
 		}
 
 		rowsAffected, _ := result.RowsAffected()
@@ -624,7 +627,7 @@ func (c *Catalog) UpdateNamespaceProperties(ctx context.Context, namespace table
 		checkSQL := `SELECT COUNT(*) FROM iceberg_namespace_properties WHERE catalog_name = ? AND namespace = ? AND property_key = ?`
 		err := tx.QueryRowContext(ctx, checkSQL, c.name, namespaceStr, key).Scan(&count)
 		if err != nil {
-			return catalog.PropertiesUpdateSummary{}, fmt.Errorf("failed to check property existence: %w", err)
+			return catalog.PropertiesUpdateSummary{}, errors.New(ErrPropertiesCheckFailed, "failed to check property existence", err)
 		}
 
 		if count > 0 {
@@ -638,7 +641,7 @@ func (c *Catalog) UpdateNamespaceProperties(ctx context.Context, namespace table
 		}
 
 		if err != nil {
-			return catalog.PropertiesUpdateSummary{}, fmt.Errorf("failed to update property %s: %w", key, err)
+			return catalog.PropertiesUpdateSummary{}, errors.New(ErrPropertiesUpdateFailed, fmt.Sprintf("failed to update property %s", key), err)
 		}
 
 		updated = append(updated, key)
@@ -646,7 +649,7 @@ func (c *Catalog) UpdateNamespaceProperties(ctx context.Context, namespace table
 
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
-		return catalog.PropertiesUpdateSummary{}, fmt.Errorf("failed to commit transaction: %w", err)
+		return catalog.PropertiesUpdateSummary{}, errors.New(ErrPropertiesCommitFailed, "failed to commit transaction", err)
 	}
 
 	return catalog.PropertiesUpdateSummary{
@@ -661,7 +664,7 @@ func (c *Catalog) ListNamespaces(ctx context.Context, parent table.Identifier) (
 	query := `SELECT DISTINCT namespace FROM iceberg_namespace_properties WHERE catalog_name = ?`
 	rows, err := c.db.QueryContext(ctx, query, c.name)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list namespaces: %w", err)
+		return nil, errors.New(ErrNamespaceListFailed, "failed to list namespaces", err)
 	}
 	defer rows.Close()
 
@@ -669,7 +672,7 @@ func (c *Catalog) ListNamespaces(ctx context.Context, parent table.Identifier) (
 	for rows.Next() {
 		var namespaceStr string
 		if err := rows.Scan(&namespaceStr); err != nil {
-			return nil, fmt.Errorf("failed to scan namespace row: %w", err)
+			return nil, errors.New(ErrNamespaceScanFailed, "failed to scan namespace row", err)
 		}
 
 		namespace := stringToNamespace(namespaceStr)
@@ -695,7 +698,7 @@ func (c *Catalog) ListNamespaces(ctx context.Context, parent table.Identifier) (
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating namespace rows: %w", err)
+		return nil, errors.New(ErrNamespaceIterationFailed, "error iterating namespace rows", err)
 	}
 
 	return namespaces, nil
@@ -768,7 +771,7 @@ func (c *Catalog) writeMetadataFile(metadata table.Metadata, metadataLocation st
 	// Serialize metadata to JSON
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil {
-		return fmt.Errorf("failed to serialize metadata: %w", err)
+		return errors.New(ErrMetadataSerializeFailed, "failed to serialize metadata", err)
 	}
 
 	// Use local file operations for catalog metadata
@@ -786,13 +789,13 @@ func writeFile(path string, data []byte) error {
 
 	file, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("failed to create file %s: %w", path, err)
+		return errors.New(ErrMetadataFileCreateFailed, fmt.Sprintf("failed to create file %s", path), err)
 	}
 	defer file.Close()
 
 	_, err = file.Write(data)
 	if err != nil {
-		return fmt.Errorf("failed to write to file %s: %w", path, err)
+		return errors.New(ErrMetadataFileWriteFailed, fmt.Sprintf("failed to write to file %s", path), err)
 	}
 
 	return nil

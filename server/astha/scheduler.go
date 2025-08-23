@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
 	"github.com/rs/zerolog"
 )
@@ -89,15 +90,15 @@ func (s *Scheduler) RegisterComponent(info ComponentInfo, instance Subscriber[an
 
 	// Validate component info
 	if info.Name == "" {
-		return fmt.Errorf("component name cannot be empty")
+		return errors.New(ErrComponentNameEmpty, "component name cannot be empty", nil)
 	}
 
 	if len(info.Subscriptions) == 0 {
-		return fmt.Errorf("component must subscribe to at least one table")
+		return errors.New(ErrComponentNoSubscriptions, "component must subscribe to at least one table", nil)
 	}
 
 	if instance == nil {
-		return fmt.Errorf("component instance cannot be nil")
+		return errors.New(ErrComponentInstanceNil, "component instance cannot be nil", nil)
 	}
 
 	// Update component info
@@ -129,11 +130,11 @@ func (s *Scheduler) RegisterComponentInfo(info ComponentInfo) error {
 
 	// Validate component info
 	if info.Name == "" {
-		return fmt.Errorf("component name cannot be empty")
+		return errors.New(ErrComponentNameEmpty, "component name cannot be empty", nil)
 	}
 
 	if len(info.Subscriptions) == 0 {
-		return fmt.Errorf("component must subscribe to at least one table")
+		return errors.New(ErrComponentNoSubscriptions, "component must subscribe to at least one table", nil)
 	}
 
 	// Update component info
@@ -164,7 +165,7 @@ func (s *Scheduler) UnregisterComponent(name string) error {
 
 	component, exists := s.components[name]
 	if !exists {
-		return fmt.Errorf("component %s not found", name)
+		return errors.New(ErrComponentNotFound, "component not found", nil).AddContext("component_name", name)
 	}
 
 	// Remove from subscriptions
@@ -198,7 +199,7 @@ func (s *Scheduler) UpdateComponentHealth(name string, status string) error {
 
 	component, exists := s.components[name]
 	if !exists {
-		return fmt.Errorf("component %s not found", name)
+		return errors.New(ErrComponentNotFound, "component not found", nil).AddContext("component_name", name)
 	}
 
 	component.Status = status

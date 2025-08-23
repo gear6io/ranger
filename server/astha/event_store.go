@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
 	"github.com/rs/zerolog"
 )
@@ -55,7 +56,7 @@ func (s *MemoryEventStore) StoreEvent(ctx context.Context, event any) error {
 		eventID = e.ID
 		operation = e.Operation
 	default:
-		return fmt.Errorf("unsupported event type: %T", event)
+		return errors.New(ErrUnsupportedEventType, "unsupported event type", nil).AddContext("event_type", fmt.Sprintf("%T", event))
 	}
 
 	if s.events[table] == nil {

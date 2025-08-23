@@ -11,6 +11,13 @@ var (
 	ErrCDCSetupFailed       = errors.MustNewCode("astha.cdc_setup_failed")
 	ErrSchedulerStartFailed = errors.MustNewCode("astha.scheduler_start_failed")
 
+	// Scheduler-specific error codes
+	ErrComponentNameEmpty       = errors.MustNewCode("astha.component_name_empty")
+	ErrComponentNoSubscriptions = errors.MustNewCode("astha.component_no_subscriptions")
+	ErrComponentInstanceNil     = errors.MustNewCode("astha.component_instance_nil")
+	ErrComponentNotFound        = errors.MustNewCode("astha.component_not_found")
+	ErrUnsupportedEventType     = errors.MustNewCode("astha.unsupported_event_type")
+
 	// CDC consumer errors
 	ErrCDCGetChangesFailed     = errors.MustNewCode("astha.cdc_get_changes_failed")
 	ErrCDCProcessBatchFailed   = errors.MustNewCode("astha.cdc_process_batch_failed")

@@ -82,7 +82,8 @@ func (l *Loader) registerComponents() {
 	l.RegisterComponent("metadata", func(loader LoaderInterface) (shared.Component, error) {
 		return metadata.NewMetadataManager(loader.GetCatalog(),
 			loader.GetPathManager().GetInternalMetadataDBPath(),
-			loader.GetConfig().GetStoragePath())
+			loader.GetConfig().GetStoragePath(),
+			loader.GetLogger())
 	})
 
 	l.RegisterComponent("storage", func(loader LoaderInterface) (shared.Component, error) {

@@ -77,7 +77,7 @@ func (mfs *FileStorage) OpenTableForWrite(database, tableName string) (io.WriteC
 	// Open file for direct writing
 	file, err := os.Create(parquetPath)
 	if err != nil {
-		return nil, errors.New(FileStorageCreateFileFailed, "failed to create data file").AddContext("filesystem", "external_library_call_failed").WithCause(err)
+		return nil, errors.New(FileStorageCreateFileFailed, "failed to create data file", err).AddContext("filesystem", "external_library_call_failed")
 	}
 
 	return &tableWriter{
@@ -97,13 +97,13 @@ func (mfs *FileStorage) OpenTableForRead(database, tableName string) (io.ReadClo
 
 	// Check if file exists
 	if _, err := os.Stat(parquetPath); err != nil {
-		return nil, errors.New(FileStorageFileNotFound, "table data file does not exist").AddContext("path", parquetPath).WithCause(err)
+		return nil, errors.New(FileStorageFileNotFound, "table data file does not exist", err).AddContext("path", parquetPath)
 	}
 
 	// Open file for direct reading
 	file, err := os.Open(parquetPath)
 	if err != nil {
-		return nil, errors.New(FileStorageOpenFileFailed, "failed to open data file").AddContext("filesystem", "external_library_call_failed").WithCause(err)
+		return nil, errors.New(FileStorageOpenFileFailed, "failed to open data file", err).AddContext("filesystem", "external_library_call_failed")
 	}
 
 	return file, nil
@@ -117,19 +117,19 @@ func (mfs *FileStorage) SetupTable(database, tableName string) error {
 	// Create table directory structure using PathManager
 	tablePath := mfs.pathManager.GetTablePath(database, tableName)
 	if err := os.MkdirAll(tablePath, 0755); err != nil {
-		return errors.New(FileStorageCreateDirFailed, "failed to create table directory").AddContext("filesystem", "external_library_call_failed").WithCause(err)
+		return errors.New(FileStorageCreateDirFailed, "failed to create table directory", err).AddContext("filesystem", "external_library_call_failed")
 	}
 
 	// Create data subdirectory
 	dataPath := mfs.pathManager.GetTableDataPath([]string{database}, tableName)
 	if err := os.MkdirAll(dataPath, 0755); err != nil {
-		return errors.New(FileStorageCreateDirFailed, "failed to create data directory").AddContext("filesystem", "external_library_call_failed").WithCause(err)
+		return errors.New(FileStorageCreateDirFailed, "failed to create data directory", err).AddContext("filesystem", "external_library_call_failed")
 	}
 
 	// Create metadata subdirectory
 	metadataPath := mfs.pathManager.GetTableMetadataPath([]string{database}, tableName)
 	if err := os.MkdirAll(metadataPath, 0755); err != nil {
-		return errors.New(FileStorageCreateDirFailed, "failed to create metadata directory").AddContext("filesystem", "external_library_call_failed").WithCause(err)
+		return errors.New(FileStorageCreateDirFailed, "failed to create metadata directory", err).AddContext("filesystem", "external_library_call_failed")
 	}
 
 	return nil

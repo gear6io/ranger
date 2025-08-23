@@ -2,11 +2,11 @@ package middleware
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/rs/zerolog"
 )
 
@@ -91,7 +91,7 @@ func (cb *CircuitBreaker) OnEvent(ctx context.Context, connCtx *ConnectionContex
 // OnRead allows reads if circuit is not open
 func (cb *CircuitBreaker) OnRead(ctx context.Context, connCtx *ConnectionContext) error {
 	if cb.isCircuitOpen() {
-		return fmt.Errorf("circuit breaker is open - service temporarily unavailable")
+		return errors.New(ErrCircuitBreakerOpen, "circuit breaker is open - service temporarily unavailable", nil)
 	}
 	return nil
 }
@@ -99,7 +99,7 @@ func (cb *CircuitBreaker) OnRead(ctx context.Context, connCtx *ConnectionContext
 // OnWrite allows writes if circuit is not open
 func (cb *CircuitBreaker) OnWrite(ctx context.Context, connCtx *ConnectionContext) error {
 	if cb.isCircuitOpen() {
-		return fmt.Errorf("circuit breaker is open - service temporarily unavailable")
+		return errors.New(ErrCircuitBreakerOpen, "circuit breaker is open - service temporarily unavailable", nil)
 	}
 	return nil
 }
@@ -120,7 +120,7 @@ func (cb *CircuitBreaker) OnError(ctx context.Context, connCtx *ConnectionContex
 func (cb *CircuitBreaker) OnQuery(ctx context.Context, connCtx *ConnectionContext, query string) error {
 	// Check circuit state
 	if cb.isCircuitOpen() {
-		return fmt.Errorf("circuit breaker is open - service temporarily unavailable")
+		return errors.New(ErrCircuitBreakerOpen, "circuit breaker is open - service temporarily unavailable", nil)
 	}
 
 	// Check concurrent query limit per connection
@@ -200,7 +200,7 @@ func (cb *CircuitBreaker) onResourceExceeded(connCtx *ConnectionContext, err err
 	// Open circuit immediately for resource violations
 	cb.openCircuit()
 
-	return fmt.Errorf("resource limits exceeded: %w", err)
+	return errors.New(ErrResourceLimitsExceeded, "resource limits exceeded", err)
 }
 
 // checkConcurrentQueries checks if connection has exceeded query limit
@@ -210,7 +210,7 @@ func (cb *CircuitBreaker) checkConcurrentQueries(connectionID string) error {
 	cb.connectionMu.RUnlock()
 
 	if currentQueries >= int64(cb.thresholds.MaxConcurrentQueries) {
-		return fmt.Errorf("concurrent query limit exceeded (%d)", cb.thresholds.MaxConcurrentQueries)
+		return errors.Newf(ErrConcurrentQueryLimit, "concurrent query limit exceeded (%d)", cb.thresholds.MaxConcurrentQueries)
 	}
 
 	return nil
@@ -220,17 +220,17 @@ func (cb *CircuitBreaker) checkConcurrentQueries(connectionID string) error {
 func (cb *CircuitBreaker) checkResourceThresholds(connCtx *ConnectionContext) error {
 	// Check memory usage
 	if atomic.LoadInt64(&cb.currentMemory) > cb.thresholds.MaxMemoryBytes {
-		return fmt.Errorf("memory usage exceeds threshold (%d bytes)", cb.thresholds.MaxMemoryBytes)
+		return errors.Newf(ErrMemoryUsageExceeded, "memory usage exceeds threshold (%d bytes)", cb.thresholds.MaxMemoryBytes)
 	}
 
 	// Check CPU usage
 	if atomic.LoadInt64(&cb.currentCPU) > int64(cb.thresholds.MaxCPUTime) {
-		return fmt.Errorf("CPU usage exceeds threshold (%v)", cb.thresholds.MaxCPUTime)
+		return errors.Newf(ErrCPUUsageExceeded, "CPU usage exceeds threshold (%v)", cb.thresholds.MaxCPUTime)
 	}
 
 	// Check active queries
 	if atomic.LoadInt64(&cb.activeQueries) > int64(cb.thresholds.MaxConcurrentQueries) {
-		return fmt.Errorf("concurrent query limit exceeded (%d)", cb.thresholds.MaxConcurrentQueries)
+		return errors.Newf(ErrConcurrentQueryLimit, "concurrent query limit exceeded (%d)", cb.thresholds.MaxConcurrentQueries)
 	}
 
 	return nil

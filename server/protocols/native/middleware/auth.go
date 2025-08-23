@@ -4,11 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/rs/zerolog"
 )
 
@@ -99,7 +99,7 @@ func (a *AuthMiddleware) OnRead(ctx context.Context, connCtx *ConnectionContext)
 
 	// Require authentication for other states
 	if a.requireAuth && connCtx.State != StateAuthenticated {
-		return fmt.Errorf("authentication required")
+		return errors.New(ErrAuthenticationRequired, "authentication required", nil)
 	}
 
 	return nil
@@ -118,7 +118,7 @@ func (a *AuthMiddleware) OnWrite(ctx context.Context, connCtx *ConnectionContext
 
 	// Require authentication for other states
 	if a.requireAuth && connCtx.State != StateAuthenticated {
-		return fmt.Errorf("authentication required")
+		return errors.New(ErrAuthenticationRequired, "authentication required", nil)
 	}
 
 	return nil
@@ -151,13 +151,13 @@ func (a *AuthMiddleware) OnQuery(ctx context.Context, connCtx *ConnectionContext
 
 	// Require authentication for queries
 	if a.requireAuth && connCtx.State != StateAuthenticated {
-		return fmt.Errorf("authentication required for query execution")
+		return errors.New(ErrAuthenticationRequired, "authentication required for query execution", nil)
 	}
 
 	// Check if query requires special permissions
 	if a.requiresSpecialPermissions(query) {
 		if !a.hasPermission(connCtx, "admin") {
-			return fmt.Errorf("insufficient permissions for this query")
+			return errors.New(ErrInsufficientPermissions, "insufficient permissions for this query", nil)
 		}
 	}
 
@@ -180,12 +180,12 @@ func (a *AuthMiddleware) Authenticate(ctx context.Context, connCtx *ConnectionCo
 	result, err := a.provider.Authenticate(ctx, username, password, database)
 	if err != nil {
 		connCtx.State = StateHandshaking
-		return fmt.Errorf("authentication failed: %w", err)
+		return errors.New(ErrAuthenticationFailed, "authentication failed", err)
 	}
 
 	if !result.Authenticated {
 		connCtx.State = StateHandshaking
-		return fmt.Errorf("invalid credentials")
+		return errors.New(ErrInvalidCredentials, "invalid credentials", nil)
 	}
 
 	// Set connection context
@@ -229,11 +229,11 @@ func (a *AuthMiddleware) ValidateToken(ctx context.Context, connCtx *ConnectionC
 	// Validate with provider
 	result, err := a.provider.ValidateToken(ctx, token)
 	if err != nil {
-		return fmt.Errorf("token validation failed: %w", err)
+		return errors.New(ErrTokenValidationFailed, "token validation failed", err)
 	}
 
 	if !result.Authenticated {
-		return fmt.Errorf("invalid token")
+		return errors.New(ErrInvalidToken, "invalid token", nil)
 	}
 
 	// Set connection context

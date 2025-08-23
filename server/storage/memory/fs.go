@@ -196,7 +196,7 @@ func (ms *MemoryStorage) GetTableMemoryUsage(database, tableName string) (int64,
 	// Check if table exists
 	tableData, exists := ms.tables[tableKey]
 	if !exists {
-		return 0, errors.New(ErrTableNotFound, "table does not exist").AddContext("database", database).AddContext("table", tableName)
+		return 0, errors.New(ErrTableNotFound, "table does not exist", nil).AddContext("database", database).AddContext("table", tableName)
 	}
 
 	// If no Parquet manager exists, return 0
@@ -217,14 +217,14 @@ func (ms *MemoryStorage) SetTableSchema(database, tableName string, icebergSchem
 	// Check if table exists
 	tableData, exists := ms.tables[tableKey]
 	if !exists {
-		return errors.New(ErrTableNotFound, "table does not exist").AddContext("database", database).AddContext("table", tableName)
+		return errors.New(ErrTableNotFound, "table does not exist", nil).AddContext("database", database).AddContext("table", tableName)
 	}
 
 	// Convert Iceberg schema to Arrow schema
 	schemaManager := parquet.NewSchemaManager(parquet.DefaultParquetConfig())
 	arrowSchema, err := schemaManager.ConvertIcebergToArrowSchema(icebergSchema)
 	if err != nil {
-		return errors.New(ErrSchemaConversionFailed, "failed to convert Iceberg schema to Arrow schema").WithCause(err)
+		return errors.New(ErrSchemaConversionFailed, "failed to convert Iceberg schema to Arrow schema", err)
 	}
 
 	// Update table schema
@@ -298,11 +298,11 @@ func (ms *MemoryStorage) createDefaultSchema(data []byte) (*arrow.Schema, error)
 	// Parse the JSON to understand the data structure
 	var parsedData [][]interface{}
 	if err := json.Unmarshal(data, &parsedData); err != nil {
-		return nil, errors.New(ErrSchemaInferenceFailed, "failed to parse data for schema inference").WithCause(err)
+		return nil, errors.New(ErrSchemaInferenceFailed, "failed to parse data for schema inference", err)
 	}
 
 	if len(parsedData) == 0 {
-		return nil, errors.New(ErrEmptyDataForSchema, "cannot infer schema from empty data")
+		return nil, errors.New(ErrEmptyDataForSchema, "cannot infer schema from empty data", nil)
 	}
 
 	// Infer schema from the first row
@@ -342,7 +342,7 @@ func (ms *MemoryStorage) convertBytesToInterface(data []byte) ([][]interface{}, 
 	// Parse JSON back to [][]interface{}
 	var result [][]interface{}
 	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, errors.New(ErrDataUnmarshalFailed, "failed to unmarshal JSON data").WithCause(err)
+		return nil, errors.New(ErrDataUnmarshalFailed, "failed to unmarshal JSON data", err)
 	}
 	return result, nil
 }
@@ -381,7 +381,7 @@ type memoryTableWriter struct {
 
 func (mtw *memoryTableWriter) Write(p []byte) (n int, err error) {
 	if mtw.closed {
-		return 0, errors.New(ErrWriterClosed, "write on closed writer")
+		return 0, errors.New(ErrWriterClosed, "write on closed writer", nil)
 	}
 	mtw.buffer = append(mtw.buffer, p...)
 	return len(p), nil
@@ -398,7 +398,7 @@ func (mtw *memoryTableWriter) Close() error {
 		// Convert data to interface format and store using Parquet manager
 		interfaceData, err := mtw.storage.convertBytesToInterface(mtw.buffer)
 		if err != nil {
-			return errors.New(ErrDataConversionFailed, "failed to convert data").WithCause(err)
+			return err
 		}
 
 		mtw.storage.mu.Lock()
@@ -409,7 +409,7 @@ func (mtw *memoryTableWriter) Close() error {
 			// Create default schema and Parquet manager
 			schema, err := mtw.storage.createDefaultSchema(mtw.buffer)
 			if err != nil {
-				return errors.New(ErrDefaultSchemaCreation, "failed to create default schema").WithCause(err)
+				return err
 			}
 			tableData.Schema = schema
 
@@ -419,7 +419,7 @@ func (mtw *memoryTableWriter) Close() error {
 
 		// Store data using Parquet manager
 		if err := tableData.ParquetManager.StoreData(interfaceData); err != nil {
-			return errors.New(ErrDataStorageFailed, "failed to store data in Parquet manager").WithCause(err)
+			return err
 		}
 	}
 
@@ -454,13 +454,13 @@ func (mtr *memoryTableReader) Read(p []byte) (n int, err error) {
 	// In a real implementation, you'd stream from the Parquet manager
 	data, err := tableData.ParquetManager.GetData()
 	if err != nil {
-		return 0, errors.New(ErrDataRetrievalFailed, "failed to get data").WithCause(err)
+		return 0, err
 	}
 
 	// Convert to JSON for streaming
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		return 0, errors.New(ErrDataMarshalFailed, "failed to marshal data").WithCause(err)
+		return 0, err
 	}
 
 	if mtr.position >= len(jsonData) {
@@ -492,7 +492,7 @@ func (er *emptyReader) Close() error {
 type emptyWriter struct{}
 
 func (ew *emptyWriter) Write(p []byte) (n int, err error) {
-	return 0, errors.New(ErrWriteNotSupported, "write not supported for memory storage file operations")
+	return 0, errors.New(ErrWriteNotSupported, "write not supported for memory storage file operations", nil)
 }
 
 func (ew *emptyWriter) Close() error {

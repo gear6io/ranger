@@ -74,7 +74,7 @@ func NewParquetManager(schema *arrow.Schema, config *parquet.ParquetConfig, path
 	// Create base directory using PathManager if it doesn't exist
 	dataPath := pathManager.GetParquetDataPath(database, tableName)
 	if err := os.MkdirAll(dataPath, 0755); err != nil {
-		return nil, errors.New(FilesystemParquetCreateDirFailed, "failed to create data directory").AddContext("path", dataPath).WithCause(err)
+		return nil, errors.New(FilesystemParquetCreateDirFailed, "failed to create data directory", err).AddContext("path", dataPath)
 	}
 
 	return &ParquetManager{
@@ -97,7 +97,7 @@ func NewParquetManager(schema *arrow.Schema, config *parquet.ParquetConfig, path
 // StoreData stores data as Parquet files on disk
 func (fm *ParquetManager) StoreData(data [][]interface{}) error {
 	if fm.closed {
-		return errors.New(FilesystemParquetManagerClosed, "parquet manager is closed")
+		return errors.New(FilesystemParquetManagerClosed, "parquet manager is closed", nil)
 	}
 
 	if len(data) == 0 {
@@ -128,7 +128,7 @@ func (fm *ParquetManager) StoreData(data [][]interface{}) error {
 
 	// Write the record to the current file
 	if err := fm.currentFile.Writer.Write(record); err != nil {
-		return errors.New(FilesystemParquetWriteFailed, "failed to write record to Parquet file").AddContext("filesystem_parquet", "write_operation_failed").WithCause(err)
+		return errors.New(FilesystemParquetWriteFailed, "failed to write record to Parquet file", err).AddContext("filesystem_parquet", "write_operation_failed")
 	}
 
 	// Update statistics
@@ -164,7 +164,7 @@ func (fm *ParquetManager) ensureActiveFile() error {
 	// Create the file
 	file, err := os.Create(filePath)
 	if err != nil {
-		return errors.New(FilesystemParquetCreateFileFailed, "failed to create Parquet file").AddContext("path", filePath).WithCause(err)
+		return errors.New(FilesystemParquetCreateFileFailed, "failed to create Parquet file", err).AddContext("path", filePath)
 	}
 
 	// Create Parquet writer with compression settings
@@ -179,7 +179,7 @@ func (fm *ParquetManager) ensureActiveFile() error {
 	writer, err := pqarrow.NewFileWriter(fm.schema, file, nil, pqarrow.DefaultWriterProps())
 	if err != nil {
 		file.Close()
-		return errors.New(FilesystemParquetCreateWriterFailed, "failed to create Parquet writer").AddContext("filesystem_parquet", "external_library_call_failed").WithCause(err)
+		return errors.New(FilesystemParquetCreateWriterFailed, "failed to create Parquet writer", err).AddContext("filesystem_parquet", "external_library_call_failed")
 	}
 
 	// Store compression info for stats
@@ -211,7 +211,7 @@ func (fm *ParquetManager) checkFileRotation() error {
 	// Check file size
 	fileInfo, err := fm.currentFile.File.Stat()
 	if err != nil {
-		return errors.New(FilesystemParquetGetSizeFailed, "failed to get file size").AddContext("filesystem_parquet", "external_library_call_failed").WithCause(err)
+		return errors.New(FilesystemParquetGetSizeFailed, "failed to get file size", err).AddContext("filesystem_parquet", "external_library_call_failed")
 	}
 
 	fm.currentFile.FileSize = fileInfo.Size()
@@ -240,7 +240,7 @@ func (fm *ParquetManager) rotateFile(reason string) error {
 
 	// Close the Parquet writer (this also closes the underlying file)
 	if err := fm.currentFile.Writer.Close(); err != nil {
-		return errors.New(FilesystemParquetCloseFailed, "failed to close Parquet writer").AddContext("filesystem_parquet", "external_library_call_failed").WithCause(err)
+		return errors.New(FilesystemParquetCloseFailed, "failed to close Parquet writer", err).AddContext("filesystem_parquet", "external_library_call_failed")
 	}
 
 	// Update final file size
@@ -268,7 +268,7 @@ func (fm *ParquetManager) GetFiles() ([]*parquet.FileInfo, error) {
 	pattern := fm.pathManager.GetParquetFilePattern(fm.database, fm.tableName)
 	files, err := filepath.Glob(pattern)
 	if err != nil {
-		return nil, errors.New(FilesystemParquetListFilesFailed, "failed to list Parquet files").AddContext("filesystem_parquet", "external_library_call_failed").WithCause(err)
+		return nil, err
 	}
 
 	var fileInfos []*parquet.FileInfo
@@ -342,7 +342,7 @@ func (fm *ParquetManager) convertDataToArrays(data [][]interface{}) ([]arrow.Arr
 	}
 
 	if fm.schema == nil {
-		return nil, errors.New(FilesystemParquetSchemaIsNil, "schema is nil")
+		return nil, errors.New(FilesystemParquetSchemaIsNil, "schema is nil", nil)
 	}
 
 	numCols := len(fm.schema.Fields())
@@ -372,7 +372,7 @@ func (fm *ParquetManager) convertColumnToArray(data [][]interface{}, colIdx int,
 	// Convert each value in the column
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 		if colIdx >= len(data[rowIdx]) {
-			return nil, errors.New(FilesystemParquetInsufficientColumns, "row has insufficient columns").AddContext("row_index", fmt.Sprintf("%d", rowIdx))
+			return nil, errors.New(FilesystemParquetInsufficientColumns, "row has insufficient columns", nil).AddContext("row_index", fmt.Sprintf("%d", rowIdx))
 		}
 
 		value := data[rowIdx][colIdx]
@@ -398,46 +398,46 @@ func (fm *ParquetManager) appendValueToBuilder(builder array.Builder, value inte
 		if boolVal, ok := value.(bool); ok {
 			builder.(*array.BooleanBuilder).Append(boolVal)
 		} else {
-			return errors.New(FilesystemParquetTypeMismatch, "expected bool").AddContext("actual_type", fmt.Sprintf("%T", value))
+			return errors.New(FilesystemParquetTypeMismatch, "expected bool", nil).AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	case *arrow.Int32Type:
 		if intVal, ok := fm.convertToInt32(value); ok {
 			builder.(*array.Int32Builder).Append(intVal)
 		} else {
-			return errors.New(FilesystemParquetTypeMismatch, "expected int32").AddContext("actual_type", fmt.Sprintf("%T", value))
+			return errors.New(FilesystemParquetTypeMismatch, "expected int32", nil).AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	case *arrow.Int64Type:
 		if intVal, ok := fm.convertToInt64(value); ok {
 			builder.(*array.Int64Builder).Append(intVal)
 		} else {
-			return errors.New(FilesystemParquetTypeMismatch, "expected int64").AddContext("actual_type", fmt.Sprintf("%T", value))
+			return errors.New(FilesystemParquetTypeMismatch, "expected int64", nil).AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	case *arrow.Float32Type:
 		if floatVal, ok := fm.convertToFloat32(value); ok {
 			builder.(*array.Float32Builder).Append(floatVal)
 		} else {
-			return errors.New(FilesystemParquetTypeMismatch, "expected float32").AddContext("actual_type", fmt.Sprintf("%T", value))
+			return errors.New(FilesystemParquetTypeMismatch, "expected float32", nil).AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	case *arrow.Float64Type:
 		if floatVal, ok := fm.convertToFloat64(value); ok {
 			builder.(*array.Float64Builder).Append(floatVal)
 		} else {
-			return errors.New(FilesystemParquetTypeMismatch, "expected float64").AddContext("actual_type", fmt.Sprintf("%T", value))
+			return errors.New(FilesystemParquetTypeMismatch, "expected float64", nil).AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	case *arrow.StringType:
 		if strVal, ok := value.(string); ok {
 			builder.(*array.StringBuilder).Append(strVal)
 		} else {
-			return errors.New(FilesystemParquetTypeMismatch, "expected string").AddContext("actual_type", fmt.Sprintf("%T", value))
+			return errors.New(FilesystemParquetTypeMismatch, "expected string", nil).AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	default:
-		return errors.New(FilesystemParquetUnsupportedType, "unsupported data type").AddContext("data_type", fmt.Sprintf("%T", dataType))
+		return errors.New(FilesystemParquetUnsupportedType, "unsupported data type", nil).AddContext("data_type", fmt.Sprintf("%T", dataType))
 	}
 
 	return nil

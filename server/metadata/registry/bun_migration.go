@@ -261,10 +261,10 @@ func (bmm *BunMigrationManager) VerifySchema(ctx context.Context) error {
 	for _, tableName := range expectedTables {
 		exists, err := bmm.tableExists(ctx, tableName)
 		if err != nil {
-			return errors.New(RegistryBunSchemaVerificationFailed, "failed to verify table").AddContext("table", tableName).WithCause(err)
+			return errors.New(RegistryBunSchemaVerificationFailed, "failed to verify table", err).AddContext("table", tableName)
 		}
 		if !exists {
-			return errors.New(RegistryBunSchemaVerificationFailed, "expected table does not exist").AddContext("table", tableName)
+			return errors.New(RegistryBunSchemaVerificationFailed, "expected table does not exist", nil).AddContext("table", tableName)
 		}
 	}
 

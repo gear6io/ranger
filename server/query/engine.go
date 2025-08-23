@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/query/duckdb"
 	"github.com/TFMV/icebox/server/query/parser"
@@ -65,7 +66,7 @@ func NewEngine(cfg *config.Config, storageMgr *storage.Manager, logger zerolog.L
 
 	duckdbEngine, err := duckdb.NewEngineWithConfig(catalogInstance, duckdbConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create DuckDB engine: %w", err)
+		return nil, errors.New(ErrDuckDBEngineCreationFailed, "failed to create DuckDB engine", err)
 	}
 
 	// Create execution manager for tracking and cancellation
@@ -98,7 +99,7 @@ func (e *Engine) ExecuteQueryWithTracking(ctx context.Context, query, user, clie
 	// Ensure query completion is tracked
 	defer func() {
 		if r := recover(); r != nil {
-			e.queryManager.CompleteQuery(queryID, 0, fmt.Errorf("panic: %v", r))
+			e.queryManager.CompleteQuery(queryID, 0, errors.New(ErrQueryPanic, "query execution panic", nil).AddContext("panic_value", fmt.Sprintf("%v", r)))
 			panic(r)
 		}
 	}()
@@ -107,7 +108,7 @@ func (e *Engine) ExecuteQueryWithTracking(ctx context.Context, query, user, clie
 	stmt, err := parser.Parse(query)
 	if err != nil {
 		e.queryManager.CompleteQuery(queryID, 0, err)
-		return nil, fmt.Errorf("failed to parse and validate query: %w", err)
+		return nil, errors.New(ErrQueryParseValidationFailed, "failed to parse and validate query", err)
 	}
 
 	// Debug: Log the parsed statement type
@@ -129,7 +130,7 @@ func (e *Engine) ExecuteQueryWithTracking(ctx context.Context, query, user, clie
 	case *parser.ShowStmt:
 		result, err = e.executeShowStmt(ctx, stmt)
 	default:
-		err = fmt.Errorf("unsupported statement type: %T", stmt)
+		err = errors.New(ErrUnsupportedStatementType, "unsupported statement type", nil).AddContext("statement_type", fmt.Sprintf("%T", stmt))
 	}
 
 	// Track query completion
@@ -154,7 +155,7 @@ func (e *Engine) executeReadQuery(ctx context.Context, query string) (*QueryResu
 	// Execute on DuckDB engine
 	result, err := e.duckdbEngine.ExecuteQuery(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("DuckDB execution failed: %w", err)
+		return nil, errors.New(ErrDuckDBExecutionFailed, "DuckDB execution failed", err)
 	}
 
 	return &QueryResult{
@@ -173,7 +174,7 @@ func (e *Engine) executeInsertQuery(ctx context.Context, query string) (*QueryRe
 	// TODO: Integrate with Native Server's BatchInsert when available
 	result, err := e.duckdbEngine.ExecuteQuery(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("insert execution failed: %w", err)
+		return nil, errors.New(ErrInsertExecutionFailed, "insert execution failed", err)
 	}
 
 	return &QueryResult{
@@ -194,7 +195,7 @@ func (e *Engine) executeShowStmt(ctx context.Context, stmt *parser.ShowStmt) (*Q
 	case parser.SHOW_TABLES:
 		return e.executeShowTables(ctx)
 	default:
-		return nil, fmt.Errorf("unsupported SHOW type: %s", stmt.ShowType.String())
+		return nil, errors.New(ErrUnsupportedShowType, "unsupported SHOW type", nil).AddContext("show_type", stmt.ShowType.String())
 	}
 }
 
@@ -205,7 +206,7 @@ func (e *Engine) executeShowDatabases(ctx context.Context) (*QueryResult, error)
 	// Get databases from metadata manager
 	databases, err := e.storageMgr.GetMetadataManager().ListDatabases(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list databases: %w", err)
+		return nil, errors.New(ErrDatabaseListFailed, "failed to list databases", err)
 	}
 
 	// Format result as table data
@@ -230,7 +231,7 @@ func (e *Engine) executeShowTables(ctx context.Context) (*QueryResult, error) {
 	// TODO: Support USE database context
 	tables, err := e.storageMgr.GetMetadataManager().ListAllTables(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list tables: %w", err)
+		return nil, errors.New(ErrTableListFailed, "failed to list tables", err)
 	}
 
 	// Format result as table data
@@ -266,14 +267,14 @@ func (e *Engine) executeCreateDatabase(ctx context.Context, stmt *parser.CreateD
 			}, nil
 		} else {
 			// Database exists but IF NOT EXISTS was not specified - return error
-			return nil, fmt.Errorf("database %s already exists", stmt.Name.Value)
+			return nil, errors.New(ErrDatabaseAlreadyExists, "database already exists", nil).AddContext("database_name", stmt.Name.Value)
 		}
 	}
 
 	// Create database using metadata manager
 	err := e.storageMgr.GetMetadataManager().CreateDatabase(ctx, stmt.Name.Value)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create database: %w", err)
+		return nil, errors.New(ErrDatabaseCreationFailed, "failed to create database", err)
 	}
 
 	return &QueryResult{
@@ -291,7 +292,7 @@ func (e *Engine) executeDDLQuery(ctx context.Context, query string) (*QueryResul
 	// Parse the query to determine the statement type
 	stmt, err := parser.Parse(query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse DDL query: %w", err)
+		return nil, errors.New(ErrDDLParseFailed, "failed to parse DDL query", err)
 	}
 
 	// Handle different DDL statement types
@@ -326,7 +327,7 @@ func (e *Engine) executeDDLQuery(ctx context.Context, query string) (*QueryResul
 				}, nil
 			} else {
 				// Table exists but IF NOT EXISTS was not specified - return error
-				return nil, fmt.Errorf("table %s.%s already exists", database, tableName)
+				return nil, errors.New(ErrTableAlreadyExists, "table already exists", nil).AddContext("database", database).AddContext("table", tableName)
 			}
 		}
 
@@ -339,7 +340,7 @@ func (e *Engine) executeDDLQuery(ctx context.Context, query string) (*QueryResul
 		// Create table using our storage manager
 		schemaData := e.serializeTableSchema(stmt.TableSchema)
 		if err := e.storageMgr.CreateTable(ctx, database, tableName, schemaData, storageEngine, nil); err != nil {
-			return nil, fmt.Errorf("failed to create table in storage: %w", err)
+			return nil, err
 		}
 
 		return &QueryResult{
@@ -353,7 +354,7 @@ func (e *Engine) executeDDLQuery(ctx context.Context, query string) (*QueryResul
 		// For other DDL operations, route to DuckDB for now
 		result, err := e.duckdbEngine.ExecuteQuery(ctx, query)
 		if err != nil {
-			return nil, fmt.Errorf("DDL execution failed: %w", err)
+			return nil, errors.New(ErrDDLExecutionFailed, "DDL execution failed", err)
 		}
 
 		return &QueryResult{
@@ -372,7 +373,7 @@ func (e *Engine) CreateTable(ctx context.Context, database, tableName, storageEn
 	// Store table schema in storage using Storage Manager
 	schemaData := e.serializeTableSchema(schema)
 	if err := e.storageMgr.CreateTable(ctx, database, tableName, schemaData, storageEngine, nil); err != nil {
-		return fmt.Errorf("failed to create table in storage: %w", err)
+		return err
 	}
 
 	// Register table with DuckDB engine for query execution
@@ -393,7 +394,7 @@ func (e *Engine) InsertData(ctx context.Context, tableName string, data [][]inte
 
 	// Store data in storage using Storage Manager
 	if err := e.storageMgr.InsertData(ctx, "default", tableName, data); err != nil {
-		return fmt.Errorf("failed to store data in storage: %w", err)
+		return err
 	}
 
 	e.logger.Info().Str("table", tableName).Int("inserted", len(data)).Msg("Data inserted successfully")
@@ -410,13 +411,13 @@ func (e *Engine) InsertDataStreaming(ctx context.Context, database, tableName st
 
 	// Read the JSON array
 	if err := decoder.Decode(&allData); err != nil {
-		return fmt.Errorf("failed to decode JSON data: %w", err)
+		return err
 	}
 
 	// Use the storage manager's InsertData method which already implements streaming
 	err := e.storageMgr.InsertData(ctx, database, tableName, allData)
 	if err != nil {
-		return fmt.Errorf("failed to insert data using streaming: %w", err)
+		return err
 	}
 
 	e.logger.Info().Str("database", database).Str("table", tableName).Int("rows", len(allData)).Msg("Data streamed successfully")
@@ -431,7 +432,7 @@ func (e *Engine) InsertDataBatchStreaming(ctx context.Context, database, tableNa
 	// This ensures consistency with the existing storage layer
 	err := e.storageMgr.InsertData(ctx, database, tableName, data)
 	if err != nil {
-		return fmt.Errorf("failed to insert data using streaming: %w", err)
+		return err
 	}
 
 	e.logger.Info().Str("database", database).Str("table", tableName).Int("inserted", len(data)).Msg("Data inserted successfully using batch streaming")
@@ -445,7 +446,7 @@ func (e *Engine) GetTableData(ctx context.Context, database, tableName string, l
 	// Get data from storage using Storage Manager
 	data, err := e.storageMgr.GetTableData(ctx, database, tableName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve data from storage: %w", err)
+		return nil, err
 	}
 
 	// Apply limit if needed
@@ -464,13 +465,13 @@ func (e *Engine) GetTableDataStreaming(ctx context.Context, database, tableName 
 	// Get storage engine for the table
 	engine, err := e.storageMgr.GetEngineForTable(ctx, database, tableName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get storage engine: %w", err)
+		return nil, err
 	}
 
 	// Open streaming reader for the table
 	reader, err := engine.OpenTableForRead(database, tableName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open table for reading: %w", err)
+		return nil, err
 	}
 
 	e.logger.Info().Str("database", database).Str("table", tableName).Msg("Table opened for streaming read")
@@ -484,13 +485,13 @@ func (e *Engine) GetTableSchema(ctx context.Context, tableName string) (*parser.
 	// Get schema from storage using Storage Manager
 	schemaData, err := e.storageMgr.GetTableSchema(ctx, "default", tableName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve schema from storage: %w", err)
+		return nil, err
 	}
 
 	// Parse schema from storage
 	schema, err := e.deserializeTableSchema(schemaData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize schema: %w", err)
+		return nil, err
 	}
 
 	e.logger.Info().Str("table", tableName).Msg("Schema retrieved from storage")
@@ -689,34 +690,20 @@ func (e *Engine) GetType() string {
 // Shutdown gracefully shuts down the query engine
 func (e *Engine) Shutdown(ctx context.Context) error {
 	e.logger.Info().Msg("Shutting down query engine")
-	
+
 	// Close query engine
 	if err := e.Close(); err != nil {
-		return fmt.Errorf("failed to close query engine: %w", err)
+		return errors.New(ErrQueryEngineCloseFailed, "failed to close query engine", err)
 	}
-	
+
 	e.logger.Info().Msg("Query engine shut down successfully")
 	return nil
 }
 
 // Close closes the engine and releases resources
 func (e *Engine) Close() error {
-	var errors []error
-
-	if e.duckdbEngine != nil {
-		if err := e.duckdbEngine.Close(); err != nil {
-			errors = append(errors, fmt.Errorf("failed to close DuckDB engine: %w", err))
-		}
-	}
-
-	if e.storageMgr != nil {
-		if err := e.storageMgr.Close(); err != nil {
-			errors = append(errors, fmt.Errorf("failed to close storage manager: %w", err))
-		}
-	}
-
-	if len(errors) > 0 {
-		return fmt.Errorf("multiple errors during close: %v", errors)
+	if err := e.duckdbEngine.Close(); err != nil {
+		return errors.New(ErrQueryEngineCloseFailed, "failed to close query engine", closeErrors)
 	}
 
 	return nil

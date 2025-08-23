@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/query"
 	"github.com/rs/zerolog"
 )
@@ -62,14 +63,14 @@ func (h *JDBCHandler) handleStartup(conn io.ReadWriteCloser) error {
 	// Read startup message
 	params, err := ParseStartupMessage(conn)
 	if err != nil {
-		return fmt.Errorf("failed to parse startup message: %w", err)
+		return errors.New(ErrStartupMessageParseFailed, "failed to parse startup message", err)
 	}
 
 	h.logger.Debug().Interface("params", params).Msg("Startup parameters")
 
 	// Send startup response
 	if err := WriteStartupResponse(conn); err != nil {
-		return fmt.Errorf("failed to write startup response: %w", err)
+		return errors.New(ErrStartupResponseWriteFailed, "failed to write startup response", err)
 	}
 
 	return nil
@@ -124,7 +125,7 @@ func (h *JDBCHandler) handleQuery(conn io.WriteCloser, msg *Message) error {
 
 	// Send row description
 	if err := WriteRowDescription(conn, columns); err != nil {
-		return fmt.Errorf("failed to write row description: %w", err)
+		return errors.New(ErrRowDescriptionWriteFailed, "failed to write row description", err)
 	}
 
 	// Send data rows
@@ -132,7 +133,7 @@ func (h *JDBCHandler) handleQuery(conn io.WriteCloser, msg *Message) error {
 		if rows, ok := result.Data.([][]interface{}); ok {
 			for _, row := range rows {
 				if err := WriteDataRow(conn, row); err != nil {
-					return fmt.Errorf("failed to write data row: %w", err)
+					return errors.New(ErrDataRowWriteFailed, "failed to write data row", err)
 				}
 			}
 		}
@@ -144,7 +145,7 @@ func (h *JDBCHandler) handleQuery(conn io.WriteCloser, msg *Message) error {
 		commandMsg = fmt.Sprintf("SELECT %d", result.RowCount)
 	}
 	if err := WriteCommandComplete(conn, commandMsg); err != nil {
-		return fmt.Errorf("failed to write command complete: %w", err)
+		return errors.New(ErrCommandCompleteWriteFailed, "failed to write command complete", err)
 	}
 
 	// Send ready for query
@@ -202,7 +203,7 @@ func (h *JDBCHandler) ExecuteQuery(ctx context.Context, query string) (*QueryRes
 	// Execute query using the QueryEngine
 	result, err := h.queryEngine.ExecuteQuery(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("query execution failed: %w", err)
+		return nil, errors.New(ErrQueryExecutionFailed, "query execution failed", err)
 	}
 
 	// Convert QueryEngine result to JDBC QueryResult format

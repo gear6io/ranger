@@ -6,6 +6,8 @@ import (
 	"iter"
 	"net/url"
 
+	"github.com/TFMV/icebox/pkg/errors"
+	"github.com/TFMV/icebox/server/catalog/shared"
 	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/paths"
 	"github.com/apache/iceberg-go"
@@ -32,19 +34,19 @@ func NewCatalog(cfg *config.Config, pathManager paths.PathManager) (*Catalog, er
 	// Validate catalog type
 	catalogType := cfg.GetCatalogType()
 	if catalogType != "rest" {
-		return nil, fmt.Errorf("expected catalog type 'rest', got '%s'", catalogType)
+		return nil, shared.NewCatalogValidation("catalog_type", fmt.Sprintf("expected catalog type 'rest', got '%s'", catalogType))
 	}
 
 	// Get catalog URI from path manager
 	catalogURI := pathManager.GetCatalogURI("rest")
 	if catalogURI == "" {
-		return nil, fmt.Errorf("catalog URI is required for REST catalog")
+		return nil, shared.NewCatalogValidation("catalog_uri", "catalog URI is required for REST catalog")
 	}
 
 	// Parse the URI to get base URL
 	baseURL, err := url.Parse(catalogURI)
 	if err != nil {
-		return nil, fmt.Errorf("invalid catalog URI: %w", err)
+		return nil, errors.New(shared.CatalogValidation, "invalid catalog URI", err)
 	}
 
 	// Build options for the iceberg-go REST catalog
@@ -56,7 +58,7 @@ func NewCatalog(cfg *config.Config, pathManager paths.PathManager) (*Catalog, er
 	// Create the REST catalog with required parameters
 	restCatalog, err := icebergrest.NewCatalog(context.Background(), "icebox-rest-catalog", baseURL.String(), opts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create REST catalog: %w", err)
+		return nil, errors.New(shared.CatalogInternal, "failed to create REST catalog", err)
 	}
 
 	return &Catalog{

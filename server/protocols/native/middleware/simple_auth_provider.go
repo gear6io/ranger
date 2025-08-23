@@ -4,10 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"sync"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/rs/zerolog"
 )
 
@@ -84,23 +84,23 @@ func (provider *SimpleAuthProvider) Authenticate(ctx context.Context, username, 
 	provider.mu.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("user not found: %s", username)
+		return nil, errors.Newf(ErrUserNotFound, "user not found: %s", username)
 	}
 
 	// Check password (empty password is allowed for default user)
 	if user.Password != "" && user.Password != password {
-		return nil, fmt.Errorf("invalid password for user: %s", username)
+		return nil, errors.Newf(ErrInvalidPassword, "invalid password for user: %s", username)
 	}
 
 	// Check database access
 	if user.Database != database {
-		return nil, fmt.Errorf("user %s cannot access database %s", username, database)
+		return nil, errors.Newf(ErrDatabaseAccessDenied, "user %s cannot access database %s", username, database)
 	}
 
 	// Generate token
 	token, err := provider.generateToken()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate token: %w", err)
+		return nil, errors.New(ErrTokenGenerationFailed, "failed to generate token", err)
 	}
 
 	result := &AuthResult{
@@ -127,7 +127,7 @@ func (provider *SimpleAuthProvider) ValidateToken(ctx context.Context, token str
 	// In a real implementation, you'd validate against stored tokens
 
 	if len(token) != 32 { // Simple validation
-		return nil, fmt.Errorf("invalid token format")
+		return nil, errors.New(ErrInvalidTokenFormat, "invalid token format", nil)
 	}
 
 	// For now, return a basic result
@@ -149,13 +149,13 @@ func (provider *SimpleAuthProvider) RefreshToken(ctx context.Context, token stri
 	// Validate the existing token first
 	existing, err := provider.ValidateToken(ctx, token)
 	if err != nil {
-		return nil, fmt.Errorf("invalid existing token: %w", err)
+		return nil, errors.New(ErrInvalidToken, "invalid existing token", err)
 	}
 
 	// Generate new token
 	newToken, err := provider.generateToken()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate new token: %w", err)
+		return nil, errors.New(ErrTokenGenerationFailed, "failed to generate new token", err)
 	}
 
 	// Return refreshed result
@@ -192,7 +192,7 @@ func (provider *SimpleAuthProvider) AddUser(username, password, database string,
 	defer provider.mu.Unlock()
 
 	if _, exists := provider.users[username]; exists {
-		return fmt.Errorf("user already exists: %s", username)
+		return errors.Newf(ErrUserAlreadyExists, "user already exists: %s", username)
 	}
 
 	user := &User{
@@ -220,7 +220,7 @@ func (provider *SimpleAuthProvider) RemoveUser(username string) error {
 	defer provider.mu.Unlock()
 
 	if _, exists := provider.users[username]; !exists {
-		return fmt.Errorf("user not found: %s", username)
+		return errors.Newf(ErrUserNotFound, "user not found: %s", username)
 	}
 
 	delete(provider.users, username)
@@ -239,7 +239,7 @@ func (provider *SimpleAuthProvider) GetUser(username string) (*User, error) {
 
 	user, exists := provider.users[username]
 	if !exists {
-		return nil, fmt.Errorf("user not found: %s", username)
+		return nil, errors.Newf(ErrUserNotFound, "user not found: %s", username)
 	}
 
 	return user, nil

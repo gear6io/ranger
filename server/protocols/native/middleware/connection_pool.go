@@ -2,11 +2,11 @@ package middleware
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/rs/zerolog"
 )
 
@@ -105,7 +105,7 @@ func (p *ConnectionPool) handleConnection(connCtx *ConnectionContext) error {
 			Int("active_connections", len(p.activeConnections)).
 			Msg("Connection rejected - pool at capacity")
 
-		return fmt.Errorf("connection pool at capacity (%d)", p.maxConnections)
+		return errors.New(ErrConnectionPoolAtCapacity, "connection pool at capacity", nil).AddContext("max_connections", p.maxConnections)
 	}
 
 	// Add connection to pool

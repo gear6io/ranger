@@ -107,7 +107,7 @@ func (c *CDCSetup) createCDCLogTable(ctx context.Context) error {
 
 	_, err := c.db.ExecContext(ctx, query)
 	if err != nil {
-		return errors.New(RegistryCDCCreationFailed, "failed to create CDC log table").WithCause(err)
+		return errors.New(RegistryCDCCreationFailed, "failed to create CDC log table", err)
 	}
 
 	// Create indexes for performance
@@ -120,7 +120,7 @@ func (c *CDCSetup) createCDCLogTable(ctx context.Context) error {
 
 	for _, index := range indexes {
 		if _, err := c.db.ExecContext(ctx, index); err != nil {
-			return errors.New(RegistryCDCIndexFailed, "failed to create CDC index").WithCause(err)
+			return errors.New(RegistryCDCIndexFailed, "failed to create CDC index", err)
 		}
 	}
 
@@ -133,7 +133,7 @@ func (c *CDCSetup) dropCDCLogTable(ctx context.Context) error {
 	query := fmt.Sprintf("DROP TABLE IF EXISTS %s", c.logTable)
 	_, err := c.db.ExecContext(ctx, query)
 	if err != nil {
-		return errors.New(RegistryCDCCreationFailed, "failed to drop CDC log table").WithCause(err)
+		return errors.New(RegistryCDCCreationFailed, "failed to drop CDC log table", err)
 	}
 
 	c.logger.Debug().Str("table", c.logTable).Msg("Dropped CDC log table")
@@ -145,31 +145,31 @@ func (c *CDCSetup) createTableTriggers(ctx context.Context, tableName string) er
 	// Get table columns for JSON object generation
 	columns, err := c.getTableColumns(ctx, tableName)
 	if err != nil {
-		return errors.New(RegistryCDCTriggerFailed, "failed to get columns for table").AddContext("table", tableName).WithCause(err)
+		return errors.New(RegistryCDCTriggerFailed, "failed to get columns for table", err).AddContext("table", tableName)
 	}
 
 	// Create INSERT trigger
 	insertTrigger := c.buildInsertTrigger(tableName, columns)
 	if _, err := c.db.ExecContext(ctx, insertTrigger); err != nil {
-		return errors.New(RegistryCDCTriggerFailed, "failed to create INSERT trigger for table").AddContext("table", tableName).WithCause(err)
+		return errors.New(RegistryCDCTriggerFailed, "failed to create INSERT trigger for table", err).AddContext("table", tableName)
 	}
 
 	// Create UPDATE trigger
 	updateTrigger := c.buildUpdateTrigger(tableName, columns)
 	if _, err := c.db.ExecContext(ctx, updateTrigger); err != nil {
-		return errors.New(RegistryCDCTriggerFailed, "failed to create UPDATE trigger for table").AddContext("table", tableName).WithCause(err)
+		return errors.New(RegistryCDCTriggerFailed, "failed to create UPDATE trigger for table", err).AddContext("table", tableName)
 	}
 
 	// Create DELETE trigger
 	deleteTrigger := c.buildDeleteTrigger(tableName, columns)
 	if _, err := c.db.ExecContext(ctx, deleteTrigger); err != nil {
-		return errors.New(RegistryCDCTriggerFailed, "failed to create DELETE trigger for table").AddContext("table", tableName).WithCause(err)
+		return errors.New(RegistryCDCTriggerFailed, "failed to create DELETE trigger for table", err).AddContext("table", tableName)
 	}
 
 	// Create updated_at trigger
 	updatedAtTrigger := c.buildUpdatedAtTrigger(tableName)
 	if _, err := c.db.ExecContext(ctx, updatedAtTrigger); err != nil {
-		return errors.New(RegistryCDCTriggerFailed, "failed to create updated_at trigger for table").AddContext("table", tableName).WithCause(err)
+		return errors.New(RegistryCDCTriggerFailed, "failed to create updated_at trigger for table", err).AddContext("table", tableName)
 	}
 
 	c.logger.Debug().Str("table", tableName).Msg("Created CDC triggers for table")
