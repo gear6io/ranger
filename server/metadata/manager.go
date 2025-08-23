@@ -67,7 +67,7 @@ func NewMetadataManager(catalog catalog.CatalogInterface, dbPath, basePath strin
 	// Create hybrid deployment manager
 	bunMigrator := storage.GetBunMigrationManager()
 	if bunMigrator == nil {
-		return nil, errors.New(MetadataManagerNotAvailable, "bun migrator not available")
+		return nil, errors.New(MetadataManagerNotAvailable, "bun migrator not available", nil)
 	}
 	manager.hybrid = registry.NewHybridDeploymentManager(storage, bunMigrator)
 
@@ -80,7 +80,7 @@ func (mm *MetadataManager) Start(ctx context.Context) error {
 	defer mm.mu.Unlock()
 
 	if mm.running {
-		return errors.New(MetadataManagerAlreadyRunning, "metadata manager is already running")
+		return errors.New(MetadataManagerAlreadyRunning, "metadata manager is already running", nil)
 	}
 
 	// Start Iceberg manager
@@ -114,7 +114,7 @@ func (mm *MetadataManager) Stop(ctx context.Context) error {
 	defer mm.mu.Unlock()
 
 	if !mm.running {
-		return errors.New(MetadataManagerNotRunning, "metadata manager is not running")
+		return errors.New(MetadataManagerNotRunning, "metadata manager is not running", nil)
 	}
 
 	// Stop Astha
@@ -141,7 +141,7 @@ func (mm *MetadataManager) initializeAstha(ctx context.Context) error {
 	// Get database connection from bun migration manager
 	bunDB := mm.hybrid.GetBunDB()
 	if bunDB == nil {
-		return errors.New(MetadataManagerNotAvailable, "database connection not available")
+		return errors.New(MetadataManagerNotAvailable, "database connection not available", nil)
 	}
 
 	// Get the underlying sql.DB from bun.DB
@@ -187,9 +187,7 @@ func (mm *MetadataManager) loadPendingFiles(ctx context.Context) error {
 
 		// Process pending files in batches
 		for _, file := range pendingFiles {
-			// Convert regtypes.TableFile to registry.FileInfo
-			fileInfo := convertTableFileToFileInfo(file)
-			if err := mm.icebergManager.ProcessFile(fileInfo); err != nil {
+			if err := mm.icebergManager.ProcessFile(file); err != nil {
 				mm.logger.Warn().
 					Err(err).
 					Int64("file_id", file.ID).
@@ -199,25 +197,6 @@ func (mm *MetadataManager) loadPendingFiles(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-// convertTableFileToFileInfo converts regtypes.TableFile to registry.FileInfo
-func convertTableFileToFileInfo(tableFile *regtypes.TableFile) registry.FileInfo {
-	return registry.FileInfo{
-		ID:            tableFile.ID,
-		TableID:       tableFile.TableID,
-		FileName:      tableFile.FileName,
-		FilePath:      tableFile.FilePath,
-		FileSize:      tableFile.FileSize,
-		FileType:      tableFile.FileType,
-		PartitionPath: tableFile.PartitionPath,
-		RowCount:      tableFile.RowCount,
-		Checksum:      tableFile.Checksum,
-		IsCompressed:  tableFile.IsCompressed,
-		CreatedAt:     tableFile.CreatedAt.Format("2006-01-02 15:04:05"),
-		ModifiedAt:    tableFile.ModifiedAt.Format("2006-01-02 15:04:05"),
-		State:         tableFile.IcebergMetadataState,
-	}
 }
 
 // EnsureDeploymentReady ensures the system is ready for deployment
@@ -374,7 +353,7 @@ func (mm *MetadataManager) CreateTableMetadata(ctx context.Context, database, ta
 
 // LoadTableMetadata loads detailed metadata for a table
 func (mm *MetadataManager) LoadTableMetadata(ctx context.Context, database, tableName string) (*registry.TableMetadata, error) {
-	return nil, errors.New(MetadataOperationFailed, "not implemented")
+	return nil, errors.New(MetadataOperationFailed, "not implemented", nil)
 }
 
 // ListAllTables returns a list of all tables across all databases (for storage manager)
@@ -385,4 +364,24 @@ func (mm *MetadataManager) ListAllTables(ctx context.Context) ([]string, error) 
 // UpdateTableAfterInsertion performs metadata updates after successful data insertion
 func (mm *MetadataManager) UpdateTableAfterInsertion(ctx context.Context, database, tableName string, fileInfo registry.FileInsertionInfo) error {
 	return mm.storage.UpdateTableAfterInsertion(ctx, database, tableName, fileInfo)
+}
+
+// GetCompleteTableInfoByID retrieves complete table information by table ID
+func (mm *MetadataManager) GetCompleteTableInfoByID(ctx context.Context, tableID int64) (*registry.CompleteTableInfo, error) {
+	return mm.storage.GetCompleteTableInfoByID(ctx, tableID)
+}
+
+// GetTableReferenceByID retrieves basic table reference (database + table name) by table ID
+func (mm *MetadataManager) GetTableReferenceByID(ctx context.Context, tableID int64) (*registry.TableReference, error) {
+	return mm.storage.GetTableReferenceByID(ctx, tableID)
+}
+
+// ValidateTableMetadata validates that a table has complete metadata for Iceberg operations
+func (mm *MetadataManager) ValidateTableMetadata(ctx context.Context, tableID int64) error {
+	return mm.storage.ValidateTableMetadata(ctx, tableID)
+}
+
+// GetPendingFilesForIceberg retrieves files that need Iceberg metadata generation
+func (mm *MetadataManager) GetPendingFilesForIceberg(ctx context.Context) ([]*regtypes.TableFile, error) {
+	return mm.storage.GetPendingFilesForIceberg(ctx)
 }

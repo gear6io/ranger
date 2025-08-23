@@ -107,12 +107,13 @@ func (sm *Store) IsUsingBun() bool {
 // GetPendingFilesForIceberg returns files that need Iceberg metadata generation
 func (sm *Store) GetPendingFilesForIceberg(ctx context.Context) ([]*regtypes.TableFile, error) {
 	query := `
-		SELECT id, table_id, file_name, file_path, file_size, file_type, 
-		       partition_path, row_count, checksum, is_compressed, 
-		       created_at, modified_at, iceberg_metadata_state
-		FROM table_files 
-		WHERE iceberg_metadata_state != 'completed'
-		ORDER BY created_at ASC
+		SELECT 
+			tf.id, tf.table_id, tf.file_name, tf.file_path, tf.file_size, tf.file_type,
+			tf.partition_path, tf.row_count, tf.checksum, tf.is_compressed,
+			tf.created_at, tf.modified_at, tf.iceberg_metadata_state
+		FROM table_files tf
+		WHERE tf.iceberg_metadata_state IN ('pending', 'failed')
+		ORDER BY tf.created_at ASC
 	`
 
 	rows, err := sm.db.QueryContext(ctx, query)
@@ -121,25 +122,21 @@ func (sm *Store) GetPendingFilesForIceberg(ctx context.Context) ([]*regtypes.Tab
 	}
 	defer rows.Close()
 
-	var pendingFiles []*regtypes.TableFile
+	var files []*regtypes.TableFile
 	for rows.Next() {
 		var file regtypes.TableFile
 		err := rows.Scan(
-			&file.ID, &file.TableID, &file.FileName, &file.FilePath, &file.FileSize,
-			&file.FileType, &file.PartitionPath, &file.RowCount, &file.Checksum,
-			&file.IsCompressed, &file.CreatedAt, &file.ModifiedAt, &file.IcebergMetadataState,
+			&file.ID, &file.TableID, &file.FileName, &file.FilePath, &file.FileSize, &file.FileType,
+			&file.PartitionPath, &file.RowCount, &file.Checksum, &file.IsCompressed,
+			&file.CreatedAt, &file.ModifiedAt, &file.IcebergMetadataState,
 		)
 		if err != nil {
-			return nil, errors.New(errors.CommonInternal, "failed to scan file info", err)
+			return nil, errors.New(errors.CommonInternal, "failed to scan table file", err)
 		}
-		pendingFiles = append(pendingFiles, &file)
+		files = append(files, &file)
 	}
 
-	if err = rows.Err(); err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to iterate over rows", err)
-	}
-
-	return pendingFiles, nil
+	return files, nil
 }
 
 // CreateDatabase creates a new database
@@ -608,4 +605,165 @@ func (sm *Store) loadTableFiles(ctx context.Context, database, tableName string)
 	}
 
 	return files, nil
+}
+
+// GetCompleteTableInfoByID retrieves complete table information by table ID with lazy loading
+func (sm *Store) GetCompleteTableInfoByID(ctx context.Context, tableID int64) (*CompleteTableInfo, error) {
+	if tableID <= 0 {
+		return nil, errors.New(RegistryTableNotFound, "invalid table ID", nil).AddContext("table_id", tableID)
+	}
+
+	// First, get basic table info
+	query := `
+		SELECT 
+			t.id, t.database_id, t.name, t.display_name, t.description, t.table_type,
+			t.is_temporary, t.is_external, t.row_count, t.file_count, t.total_size,
+			t.created_at, t.updated_at, t.deleted_at,
+			d.name as database_name,
+			tm.schema_version, tm.schema, tm.storage_engine, tm.engine_config,
+			tm.format, tm.compression, tm.partition_by, tm.sort_by, tm.properties,
+			tm.last_modified, tm.created_at as metadata_created, tm.updated_at as metadata_updated
+		FROM tables t
+		JOIN databases d ON t.database_id = d.id
+		LEFT JOIN table_metadata tm ON t.id = tm.table_id
+		WHERE t.id = ? AND t.deleted_at IS NULL
+	`
+
+	row := sm.db.QueryRowContext(ctx, query, tableID)
+
+	var tableInfo CompleteTableInfo
+	var dbName string
+	var schemaVersion int
+	var schema []byte
+	var storageEngine, engineConfig, format, compression, partitionBy, sortBy, properties string
+	var lastModified, metadataCreated, metadataUpdated time.Time
+
+	err := row.Scan(
+		&tableInfo.ID, &tableInfo.DatabaseID, &tableInfo.Name, &tableInfo.DisplayName, &tableInfo.Description, &tableInfo.TableType,
+		&tableInfo.IsTemporary, &tableInfo.IsExternal, &tableInfo.RowCount, &tableInfo.FileCount, &tableInfo.TotalSize,
+		&tableInfo.CreatedAt, &tableInfo.UpdatedAt, &tableInfo.DeletedAt,
+		&dbName,
+		&schemaVersion, &schema, &storageEngine, &engineConfig,
+		&format, &compression, &partitionBy, &sortBy, &properties,
+		&lastModified, &metadataCreated, &metadataUpdated,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, errors.New(RegistryTableNotFound, "table not found", nil).AddContext("table_id", tableID)
+		}
+		return nil, errors.New(errors.CommonInternal, "failed to scan table info", err).AddContext("table_id", tableID)
+	}
+
+	// Set the database name
+	tableInfo.Database = dbName
+
+	// Create TableMetadata if it exists
+	if schema != nil {
+		tableInfo.StorageInfo = &regtypes.TableMetadata{
+			ID:            tableInfo.ID,
+			TableID:       tableInfo.ID,
+			SchemaVersion: schemaVersion,
+			Schema:        schema,
+			StorageEngine: storageEngine,
+			EngineConfig:  engineConfig,
+			Format:        format,
+			Compression:   compression,
+			PartitionBy:   partitionBy,
+			SortBy:        sortBy,
+			Properties:    properties,
+			LastModified:  lastModified,
+			CreatedAt:     metadataCreated,
+			UpdatedAt:     metadataUpdated,
+		}
+	}
+
+	// Initialize lazy loading fields
+	tableInfo.initializeLazyFields(sm.db, tableID)
+
+	return &tableInfo, nil
+}
+
+// GetTableReferenceByID retrieves basic table reference (database + table name) by table ID
+func (sm *Store) GetTableReferenceByID(ctx context.Context, tableID int64) (*TableReference, error) {
+	if tableID <= 0 {
+		return nil, errors.New(RegistryTableNotFound, "invalid table ID", nil).AddContext("table_id", tableID)
+	}
+
+	query := `
+		SELECT d.name as database_name, t.name as table_name
+		FROM tables t
+		JOIN databases d ON t.database_id = d.id
+		WHERE t.id = ? AND t.deleted_at IS NULL
+	`
+
+	row := sm.db.QueryRowContext(ctx, query, tableID)
+
+	var tableRef TableReference
+	err := row.Scan(&tableRef.Database, &tableRef.Table)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, errors.New(RegistryTableNotFound, "table not found", nil).AddContext("table_id", tableID)
+		}
+		return nil, errors.New(errors.CommonInternal, "failed to scan table reference", err).AddContext("table_id", tableID)
+	}
+
+	return &tableRef, nil
+}
+
+// ValidateTableMetadata validates that a table has complete metadata for Iceberg operations
+func (sm *Store) ValidateTableMetadata(ctx context.Context, tableID int64) error {
+	if tableID <= 0 {
+		return errors.New(RegistryTableNotFound, "invalid table ID", nil).AddContext("table_id", tableID)
+	}
+
+	query := `
+		SELECT 
+			t.name as table_name,
+			d.name as database_name,
+			tm.schema,
+			tm.storage_engine,
+			tm.format
+		FROM tables t
+		JOIN databases d ON t.database_id = d.id
+		LEFT JOIN table_metadata tm ON t.id = tm.table_id
+		WHERE t.id = ? AND t.deleted_at IS NULL
+	`
+
+	row := sm.db.QueryRowContext(ctx, query, tableID)
+
+	var tableName, dbName string
+	var schema []byte
+	var storageEngine, format string
+
+	err := row.Scan(&tableName, &dbName, &schema, &storageEngine, &format)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return errors.New(RegistryTableNotFound, "table not found", nil).AddContext("table_id", tableID)
+		}
+		return errors.New(errors.CommonInternal, "failed to validate table metadata", err).AddContext("table_id", tableID)
+	}
+
+	// Check required fields
+	if dbName == "" {
+		return errors.New(RegistryTableNotFound, "database name is empty", nil).AddContext("table_id", tableID)
+	}
+
+	if tableName == "" {
+		return errors.New(RegistryTableNotFound, "table name is empty", nil).AddContext("table_id", tableID)
+	}
+
+	if schema == nil || len(schema) == 0 {
+		return errors.New(RegistryTableNotFound, "table schema is missing", nil).AddContext("table_id", tableID).AddContext("table", tableName)
+	}
+
+	if storageEngine == "" {
+		return errors.New(RegistryTableNotFound, "storage engine is not specified", nil).AddContext("table_id", tableID).AddContext("table", tableName)
+	}
+
+	if format == "" {
+		return errors.New(RegistryTableNotFound, "file format is not specified", nil).AddContext("table_id", tableID).AddContext("table", tableName)
+	}
+
+	return nil
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/metadata/registry"
+	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
 	"github.com/TFMV/icebox/server/paths"
 	"github.com/rs/zerolog"
 )
@@ -85,11 +86,11 @@ type ManifestFile struct {
 }
 
 // GenerateManifest creates an Iceberg manifest file for a batch of files
-func (mg *MetadataGenerator) GenerateManifest(ctx context.Context, batch BatchInfo, tableInfo *registry.TableInfo) (string, error) {
-	// Get manifest directory path
-	manifestDir := mg.pathManager.GetTableManifestPath([]string{"default"}, tableInfo.Name) // TODO: Get actual database from tableInfo
+func (mg *MetadataGenerator) GenerateManifest(ctx context.Context, batch BatchInfo, tableInfo *registry.CompleteTableInfo) (string, error) {
+	// Get manifest directory path using actual database and table names
+	manifestDir := mg.pathManager.GetTableManifestPath([]string{tableInfo.Database}, tableInfo.Name)
 	if err := mg.ensureDirectory(manifestDir); err != nil {
-		return "", errors.WithAdditional(err, "while creating manifest directory %s", manifestDir)
+		return "", errors.New(errors.CommonInternal, "while creating manifest directory", err).AddContext("path", manifestDir)
 	}
 
 	// Generate manifest filename
@@ -135,11 +136,11 @@ func (mg *MetadataGenerator) GenerateManifest(ctx context.Context, batch BatchIn
 
 	manifestBytes, err := json.MarshalIndent(manifestData, "", "  ")
 	if err != nil {
-		return "", errors.WithAdditional(err, "while marshaling manifest data")
+		return "", errors.New(errors.CommonInternal, "while marshaling manifest data", err)
 	}
 
 	if err := os.WriteFile(manifestPath, manifestBytes, 0644); err != nil {
-		return "", errors.WithAdditional(err, "while writing manifest file %s", manifestPath)
+		return "", errors.New(errors.CommonInternal, "while writing manifest file", err).AddContext("path", manifestPath)
 	}
 
 	mg.logger.Debug().
@@ -151,11 +152,11 @@ func (mg *MetadataGenerator) GenerateManifest(ctx context.Context, batch BatchIn
 }
 
 // UpdateMetadataFile updates the Iceberg metadata file with new snapshot information
-func (mg *MetadataGenerator) UpdateMetadataFile(ctx context.Context, batch BatchInfo, manifestPath string, tableInfo *registry.TableInfo) error {
-	// Get metadata directory path
-	metadataDir := mg.pathManager.GetTableMetadataPath([]string{"default"}, tableInfo.Name) // TODO: Get actual database from tableInfo
+func (mg *MetadataGenerator) UpdateMetadataFile(ctx context.Context, batch BatchInfo, manifestPath string, tableInfo *registry.CompleteTableInfo) error {
+	// Get metadata directory path using actual database and table names
+	metadataDir := mg.pathManager.GetTableMetadataPath([]string{tableInfo.Database}, tableInfo.Name)
 	if err := mg.ensureDirectory(metadataDir); err != nil {
-		return errors.WithAdditional(err, "while creating metadata directory %s", metadataDir)
+		return errors.New(errors.CommonInternal, "while creating metadata directory", err).AddContext("path", metadataDir)
 	}
 
 	// Generate metadata filename
@@ -190,11 +191,11 @@ func (mg *MetadataGenerator) UpdateMetadataFile(ctx context.Context, batch Batch
 	// Write metadata file
 	metadataBytes, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
-		return errors.WithAdditional(err, "while marshaling metadata")
+		return errors.New(errors.CommonInternal, "while marshaling metadata", err)
 	}
 
 	if err := os.WriteFile(metadataPath, metadataBytes, 0644); err != nil {
-		return errors.WithAdditional(err, "while writing metadata file %s", metadataPath)
+		return errors.New(errors.CommonInternal, "while writing metadata file", err).AddContext("path", metadataPath)
 	}
 
 	mg.logger.Debug().
@@ -208,13 +209,13 @@ func (mg *MetadataGenerator) UpdateMetadataFile(ctx context.Context, batch Batch
 // ensureDirectory creates a directory if it doesn't exist
 func (mg *MetadataGenerator) ensureDirectory(path string) error {
 	if err := os.MkdirAll(path, 0755); err != nil {
-		return errors.WithAdditional(err, "while creating directory %s", path)
+		return err
 	}
 	return nil
 }
 
 // calculateTotalRows calculates the total number of rows in a batch
-func (mg *MetadataGenerator) calculateTotalRows(files []registry.FileInfo) int64 {
+func (mg *MetadataGenerator) calculateTotalRows(files []*regtypes.TableFile) int64 {
 	var total int64
 	for _, file := range files {
 		total += file.RowCount
@@ -223,7 +224,7 @@ func (mg *MetadataGenerator) calculateTotalRows(files []registry.FileInfo) int64
 }
 
 // calculateTotalSize calculates the total size of files in a batch
-func (mg *MetadataGenerator) calculateTotalSize(files []registry.FileInfo) int64 {
+func (mg *MetadataGenerator) calculateTotalSize(files []*regtypes.TableFile) int64 {
 	var total int64
 	for _, file := range files {
 		total += file.FileSize

@@ -1,8 +1,8 @@
 # Registry Types (regtypes)
 
-This package contains the core type definitions for the Icebox metadata registry system.
+This package contains the core type definitions for the Icebox metadata registry system, organized for clarity and maintainability.
 
-## Overview
+## 🏗️ **Package Overview**
 
 The `regtypes` package provides strongly-typed structures that represent the database schema for the metadata registry. These types are used throughout the system for:
 
@@ -11,163 +11,178 @@ The `regtypes` package provides strongly-typed structures that represent the dat
 - API responses and data transfer
 - Type-safe metadata handling
 
-## Core Types
+## 📁 **Package Structure**
 
-### Database Entities
+```
+regtypes/
+├── types.go      # Core database types and relationships
+├── constants.go  # System constants and default values
+└── README.md     # This documentation
+```
 
-- **`User`** - User account information
-- **`Database`** - Database metadata and configuration
+## 🗄️ **Core Database Types**
+
+### **Database Entities**
+- **`User`** - User account information and authentication
+- **`Database`** - Database metadata and organization
 - **`Table`** - Table-level metadata and statistics
+
+### **Table Schema & Metadata**
 - **`TableMetadata`** - Schema and engine configuration
-- **`TableFile`** - File tracking with Iceberg metadata state
 - **`TableColumn`** - Column definitions and constraints
+
+### **Storage & Files**
+- **`TableFile`** - File tracking with Iceberg metadata state
+
+### **Table Optimization**
 - **`TablePartition`** - Partition information and statistics
 - **`TableIndex`** - Index definitions and metadata
 - **`TableConstraint`** - Table constraints and relationships
+
+### **Monitoring & Statistics**
 - **`TableStatistic`** - Statistical information about tables
 
-### Utility Types
+### **System Tables**
+- **`AccessLog`** - Complete audit trail
+- **`SchemaVersion`** - Schema versioning and migration tracking
 
-- **`TableReference`** - Simple table identifier
-- **`FileReference`** - File location and metadata
-- **`CDCLogEntry`** - Change data capture log entries
-- **`CDCSetup`** - CDC configuration and setup
-- **`ManagerConfig`** - Registry manager configuration
+## 🔧 **Type Organization**
 
-## Phase 2.4.1 Implementation Status ✅
+### **Logical Grouping**
+Types are organized into logical sections for better maintainability:
 
-### Completed Features
+1. **Core Database Entities** - Users, databases, tables
+2. **Table Metadata & Schema** - Schema and column information
+3. **Table Files & Storage** - File tracking and storage
+4. **Table Optimization & Indexing** - Partitions, indexes, constraints
+5. **Table Statistics & Monitoring** - Performance metrics
+6. **System & Audit Tables** - Logging and versioning
 
-1. **Registry Schema Integration**
-   - All core table types are properly defined with Bun ORM tags
-   - `iceberg_metadata_state` column added to `TableFile` for tracking
-   - Proper relationships and foreign key constraints defined
+### **Relationship Mapping**
+Each type includes proper Bun ORM relationship tags:
+- `belongs-to` relationships for foreign keys
+- Proper join conditions
+- Clear relationship documentation
 
-2. **CDC Event Processing**
-   - Generic event parsing for all table types
-   - Type-safe conversion from CDC logs to Registry types
-   - Support for INSERT, UPDATE, DELETE operations
+## 📊 **Constants & Defaults**
 
-3. **Astha Integration**
-   - Component registration with type adapters
-   - Event routing based on table subscriptions
-   - Proper error handling and health monitoring
+### **System Constants**
+- **Iceberg Metadata States** - File processing status tracking
+- **Table Types** - User, system, temporary, external
+- **Storage Engines** - Filesystem, memory, S3
+- **File Formats** - Parquet, JSON, CSV, Avro
+- **Compression** - None, Gzip, Snappy, LZ4
 
-4. **Iceberg Metadata Manager**
-   - File processing with state tracking
-   - Startup recovery for pending files
-   - Integration with Registry CDC events
+### **Default Values**
+- Schema version defaults
+- Table type defaults
+- Storage engine defaults
+- File format defaults
 
-### Key Improvements
+## 🚀 **Usage Examples**
 
-- **Generic Parsing**: Single `parseTableData` function handles all table types
-- **Type Safety**: Strong typing throughout the event processing pipeline
-- **Error Handling**: Comprehensive error handling with proper logging
-- **Performance**: Efficient CDC processing with batch operations
-
-## Usage Examples
-
-### Working with Table Files
-
+### **Basic Table Creation**
 ```go
-// Get pending files for Iceberg metadata generation
-pendingFiles, err := storage.GetPendingFilesForIceberg(ctx)
-if err != nil {
-    return fmt.Errorf("failed to get pending files: %w", err)
-}
+import "github.com/TFMV/icebox/server/metadata/registry/regtypes"
 
-// Process each file
-for _, file := range pendingFiles {
-    // File is already typed as *regtypes.TableFile
-    if err := icebergManager.ProcessFile(file); err != nil {
-        log.Printf("Failed to process file %d: %v", file.ID, err)
-    }
+// Create a new table
+table := &regtypes.Table{
+    DatabaseID: 1,
+    Name:       "users",
+    TableType:  regtypes.TableTypeUser,
+    RowCount:   0,
+    FileCount:  0,
+    TotalSize:  0,
 }
 ```
 
-### CDC Event Processing
-
+### **Table Metadata**
 ```go
-// CDC events are automatically parsed to appropriate types
-func (c *Component) OnEvent(ctx context.Context, event astha.Event[any]) error {
-    switch event.Table {
-    case "table_files":
-        if fileInfo, ok := event.Data.(*registry.FileInfo); ok {
-            return c.handleFileEvent(fileInfo)
-        }
-    case "tables":
-        if tableInfo, ok := event.Data.(*registry.TableInfo); ok {
-            return c.handleTableEvent(tableInfo)
-        }
-    }
-    return nil
+// Create table metadata
+metadata := &regtypes.TableMetadata{
+    TableID:       1,
+    SchemaVersion: regtypes.DefaultSchemaVersion,
+    StorageEngine: regtypes.StorageEngineFilesystem,
+    Format:        regtypes.FileTypeParquet,
+    Compression:   regtypes.CompressionSnappy,
 }
 ```
 
-### Component Registration
-
+### **File Tracking**
 ```go
-// Register component with Astha scheduler
-icebergComponent := iceberg.NewIcebergComponent(manager, logger)
-if err := astha.RegisterComponentWithInstance(
-    icebergComponent.GetComponentInfo(),
-    icebergComponent.AsSubscriberAny(),
-); err != nil {
-    return fmt.Errorf("failed to register component: %w", err)
+// Track a new file
+file := &regtypes.TableFile{
+    TableID:              1,
+    FileName:             "part-0.parquet",
+    FilePath:             "tables/users/part-0.parquet",
+    FileSize:             1024,
+    FileType:             regtypes.FileTypeParquet,
+    IcebergMetadataState: regtypes.IcebergMetadataGenerationStatePending,
 }
 ```
 
-## Architecture Benefits
+## 🔍 **Type Validation**
 
-1. **Type Safety**: Compile-time type checking prevents runtime errors
-2. **Maintainability**: Single source of truth for all Registry types
-3. **Extensibility**: Easy to add new table types and relationships
-4. **Performance**: Efficient JSON parsing and type conversion
-5. **Reliability**: Comprehensive error handling and validation
+### **Bun ORM Tags**
+All types include proper Bun ORM tags:
+- `pk` for primary keys
+- `autoincrement` for auto-incrementing fields
+- `notnull` for required fields
+- `default` for default values
+- `unique` for unique constraints
 
-## Future Enhancements
+### **JSON Tags**
+All types include JSON tags for serialization:
+- Proper field naming
+- Omit empty fields where appropriate
+- Consistent naming conventions
 
-- **Schema Validation**: Runtime schema validation for CDC events
-- **Type Registry**: Dynamic type registration for custom tables
-- **Performance Optimization**: Caching for frequently accessed types
-- **Monitoring**: Metrics and health checks for type processing
+## 📈 **Performance Considerations**
 
-## Dependencies
+### **Memory Efficiency**
+- Proper use of pointers for optional relationships
+- Efficient string handling
+- Optimized time field types
 
-- **Bun ORM**: Database operations and migrations
-- **JSON**: CDC event serialization/deserialization
-- **Time**: Timestamp handling and formatting
-- **Zerolog**: Structured logging and error reporting
+### **Database Optimization**
+- Proper indexing through relationship tags
+- Efficient join conditions
+- Optimized field types for storage
 
-## Testing
+## 🔧 **Development Guidelines**
 
-The package includes comprehensive tests for:
+### **Adding New Types**
+1. **Group logically** - Place in appropriate section
+2. **Document relationships** - Add clear relationship comments
+3. **Include tags** - Add proper Bun ORM and JSON tags
+4. **Update README** - Document new types here
 
-- Type definitions and relationships
-- JSON marshaling/unmarshaling
-- CDC event parsing
-- Type conversion utilities
-- Error handling scenarios
+### **Modifying Existing Types**
+1. **Maintain backward compatibility** - Don't break existing code
+2. **Update documentation** - Keep README current
+3. **Test thoroughly** - Ensure ORM operations still work
+4. **Consider migrations** - Plan for schema changes
 
-Run tests with:
+## 🎯 **Integration Points**
 
-```bash
-go test ./server/metadata/registry/regtypes/...
-```
+### **Registry Package**
+- Types are used by the main registry package
+- Support lazy loading and composite types
+- Enable efficient metadata operations
 
-## Contributing
+### **Iceberg Manager**
+- File tracking and metadata state
+- Batch processing and optimization
+- Performance monitoring
 
-When adding new types or modifying existing ones:
+### **CDC System**
+- Change detection and logging
+- Event processing and routing
+- Audit trail maintenance
 
-1. Ensure proper Bun ORM tags are included
-2. Add JSON tags for serialization
-3. Include proper validation and constraints
-4. Update tests to cover new functionality
-5. Document any breaking changes
+## 📚 **Related Documentation**
 
-## Related Components
-
-- **Registry Store**: Database operations and CDC setup
-- **Astha Scheduler**: Event distribution and component management
-- **Iceberg Manager**: Metadata generation and file processing
-- **Metadata Manager**: High-level coordination and integration
+- [Registry Package](../README.md) - Main registry implementation
+- [Types Package](../types.go) - Composite types with lazy loading
+- [Constants](../constants.go) - System constants and defaults
+- [Bun ORM](https://bun.uptrace.dev/) - Database ORM documentation

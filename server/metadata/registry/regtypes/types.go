@@ -7,10 +7,10 @@ import (
 )
 
 // =============================================================================
-// CORE BUN MODELS (Database Tables)
+// CORE DATABASE ENTITIES
 // =============================================================================
 
-// User represents the users table
+// User represents the users table for authentication and access control
 type User struct {
 	bun.BaseModel `bun:"table:users"`
 
@@ -23,9 +23,12 @@ type User struct {
 	CreatedAt   time.Time  `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt   time.Time  `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
 	LastLoginAt *time.Time `bun:"last_login_at" json:"last_login_at,omitempty"`
+
+	// Relations
+	// User can have many databases, tables, and access logs
 }
 
-// Database represents the databases table
+// Database represents the databases table for organizing tables
 type Database struct {
 	bun.BaseModel `bun:"table:databases"`
 
@@ -37,9 +40,13 @@ type Database struct {
 	TableCount  int       `bun:"table_count,notnull,default:0" json:"table_count"`
 	CreatedAt   time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt   time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+
+	// Relations
+	// Database belongs to a User (Owner)
+	// Database has many Tables
 }
 
-// Table represents the tables table
+// Table represents the tables table for storing table metadata
 type Table struct {
 	bun.BaseModel `bun:"table:tables"`
 
@@ -60,9 +67,14 @@ type Table struct {
 
 	// Relations
 	Database *Database `bun:"rel:belongs-to,join:database_id=id"`
+	// Table has many TableMetadata, TableFile, TableColumn, etc.
 }
 
-// TableMetadata represents the table_metadata table
+// =============================================================================
+// TABLE METADATA AND SCHEMA
+// =============================================================================
+
+// TableMetadata represents the table_metadata table for schema and engine info
 type TableMetadata struct {
 	bun.BaseModel `bun:"table:table_metadata"`
 
@@ -85,7 +97,36 @@ type TableMetadata struct {
 	Table *Table `bun:"rel:belongs-to,join:table_id=id"`
 }
 
-// TableFile represents the table_files table
+// TableColumn represents the table_columns table for column definitions
+type TableColumn struct {
+	bun.BaseModel `bun:"table:table_columns"`
+
+	ID              int       `bun:"id,pk,autoincrement" json:"id"`
+	TableID         int64     `bun:"table_id,notnull" json:"table_id"`
+	ColumnName      string    `bun:"column_name,notnull" json:"column_name"`
+	DisplayName     string    `bun:"display_name" json:"display_name"`
+	DataType        string    `bun:"data_type,notnull" json:"data_type"`
+	IsNullable      bool      `bun:"is_nullable,notnull,default:true" json:"is_nullable"`
+	IsPrimary       bool      `bun:"is_primary,notnull,default:false" json:"is_primary"`
+	IsUnique        bool      `bun:"is_unique,notnull,default:false" json:"is_unique"`
+	DefaultValue    string    `bun:"default_value" json:"default_value"`
+	Description     string    `bun:"description" json:"description"`
+	OrdinalPosition int       `bun:"ordinal_position,notnull" json:"ordinal_position"`
+	MaxLength       int       `bun:"max_length" json:"max_length"`
+	Precision       int       `bun:"precision" json:"precision"`
+	Scale           int       `bun:"scale" json:"scale"`
+	CreatedAt       time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt       time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+
+	// Relations
+	Table *Table `bun:"rel:belongs-to,join:table_id=id"`
+}
+
+// =============================================================================
+// TABLE FILES AND STORAGE
+// =============================================================================
+
+// TableFile represents the table_files table for file tracking
 type TableFile struct {
 	bun.BaseModel `bun:"table:table_files"`
 
@@ -107,32 +148,11 @@ type TableFile struct {
 	Table *Table `bun:"rel:belongs-to,join:table_id=id"`
 }
 
-// TableColumn represents the table_columns table
-type TableColumn struct {
-	bun.BaseModel `bun:"table:table_columns"`
+// =============================================================================
+// TABLE OPTIMIZATION AND INDEXING
+// =============================================================================
 
-	ID              int    `bun:"id,pk,autoincrement" json:"id"`
-	TableID         int64  `bun:"table_id,notnull" json:"table_id"`
-	ColumnName      string `bun:"column_name,notnull" json:"column_name"`
-	DisplayName     string `bun:"display_name" json:"display_name"`
-	DataType        string `bun:"data_type,notnull" json:"data_type"`
-	IsNullable      bool   `bun:"is_nullable,notnull,default:true" json:"is_nullable"`
-	IsPrimary       bool   `bun:"is_primary,notnull,default:false" json:"is_primary"`
-	IsUnique        bool   `bun:"is_unique,notnull,default:false" json:"is_unique"`
-	DefaultValue    string `bun:"default_value" json:"default_value"`
-	Description     string `bun:"description" json:"description"`
-	OrdinalPosition int    `bun:"ordinal_position,notnull" json:"ordinal_position"`
-	MaxLength       int    `bun:"max_length" json:"max_length"`
-	Precision       int    `bun:"precision" json:"precision"`
-	Scale           int    `bun:"scale" json:"scale"`
-	CreatedAt       string `bun:"created_at,notnull" json:"created_at"`
-	UpdatedAt       string `bun:"updated_at,notnull" json:"updated_at"`
-
-	// Relations
-	Table *Table `bun:"rel:belongs-to,join:table_id=id"`
-}
-
-// TablePartition represents the table_partitions table
+// TablePartition represents the table_partitions table for partitioning info
 type TablePartition struct {
 	bun.BaseModel `bun:"table:table_partitions"`
 
@@ -152,7 +172,7 @@ type TablePartition struct {
 	Table *Table `bun:"rel:belongs-to,join:table_id=id"`
 }
 
-// TableIndex represents the table_indexes table
+// TableIndex represents the table_indexes table for index definitions
 type TableIndex struct {
 	bun.BaseModel `bun:"table:table_indexes"`
 
@@ -171,7 +191,7 @@ type TableIndex struct {
 	Table *Table `bun:"rel:belongs-to,join:table_id=id"`
 }
 
-// TableConstraint represents the table_constraints table
+// TableConstraint represents the table_constraints table for constraint definitions
 type TableConstraint struct {
 	bun.BaseModel `bun:"table:table_constraints"`
 
@@ -193,7 +213,11 @@ type TableConstraint struct {
 	Table *Table `bun:"rel:belongs-to,join:table_id=id"`
 }
 
-// TableStatistic represents the table_statistics table
+// =============================================================================
+// TABLE STATISTICS AND MONITORING
+// =============================================================================
+
+// TableStatistic represents the table_statistics table for performance metrics
 type TableStatistic struct {
 	bun.BaseModel `bun:"table:table_statistics"`
 
@@ -210,7 +234,11 @@ type TableStatistic struct {
 	Table *Table `bun:"rel:belongs-to,join:table_id=id"`
 }
 
-// AccessLog represents the access_log table
+// =============================================================================
+// SYSTEM AND AUDIT TABLES
+// =============================================================================
+
+// AccessLog represents the access_log table for audit trail
 type AccessLog struct {
 	bun.BaseModel `bun:"table:access_log"`
 
@@ -228,7 +256,7 @@ type AccessLog struct {
 	User *User `bun:"rel:belongs-to,join:user_id=id"`
 }
 
-// SchemaVersion represents the schema_versions table
+// SchemaVersion represents the schema_versions table for migration tracking
 type SchemaVersion struct {
 	bun.BaseModel `bun:"table:schema_versions"`
 
@@ -239,23 +267,6 @@ type SchemaVersion struct {
 	AppliedAt   time.Time `bun:"applied_at,notnull,default:current_timestamp" json:"applied_at"`
 	Checksum    string    `bun:"checksum" json:"checksum"`
 	CreatedAt   time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-}
-
-// =============================================================================
-// UTILITY TYPES
-// =============================================================================
-
-// TableReference represents a simple table reference
-type TableReference struct {
-	Database string `json:"database"`
-	Table    string `json:"table"`
-}
-
-// FileReference represents a simple file reference
-type FileReference struct {
-	TableID int64  `json:"table_id"`
-	FileID  int64  `json:"file_id"`
-	Path    string `json:"path"`
 }
 
 // =============================================================================

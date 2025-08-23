@@ -1,7 +1,5 @@
 package regtypes
 
-import "time"
-
 // =============================================================================
 // ICEBERG METADATA GENERATION CONSTANTS
 // =============================================================================
@@ -15,34 +13,10 @@ const (
 )
 
 // =============================================================================
-// BATCH PROCESSING CONSTANTS
-// =============================================================================
-
-// Batch processing constants for optimal metadata generation
-const (
-	// Primary batching - file count
-	MaxFilesPerBatch = 10
-
-	// Secondary batching - size thresholds
-	MinBatchSizeBytes = 100 * 1024 * 1024      // 100MB
-	MaxBatchSizeBytes = 1 * 1024 * 1024 * 1024 // 1GB
-)
-
-// =============================================================================
-// RETRY CONFIGURATION
-// =============================================================================
-
-// Retry configuration for failed operations
-const (
-	MaxRetryAttempts = 3
-	BaseRetryDelay   = 1 * time.Second
-)
-
-// =============================================================================
 // TABLE TYPE CONSTANTS
 // =============================================================================
 
-// Table type constants
+// Table type constants for categorizing tables
 const (
 	TableTypeUser      = "user"
 	TableTypeSystem    = "system"
@@ -54,7 +28,7 @@ const (
 // STORAGE ENGINE CONSTANTS
 // =============================================================================
 
-// Storage engine constants
+// Storage engine constants for different storage backends
 const (
 	StorageEngineFilesystem = "filesystem"
 	StorageEngineMemory     = "memory"
@@ -65,7 +39,7 @@ const (
 // FILE TYPE CONSTANTS
 // =============================================================================
 
-// File type constants
+// File type constants for supported data formats
 const (
 	FileTypeParquet = "parquet"
 	FileTypeJSON    = "json"
@@ -77,7 +51,7 @@ const (
 // COMPRESSION CONSTANTS
 // =============================================================================
 
-// Compression constants
+// Compression constants for data compression algorithms
 const (
 	CompressionNone   = "none"
 	CompressionGzip   = "gzip"
@@ -89,7 +63,7 @@ const (
 // CONSTRAINT TYPE CONSTANTS
 // =============================================================================
 
-// Constraint type constants
+// Constraint type constants for database constraints
 const (
 	ConstraintTypePrimaryKey = "PRIMARY KEY"
 	ConstraintTypeForeignKey = "FOREIGN KEY"
@@ -99,21 +73,10 @@ const (
 )
 
 // =============================================================================
-// USER ROLE CONSTANTS
-// =============================================================================
-
-// User role constants
-const (
-	UserRoleAdmin = "admin"
-	UserRoleUser  = "user"
-	UserRoleGuest = "guest"
-)
-
-// =============================================================================
 // INDEX TYPE CONSTANTS
 // =============================================================================
 
-// Index type constants
+// Index type constants for database indexes
 const (
 	IndexTypeBTree = "BTREE"
 	IndexTypeHash  = "HASH"
@@ -125,7 +88,7 @@ const (
 // STATISTICS TYPE CONSTANTS
 // =============================================================================
 
-// Statistics type constants
+// Statistics type constants for table statistics
 const (
 	StatTypeRowCount    = "row_count"
 	StatTypeColumnStats = "column_stats"
@@ -137,7 +100,7 @@ const (
 // CDC OPERATION CONSTANTS
 // =============================================================================
 
-// CDC operation constants
+// CDC operation constants for change data capture
 const (
 	CDCOperationInsert = "INSERT"
 	CDCOperationUpdate = "UPDATE"

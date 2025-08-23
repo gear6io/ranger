@@ -9,6 +9,7 @@ import (
 
 	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/metadata/registry"
+	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
 	"github.com/TFMV/icebox/server/paths"
 	"github.com/rs/zerolog"
 )
@@ -44,10 +45,10 @@ type ManagerStats struct {
 
 // BatchInfo represents a batch of files to process together
 type BatchInfo struct {
-	ID        string              `json:"id"`
-	Files     []registry.FileInfo `json:"files"`
-	CreatedAt time.Time           `json:"created_at"`
-	Status    string              `json:"status"` // pending, processing, completed, failed
+	ID        string                `json:"id"`
+	Files     []*regtypes.TableFile `json:"files"`
+	CreatedAt time.Time             `json:"created_at"`
+	Status    string                `json:"status"` // pending, processing, completed, failed
 }
 
 // NewManager creates a new Iceberg metadata manager
@@ -78,7 +79,7 @@ func (m *Manager) Start() error {
 	defer m.mu.Unlock()
 
 	if m.running {
-		return errors.New(IcebergManagerAlreadyRunning, "manager is already running")
+		return errors.New(IcebergManagerAlreadyRunning, "manager is already running", nil)
 	}
 
 	// Start worker pool
@@ -102,7 +103,7 @@ func (m *Manager) Stop() error {
 	defer m.mu.Unlock()
 
 	if !m.running {
-		return errors.New(IcebergManagerNotRunning, "manager is not running")
+		return errors.New(IcebergManagerNotRunning, "manager is not running", nil)
 	}
 
 	// Stop worker pool
@@ -116,12 +117,12 @@ func (m *Manager) Stop() error {
 }
 
 // ProcessFile adds a file to the processing queue
-func (m *Manager) ProcessFile(fileInfo registry.FileInfo) error {
+func (m *Manager) ProcessFile(fileInfo *regtypes.TableFile) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	if !m.running {
-		return errors.New(IcebergManagerNotRunning, "manager is not running")
+		return errors.New(IcebergManagerNotRunning, "manager is not running", nil)
 	}
 
 	// Add file to queue
@@ -153,7 +154,7 @@ func (m *Manager) ProcessBatch(batch BatchInfo) error {
 	defer m.mu.RUnlock()
 
 	if !m.running {
-		return errors.New(IcebergManagerNotRunning, "manager is not running")
+		return errors.New(IcebergManagerNotRunning, "manager is not running", nil)
 	}
 
 	// Submit batch processing task to worker pool
@@ -175,7 +176,7 @@ func (m *Manager) ProcessBatch(batch BatchInfo) error {
 }
 
 // GetPendingFiles returns files waiting to be processed
-func (m *Manager) GetPendingFiles() []registry.FileInfo {
+func (m *Manager) GetPendingFiles() []*regtypes.TableFile {
 	return m.fileQueue.GetPendingFiles()
 }
 
@@ -212,25 +213,61 @@ func (m *Manager) loadPendingFiles() error {
 }
 
 // generateManifest creates an Iceberg manifest file for a batch of files
-func (m *Manager) generateManifest(batch BatchInfo) (string, error) {
-	// TODO: Get actual table info from batch or Registry
-	tableInfo := &registry.TableInfo{
-		ID:   1,               // Placeholder
-		Name: "default_table", // Placeholder
+func (m *Manager) generateManifest(ctx context.Context, batch BatchInfo, tableInfo *registry.CompleteTableInfo) (string, error) {
+	// Validate table info before processing
+	if err := m.validateTableInfo(tableInfo); err != nil {
+		return "", errors.New(IcebergManagerOperationFailed, "invalid table info", err).AddContext("table_id", tableInfo.ID)
 	}
 
-	return m.metadataGenerator.GenerateManifest(context.Background(), batch, tableInfo)
+	return m.metadataGenerator.GenerateManifest(ctx, batch, tableInfo)
 }
 
 // updateMetadataFile updates the Iceberg metadata file with new snapshot
-func (m *Manager) updateMetadataFile(batch BatchInfo, manifestPath string) error {
-	// TODO: Get actual table info from batch or Registry
-	tableInfo := &registry.TableInfo{
-		ID:   1,               // Placeholder
-		Name: "default_table", // Placeholder
+func (m *Manager) updateMetadataFile(ctx context.Context, batch BatchInfo, manifestPath string, tableInfo *registry.CompleteTableInfo) error {
+	// Validate table info before processing
+	if err := m.validateTableInfo(tableInfo); err != nil {
+		return errors.New(IcebergManagerOperationFailed, "invalid table info", err).AddContext("table_id", tableInfo.ID)
 	}
 
-	return m.metadataGenerator.UpdateMetadataFile(context.Background(), batch, manifestPath, tableInfo)
+	return m.metadataGenerator.UpdateMetadataFile(ctx, batch, manifestPath, tableInfo)
+}
+
+// validateTableInfo validates that table info is complete for Iceberg operations
+func (m *Manager) validateTableInfo(tableInfo *registry.CompleteTableInfo) error {
+	if tableInfo == nil {
+		return errors.New(IcebergManagerOperationFailed, "table info is nil", nil)
+	}
+
+	if tableInfo.ID <= 0 {
+		return errors.New(IcebergManagerOperationFailed, "invalid table ID", nil).AddContext("table_id", tableInfo.ID)
+	}
+
+	if tableInfo.Name == "" {
+		return errors.New(IcebergManagerOperationFailed, "table name is empty", nil).AddContext("table_id", tableInfo.ID)
+	}
+
+	if tableInfo.Database == "" {
+		return errors.New(IcebergManagerOperationFailed, "database name is empty", nil).AddContext("table_id", tableInfo.ID)
+	}
+
+	// Check if StorageInfo exists and has required fields
+	if tableInfo.StorageInfo == nil {
+		return errors.New(IcebergManagerOperationFailed, "table storage info is missing", nil).AddContext("table_id", tableInfo.ID)
+	}
+
+	if len(tableInfo.StorageInfo.Schema) == 0 {
+		return errors.New(IcebergManagerOperationFailed, "table schema is missing", nil).AddContext("table_id", tableInfo.ID)
+	}
+
+	if tableInfo.StorageInfo.StorageEngine == "" {
+		return errors.New(IcebergManagerOperationFailed, "storage engine is not specified", nil).AddContext("table_id", tableInfo.ID)
+	}
+
+	if tableInfo.StorageInfo.Format == "" {
+		return errors.New(IcebergManagerOperationFailed, "file format is not specified", nil).AddContext("table_id", tableInfo.ID)
+	}
+
+	return nil
 }
 
 // generateUUID generates a unique identifier for batches
