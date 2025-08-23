@@ -284,4 +284,3 @@ func (c *CDCSetup) GetCDCLogTable() string {
 func (c *CDCSetup) GetMonitoredTables() []string {
 	return c.monitoredTables
 }
-

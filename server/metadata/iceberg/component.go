@@ -168,3 +168,96 @@ func (ic *IcebergComponent) GetComponentInfo() astha.ComponentInfo {
 		Subscriptions: []string{"table_files"},
 	}
 }
+
+// AsSubscriberAny returns a type adapter that implements Subscriber[any]
+func (ic *IcebergComponent) AsSubscriberAny() astha.Subscriber[any] {
+	return &icebergComponentAdapter{component: ic}
+}
+
+// icebergComponentAdapter adapts IcebergComponent to Subscriber[any]
+type icebergComponentAdapter struct {
+	component *IcebergComponent
+}
+
+// OnEvent handles incoming events with type conversion
+func (a *icebergComponentAdapter) OnEvent(ctx context.Context, event astha.Event[any]) error {
+	// Check if this is a table_files event
+	if event.Table != "table_files" {
+		// Skip events for other tables
+		return nil
+	}
+
+	// Convert the generic data to FileInfo
+	fileInfo, ok := event.Data.(*registry.FileInfo)
+	if !ok {
+		// Try to parse from map if it's a map
+		if dataMap, ok := event.Data.(map[string]interface{}); ok {
+			// Convert map to FileInfo
+			fileInfo = &registry.FileInfo{}
+			if id, ok := dataMap["id"].(float64); ok {
+				fileInfo.ID = int64(id)
+			}
+			if tableID, ok := dataMap["table_id"].(float64); ok {
+				fileInfo.TableID = int64(tableID)
+			}
+			if fileName, ok := dataMap["file_name"].(string); ok {
+				fileInfo.FileName = fileName
+			}
+			if filePath, ok := dataMap["file_path"].(string); ok {
+				fileInfo.FilePath = filePath
+			}
+			if fileSize, ok := dataMap["file_size"].(float64); ok {
+				fileInfo.FileSize = int64(fileSize)
+			}
+			if fileType, ok := dataMap["file_type"].(string); ok {
+				fileInfo.FileType = fileType
+			}
+			if partitionPath, ok := dataMap["partition_path"].(string); ok {
+				fileInfo.PartitionPath = partitionPath
+			}
+			if rowCount, ok := dataMap["row_count"].(float64); ok {
+				fileInfo.RowCount = int64(rowCount)
+			}
+			if checksum, ok := dataMap["checksum"].(string); ok {
+				fileInfo.Checksum = checksum
+			}
+			if isCompressed, ok := dataMap["is_compressed"].(bool); ok {
+				fileInfo.IsCompressed = isCompressed
+			}
+			if createdAt, ok := dataMap["created_at"].(string); ok {
+				fileInfo.CreatedAt = createdAt
+			}
+			if modifiedAt, ok := dataMap["modified_at"].(string); ok {
+				fileInfo.ModifiedAt = modifiedAt
+			}
+			if state, ok := dataMap["iceberg_metadata_state"].(string); ok {
+				fileInfo.State = state
+			}
+		} else {
+			return fmt.Errorf("failed to convert event data to FileInfo: unexpected type %T", event.Data)
+		}
+	}
+
+	// Create a typed event for the component
+	typedEvent := astha.Event[registry.FileInfo]{
+		ID:        event.ID,
+		Table:     event.Table,
+		Operation: event.Operation,
+		Data:      *fileInfo,
+		Timestamp: event.Timestamp,
+		CreatedAt: event.CreatedAt,
+	}
+
+	// Call the component's OnEvent method
+	return a.component.OnEvent(ctx, typedEvent)
+}
+
+// OnHealth check for component health
+func (a *icebergComponentAdapter) OnHealth(ctx context.Context) error {
+	return a.component.OnHealth(ctx)
+}
+
+// OnRefresh tells component to refresh from Registry
+func (a *icebergComponentAdapter) OnRefresh(ctx context.Context) error {
+	return a.component.OnRefresh(ctx)
+}

@@ -220,8 +220,6 @@ func (sm *Store) CreateTable(ctx context.Context, database, tableName string, sc
 		return nil, fmt.Errorf("failed to get database ID for %s: %w", database, err)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
-
 	// Begin transaction
 	tx, err := sm.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -229,34 +227,41 @@ func (sm *Store) CreateTable(ctx context.Context, database, tableName string, sc
 	}
 	defer tx.Rollback()
 
-	// Insert table record using new production schema
+	// Create table record using new production schema
+	now := time.Now().UTC().Format(time.RFC3339)
 	insertTableSQL := `INSERT INTO tables (database_id, name, display_name, description, table_type, is_temporary, is_external, row_count, file_count, total_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	result, err := tx.ExecContext(ctx, insertTableSQL, dbID, tableName, tableName, "", "user", false, false, 0, 0, 0, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create table %s: %w", tableName, err)
 	}
 
-	// Get the table ID that was just created
 	tableID, err := result.LastInsertId()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get table ID: %w", err)
 	}
 
-	// Serialize engine config to JSON
+	// Create table metadata record
 	engineConfigJSON := "{}"
 	if engineConfig != nil {
-		configBytes, err := json.Marshal(engineConfig)
+		engineConfigBytes, err := json.Marshal(engineConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal engine config: %w", err)
 		}
-		engineConfigJSON = string(configBytes)
+		engineConfigJSON = string(engineConfigBytes)
 	}
 
-	// Insert table metadata record using new production schema
-	insertMetadataSQL := `INSERT INTO table_metadata (table_id, schema_version, schema, storage_engine, engine_config, format, compression, partition_by, sort_by, properties, last_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err = tx.ExecContext(ctx, insertMetadataSQL, tableID, 1, schema, storageEngine, engineConfigJSON, "", "", "", "", "{}", now, now, now)
+	insertMetadataSQL := `INSERT INTO table_metadata (table_id, schema_version, schema, storage_engine, engine_config, format, compression, last_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err = tx.ExecContext(ctx, insertMetadataSQL, tableID, 1, schema, storageEngine, engineConfigJSON, "parquet", "snappy", now, now, now)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create table metadata for %s.%s: %w", database, tableName, err)
+		return nil, fmt.Errorf("failed to create table metadata: %w", err)
+	}
+
+	// Create table files record
+	filePath := filepath.Join("databases", database, tableName, "initial.parquet")
+	insertFileSQL := `INSERT INTO table_files (table_id, file_name, file_path, file_size, file_type, partition_path, row_count, checksum, is_compressed, created_at, modified_at, iceberg_metadata_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err = tx.ExecContext(ctx, insertFileSQL, tableID, "initial.parquet", filePath, 0, "parquet", "", 0, "", true, now, now, "pending")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create table file record: %w", err)
 	}
 
 	// Update database table count
@@ -278,17 +283,17 @@ func (sm *Store) CreateTable(ctx context.Context, database, tableName string, sc
 	}
 
 	// Create metadata object
-	tableMetadata := &types.TableMetadata{
+	tableMetadata := &TableMetadata{
 		Database:      database,
 		Name:          tableName,
 		Schema:        schema,
 		StorageEngine: storageEngine,
-		EngineConfig:  engineConfig,
+		EngineConfig:  engineConfigJSON,
 		FileCount:     0,
 		TotalSize:     0,
-		LastModified:  now,
-		Created:       now,
-		Files:         []types.FileInfo{},
+		LastModified:  time.Now(),
+		Created:       time.Now(), // Use current time instead of string
+		Files:         []*regtypes.TableFile{},
 	}
 
 	return tableMetadata, nil
@@ -388,8 +393,6 @@ func (sm *Store) CreateTableMetadata(ctx context.Context, database, tableName st
 		return nil, fmt.Errorf("failed to get table ID for %s.%s: %w", database, tableName, err)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
-
 	// Serialize engine config to JSON
 	engineConfigJSON := "{}"
 	if engineConfig != nil {
@@ -400,25 +403,21 @@ func (sm *Store) CreateTableMetadata(ctx context.Context, database, tableName st
 		engineConfigJSON = string(configBytes)
 	}
 
-	// Insert table metadata record using new production schema
-	insertSQL := `INSERT INTO table_metadata (table_id, schema_version, schema, storage_engine, engine_config, format, compression, partition_by, sort_by, properties, last_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err = sm.db.ExecContext(ctx, insertSQL, tableID, 1, schema, storageEngine, engineConfigJSON, "", "", "", "", "{}", now, now, now)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create table metadata for %s.%s: %w", database, tableName, err)
-	}
+	// Get current timestamp
+	now := time.Now()
 
 	// Create metadata object
-	tableMetadata := &types.TableMetadata{
+	tableMetadata := &TableMetadata{
 		Database:      database,
 		Name:          tableName,
 		Schema:        schema,
 		StorageEngine: storageEngine,
-		EngineConfig:  engineConfig,
+		EngineConfig:  engineConfigJSON,
 		FileCount:     0,
 		TotalSize:     0,
 		LastModified:  now,
 		Created:       now,
-		Files:         []types.FileInfo{},
+		Files:         []*regtypes.TableFile{},
 	}
 
 	return tableMetadata, nil
@@ -427,45 +426,31 @@ func (sm *Store) CreateTableMetadata(ctx context.Context, database, tableName st
 // LoadTableMetadata loads detailed metadata for a table
 func (sm *Store) LoadTableMetadata(ctx context.Context, database, tableName string) (*TableMetadata, error) {
 	query := `SELECT tm.schema, tm.storage_engine, tm.engine_config, tm.last_modified, tm.created_at FROM table_metadata tm JOIN tables t ON tm.table_id = t.id JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ?`
+	row := sm.db.QueryRowContext(ctx, query, database, tableName)
 
-	var storageEngine, engineConfigJSON, lastModified, created string
 	var schema []byte
+	var storageEngine, engineConfig string
+	var lastModified, createdAt time.Time
 
-	err := sm.db.QueryRowContext(ctx, query, database, tableName).Scan(
-		&schema, &storageEngine, &engineConfigJSON, &lastModified, &created)
+	err := row.Scan(&schema, &storageEngine, &engineConfig, &lastModified, &createdAt)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("table metadata not found: %s.%s", database, tableName)
-		}
-		return nil, fmt.Errorf("failed to load table metadata: %w", err)
+		return nil, fmt.Errorf("failed to load table metadata for %s.%s: %w", database, tableName, err)
 	}
 
-	// Parse engine config JSON
-	var engineConfig map[string]interface{}
-	if engineConfigJSON != "{}" {
-		if err := json.Unmarshal([]byte(engineConfigJSON), &engineConfig); err != nil {
-			return nil, fmt.Errorf("failed to parse engine config: %w", err)
-		}
-	}
-
-	// Load files for this table
+	// Load table files
 	files, err := sm.loadTableFiles(ctx, database, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load table files: %w", err)
 	}
 
-	// Get file count and total size
-	var fileCount int
+	// Calculate file count and total size
+	fileCount := len(files)
 	var totalSize int64
-	countQuery := `SELECT COUNT(*), COALESCE(SUM(file_size), 0) FROM table_files tf JOIN tables t ON tf.table_id = t.id JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ?`
-	err = sm.db.QueryRowContext(ctx, countQuery, database, tableName).Scan(&fileCount, &totalSize)
-	if err != nil {
-		// Use defaults if query fails
-		fileCount = 0
-		totalSize = 0
+	for _, file := range files {
+		totalSize += file.FileSize
 	}
 
-	tableMetadata := &types.TableMetadata{
+	tableMetadata := &TableMetadata{
 		Database:      database,
 		Name:          tableName,
 		Schema:        schema,
@@ -474,7 +459,7 @@ func (sm *Store) LoadTableMetadata(ctx context.Context, database, tableName stri
 		FileCount:     fileCount,
 		TotalSize:     totalSize,
 		LastModified:  lastModified,
-		Created:       created,
+		Created:       createdAt,
 		Files:         files,
 	}
 
@@ -503,30 +488,43 @@ func (sm *Store) ListAllTables(ctx context.Context) ([]string, error) {
 }
 
 // loadTableFiles loads file information for a table
-func (sm *Store) loadTableFiles(ctx context.Context, database, tableName string) ([]StorageFileInfo, error) {
+func (sm *Store) loadTableFiles(ctx context.Context, database, tableName string) ([]*regtypes.TableFile, error) {
 	query := `SELECT tf.file_name, tf.file_size, tf.created_at, tf.modified_at, tf.partition_path FROM table_files tf JOIN tables t ON tf.table_id = t.id JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ? ORDER BY tf.file_name`
 	rows, err := sm.db.QueryContext(ctx, query, database, tableName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query table files: %w", err)
+		return nil, fmt.Errorf("failed to load table files: %w", err)
 	}
 	defer rows.Close()
 
-	var files []StorageFileInfo
+	var files []*regtypes.TableFile
 	for rows.Next() {
 		var fileName, created, modified, partitionPath string
 		var fileSize int64
 
 		if err := rows.Scan(&fileName, &fileSize, &created, &modified, &partitionPath); err != nil {
-			return nil, fmt.Errorf("failed to scan file info: %w", err)
+			return nil, fmt.Errorf("failed to scan table file: %w", err)
 		}
 
-		fileInfo := StorageFileInfo{
-			Name:     fileName,
-			Size:     fileSize,
-			Created:  created,
-			Modified: modified,
-			Date:     partitionPath, // Use partition_path as date for backward compatibility
+		// Parse timestamps
+		createdAt, err := time.Parse("2006-01-02 15:04:05", created)
+		if err != nil {
+			createdAt = time.Now() // Use current time as fallback
 		}
+
+		modifiedAt, err := time.Parse("2006-01-02 15:04:05", modified)
+		if err != nil {
+			modifiedAt = time.Now() // Use current time as fallback
+		}
+
+		fileInfo := &regtypes.TableFile{
+			FileName:             fileName,
+			FileSize:             fileSize,
+			CreatedAt:            createdAt,
+			ModifiedAt:           modifiedAt,
+			PartitionPath:        partitionPath,
+			IcebergMetadataState: "pending",
+		}
+
 		files = append(files, fileInfo)
 	}
 

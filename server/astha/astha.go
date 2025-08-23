@@ -103,7 +103,12 @@ func (a *Astha) Stop() error {
 
 // RegisterComponent registers a component with the scheduler
 func (a *Astha) RegisterComponent(info ComponentInfo) error {
-	return a.scheduler.RegisterComponent(info)
+	return a.scheduler.RegisterComponentInfo(info)
+}
+
+// RegisterComponentWithInstance registers a component with both metadata and instance
+func (a *Astha) RegisterComponentWithInstance(info ComponentInfo, instance Subscriber[any]) error {
+	return a.scheduler.RegisterComponent(info, instance)
 }
 
 // UnregisterComponent removes a component from the scheduler

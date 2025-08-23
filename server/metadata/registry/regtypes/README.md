@@ -1,240 +1,173 @@
 # Registry Types (regtypes)
 
-The `regtypes` package is the **single source of truth** for all types used throughout the Icebox project. It provides a consistent, type-safe interface for working with database entities, business logic, and metadata.
+This package contains the core type definitions for the Icebox metadata registry system.
 
-## 🏗️ Architecture
+## Overview
 
-### Core Bun Models
-- **Direct database table representations** with bun ORM tags
-- **Proper relations** between tables (e.g., Table belongs to Database)
-- **Type-safe database operations** with bun ORM
+The `regtypes` package provides strongly-typed structures that represent the database schema for the metadata registry. These types are used throughout the system for:
+
+- Database operations with Bun ORM
+- CDC (Change Data Capture) event processing
+- API responses and data transfer
+- Type-safe metadata handling
+
+## Core Types
+
+### Database Entities
+
+- **`User`** - User account information
+- **`Database`** - Database metadata and configuration
+- **`Table`** - Table-level metadata and statistics
+- **`TableMetadata`** - Schema and engine configuration
+- **`TableFile`** - File tracking with Iceberg metadata state
+- **`TableColumn`** - Column definitions and constraints
+- **`TablePartition`** - Partition information and statistics
+- **`TableIndex`** - Index definitions and metadata
+- **`TableConstraint`** - Table constraints and relationships
+- **`TableStatistic`** - Statistical information about tables
 
 ### Utility Types
-- **Helper structures** for common operations
-- **Configuration types** for system setup
-- **Event types** for CDC and messaging
 
-### Supertypes (Future)
-- **Will be built incrementally** based on actual business needs
-- **Extended types** that wrap bun models for business logic
-- **Additional methods** and functionality beyond basic database operations
+- **`TableReference`** - Simple table identifier
+- **`FileReference`** - File location and metadata
+- **`CDCLogEntry`** - Change data capture log entries
+- **`CDCSetup`** - CDC configuration and setup
+- **`ManagerConfig`** - Registry manager configuration
 
-## 📦 Package Structure
+## Phase 2.4.1 Implementation Status ✅
 
-```
-regtypes/
-├── types.go          # Core bun models and utility types
-├── constants.go      # Constants and configuration values
-└── README.md         # This documentation
-```
+### Completed Features
 
-## 🚀 Usage
+1. **Registry Schema Integration**
+   - All core table types are properly defined with Bun ORM tags
+   - `iceberg_metadata_state` column added to `TableFile` for tracking
+   - Proper relationships and foreign key constraints defined
 
-### Import the Package
+2. **CDC Event Processing**
+   - Generic event parsing for all table types
+   - Type-safe conversion from CDC logs to Registry types
+   - Support for INSERT, UPDATE, DELETE operations
 
-```go
-import "github.com/TFMV/icebox/server/metadata/registry/regtypes"
-```
+3. **Astha Integration**
+   - Component registration with type adapters
+   - Event routing based on table subscriptions
+   - Proper error handling and health monitoring
 
-### Using Core Bun Models
+4. **Iceberg Metadata Manager**
+   - File processing with state tracking
+   - Startup recovery for pending files
+   - Integration with Registry CDC events
 
-```go
-// Create a new table
-table := &regtypes.Table{
-    Name:        "users",
-    DatabaseID:  1,
-    TableType:   regtypes.TableTypeUser,
-    IsTemporary: false,
-}
+### Key Improvements
 
-// Use with bun ORM
-err := db.NewInsert().Model(table).Exec(ctx)
-```
+- **Generic Parsing**: Single `parseTableData` function handles all table types
+- **Type Safety**: Strong typing throughout the event processing pipeline
+- **Error Handling**: Comprehensive error handling with proper logging
+- **Performance**: Efficient CDC processing with batch operations
 
-### Using Bun Models Directly
+## Usage Examples
 
-```go
-// Create a new table
-table := &regtypes.Table{
-    Name:        "users",
-    DatabaseID:  1,
-    TableType:   regtypes.TableTypeUser,
-    IsTemporary: false,
-}
-
-// Use with bun ORM
-err := db.NewInsert().Model(table).Exec(ctx)
-```
-
-### Using Constants
+### Working with Table Files
 
 ```go
-// Use predefined constants
-if table.TableType == regtypes.TableTypeUser {
-    // Handle user table
+// Get pending files for Iceberg metadata generation
+pendingFiles, err := storage.GetPendingFilesForIceberg(ctx)
+if err != nil {
+    return fmt.Errorf("failed to get pending files: %w", err)
 }
 
-// Use batch processing constants
-if fileCount <= regtypes.MaxFilesPerBatch {
-    // Process batch
-}
-
-// Use retry constants
-for attempt := 1; attempt <= regtypes.MaxRetryAttempts; attempt++ {
-    // Retry logic
+// Process each file
+for _, file := range pendingFiles {
+    // File is already typed as *regtypes.TableFile
+    if err := icebergManager.ProcessFile(file); err != nil {
+        log.Printf("Failed to process file %d: %v", file.ID, err)
+    }
 }
 ```
 
-## 🔄 Type Hierarchy
-
-```
-Bun Models (Database Tables)
-├── User
-├── Database
-├── Table
-├── TableMetadata
-├── TableFile
-├── TableColumn
-├── TablePartition
-├── TableIndex
-├── TableConstraint
-├── TableStatistic
-├── AccessLog
-└── SchemaVersion
-
-Utility Types
-├── TableReference
-├── FileReference
-├── CDCLogEntry
-├── CDCSetup
-└── ManagerConfig
-
-Supertypes (Future - Built as Needed)
-├── Will be created incrementally
-├── Based on actual business requirements
-└── Extend bun models with business logic
-```
-
-## 🎯 Key Benefits
-
-### 1. **Single Source of Truth**
-- All types defined in one place
-- No duplicate type definitions
-- Consistent across all packages
-
-### 2. **Type Safety**
-- Proper bun ORM integration
-- Compile-time type checking
-- IDE autocomplete support
-
-### 3. **Incremental Growth**
-- Supertypes built as needed
-- No premature abstraction
-- Focus on current requirements
-
-### 4. **Performance**
-- Direct bun ORM usage
-- No unnecessary type conversions
-- Efficient database operations
-
-## 📝 Examples
-
-### Creating a Table with Columns
+### CDC Event Processing
 
 ```go
-// Create base table
-table := &regtypes.Table{
-    Name:        "orders",
-    DatabaseID:  dbID,
-    TableType:   regtypes.TableTypeUser,
-    IsTemporary: false,
-}
-
-// Create columns
-column := &regtypes.TableColumn{
-    ColumnName:      "order_id",
-    DataType:        "INTEGER",
-    IsPrimary:       true,
-    OrdinalPosition: 1,
-}
-
-// Use with bun ORM
-err := db.NewInsert().Model(table).Exec(ctx)
-err = db.NewInsert().Model(column).Exec(ctx)
-```
-
-### Working with Files
-
-```go
-// Create table file
-tableFile := &regtypes.TableFile{
-    TableID:              1,
-    FileName:             "orders_2024_01.parquet",
-    FilePath:             "/data/orders/orders_2024_01.parquet",
-    FileSize:             1024000,
-    FileType:             regtypes.FileTypeParquet,
-    IcebergMetadataState: regtypes.IcebergMetadataGenerationStatePending,
-}
-
-// Use directly with bun ORM
-err := db.NewInsert().Model(tableFile).Exec(ctx)
-```
-
-### Database Operations
-
-```go
-// Query with bun ORM
-var tables []*regtypes.Table
-err := db.NewSelect().
-    Model(&tables).
-    Where("database_id = ?", dbID).
-    Scan(ctx)
-
-// Use tables directly
-for _, table := range tables {
-    // Access table properties directly
-    tableName := table.Name
-    tableType := table.TableType
-    // ... use as needed
+// CDC events are automatically parsed to appropriate types
+func (c *Component) OnEvent(ctx context.Context, event astha.Event[any]) error {
+    switch event.Table {
+    case "table_files":
+        if fileInfo, ok := event.Data.(*registry.FileInfo); ok {
+            return c.handleFileEvent(fileInfo)
+        }
+    case "tables":
+        if tableInfo, ok := event.Data.(*registry.TableInfo); ok {
+            return c.handleTableEvent(tableInfo)
+        }
+    }
+    return nil
 }
 ```
 
-## 🔧 Migration from Old Types
+### Component Registration
 
-### Before (Old Way)
 ```go
-import "github.com/TFMV/icebox/server/metadata/registry"
-
-// Using old types
-fileInfo := registry.FileInfo{...}
-tableInfo := registry.TableInfo{...}
+// Register component with Astha scheduler
+icebergComponent := iceberg.NewIcebergComponent(manager, logger)
+if err := astha.RegisterComponentWithInstance(
+    icebergComponent.GetComponentInfo(),
+    icebergComponent.AsSubscriberAny(),
+); err != nil {
+    return fmt.Errorf("failed to register component: %w", err)
+}
 ```
 
-### After (New Way)
-```go
-import "github.com/TFMV/icebox/server/metadata/registry/regtypes"
+## Architecture Benefits
 
-// Using new regtypes
-fileInfo := regtypes.NewFileInfo(&regtypes.TableFile{...})
-tableInfo := regtypes.NewTableInfo(&regtypes.Table{...})
+1. **Type Safety**: Compile-time type checking prevents runtime errors
+2. **Maintainability**: Single source of truth for all Registry types
+3. **Extensibility**: Easy to add new table types and relationships
+4. **Performance**: Efficient JSON parsing and type conversion
+5. **Reliability**: Comprehensive error handling and validation
+
+## Future Enhancements
+
+- **Schema Validation**: Runtime schema validation for CDC events
+- **Type Registry**: Dynamic type registration for custom tables
+- **Performance Optimization**: Caching for frequently accessed types
+- **Monitoring**: Metrics and health checks for type processing
+
+## Dependencies
+
+- **Bun ORM**: Database operations and migrations
+- **JSON**: CDC event serialization/deserialization
+- **Time**: Timestamp handling and formatting
+- **Zerolog**: Structured logging and error reporting
+
+## Testing
+
+The package includes comprehensive tests for:
+
+- Type definitions and relationships
+- JSON marshaling/unmarshaling
+- CDC event parsing
+- Type conversion utilities
+- Error handling scenarios
+
+Run tests with:
+
+```bash
+go test ./server/metadata/registry/regtypes/...
 ```
 
-## 🚨 Important Notes
+## Contributing
 
-1. **Always use regtypes** - Don't create duplicate types in other packages
-2. **Use bun models directly** - They have proper database tags and relations
-3. **Constants are your friend** - Use predefined constants instead of magic strings
-4. **Build supertypes as needed** - Create them incrementally based on actual requirements
-5. **Keep it simple** - Start with bun models, extend only when necessary
+When adding new types or modifying existing ones:
 
-## 🔮 Future Enhancements
+1. Ensure proper Bun ORM tags are included
+2. Add JSON tags for serialization
+3. Include proper validation and constraints
+4. Update tests to cover new functionality
+5. Document any breaking changes
 
-- **Validation methods** for type constraints
-- **Serialization helpers** for JSON/Protobuf
-- **Comparison methods** for sorting and equality
-- **Builder patterns** for complex type construction
-- **Caching mechanisms** for frequently accessed data
+## Related Components
 
----
-
-**Remember: `regtypes` is the single source of truth for all types in Icebox. Use it consistently across all packages! 🎯**
+- **Registry Store**: Database operations and CDC setup
+- **Astha Scheduler**: Event distribution and component management
+- **Iceberg Manager**: Metadata generation and file processing
+- **Metadata Manager**: High-level coordination and integration

@@ -47,10 +47,10 @@ type ComponentInfo struct {
 // EventStore interface for storing and retrieving events
 type EventStore interface {
 	// StoreEvent stores an event for processing
-	StoreEvent(ctx context.Context, event Event[any]) error
+	StoreEvent(ctx context.Context, event any) error
 
 	// GetEvents retrieves events for a specific table
-	GetEvents(ctx context.Context, table string, limit int) ([]Event[any], error)
+	GetEvents(ctx context.Context, table string, limit int) ([]any, error)
 
 	// MarkEventProcessed marks an event as successfully processed
 	MarkEventProcessed(ctx context.Context, eventID int64) error

@@ -6,34 +6,37 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
 	"github.com/rs/zerolog"
 )
 
 // Scheduler manages component subscriptions and event distribution
 type Scheduler struct {
-	mu              sync.RWMutex
-	components      map[string]ComponentInfo
-	subscriptions   map[string][]string // table -> component names
-	eventStore      EventStore
-	cdcConsumer     *CDCConsumer
-	logger          zerolog.Logger
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
+	mu                 sync.RWMutex
+	components         map[string]ComponentInfo
+	componentInstances map[string]Subscriber[any] // Store actual component instances
+	subscriptions      map[string][]string        // table -> component names
+	eventStore         EventStore
+	cdcConsumer        *CDCConsumer
+	logger             zerolog.Logger
+	ctx                context.Context
+	cancel             context.CancelFunc
+	wg                 sync.WaitGroup
 }
 
 // NewScheduler creates a new Astha scheduler
 func NewScheduler(eventStore EventStore, cdcConsumer *CDCConsumer, logger zerolog.Logger) *Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	return &Scheduler{
-		components:    make(map[string]ComponentInfo),
-		subscriptions: make(map[string][]string),
-		eventStore:    eventStore,
-		cdcConsumer:   cdcConsumer,
-		logger:        logger,
-		ctx:           ctx,
-		cancel:        cancel,
+		components:         make(map[string]ComponentInfo),
+		componentInstances: make(map[string]Subscriber[any]),
+		subscriptions:      make(map[string][]string),
+		eventStore:         eventStore,
+		cdcConsumer:        cdcConsumer,
+		logger:             logger,
+		ctx:                ctx,
+		cancel:             cancel,
 	}
 }
 
@@ -80,7 +83,47 @@ func (s *Scheduler) Stop() error {
 }
 
 // RegisterComponent registers a component with the scheduler
-func (s *Scheduler) RegisterComponent(info ComponentInfo) error {
+func (s *Scheduler) RegisterComponent(info ComponentInfo, instance Subscriber[any]) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Validate component info
+	if info.Name == "" {
+		return fmt.Errorf("component name cannot be empty")
+	}
+
+	if len(info.Subscriptions) == 0 {
+		return fmt.Errorf("component must subscribe to at least one table")
+	}
+
+	if instance == nil {
+		return fmt.Errorf("component instance cannot be nil")
+	}
+
+	// Update component info
+	info.Status = "active"
+	info.LastSeen = time.Now()
+	s.components[info.Name] = info
+	s.componentInstances[info.Name] = instance
+
+	// Update subscriptions
+	for _, table := range info.Subscriptions {
+		if s.subscriptions[table] == nil {
+			s.subscriptions[table] = make([]string, 0)
+		}
+		s.subscriptions[table] = append(s.subscriptions[table], info.Name)
+	}
+
+	s.logger.Info().
+		Str("component", info.Name).
+		Strs("subscriptions", info.Subscriptions).
+		Msg("Component registered with scheduler")
+
+	return nil
+}
+
+// RegisterComponentInfo registers only component metadata (for backward compatibility)
+func (s *Scheduler) RegisterComponentInfo(info ComponentInfo) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -109,7 +152,7 @@ func (s *Scheduler) RegisterComponent(info ComponentInfo) error {
 	s.logger.Info().
 		Str("component", info.Name).
 		Strs("subscriptions", info.Subscriptions).
-		Msg("Component registered with scheduler")
+		Msg("Component metadata registered with scheduler (no instance)")
 
 	return nil
 }
@@ -137,8 +180,9 @@ func (s *Scheduler) UnregisterComponent(name string) error {
 		}
 	}
 
-	// Remove component
+	// Remove component and instance
 	delete(s.components, name)
+	delete(s.componentInstances, name)
 
 	s.logger.Info().
 		Str("component", name).
@@ -193,7 +237,7 @@ func (s *Scheduler) distributeEvents() error {
 
 	// Get all tables with events
 	eventCounts := s.eventStore.GetEventCount()
-	
+
 	for table, count := range eventCounts {
 		if count == 0 {
 			continue
@@ -227,7 +271,7 @@ func (s *Scheduler) distributeEvents() error {
 }
 
 // distributeEventToSubscribers distributes a single event to all subscribed components
-func (s *Scheduler) distributeEventToSubscribers(event Event[any], subscribers []string) {
+func (s *Scheduler) distributeEventToSubscribers(event any, subscribers []string) {
 	for _, subscriberName := range subscribers {
 		component, exists := s.components[subscriberName]
 		if !exists {
@@ -245,22 +289,121 @@ func (s *Scheduler) distributeEventToSubscribers(event Event[any], subscribers [
 			continue
 		}
 
-		// Note: In a real implementation, we would call the component's OnEvent method
-		// For now, we just mark the event as processed
-		if err := s.eventStore.MarkEventProcessed(s.ctx, event.ID); err != nil {
+		// Get the actual component instance to call OnEvent
+		instance, instanceExists := s.componentInstances[subscriberName]
+		if !instanceExists {
+			s.logger.Warn().
+				Str("subscriber", subscriberName).
+				Msg("Component instance not found, skipping event distribution")
+			continue
+		}
+
+		// Extract event information using type assertion
+		var eventID int64
+		var table string
+		var operation string
+
+		switch e := event.(type) {
+		case Event[regtypes.Table]:
+			eventID = e.ID
+			table = e.Table
+			operation = e.Operation
+		case Event[regtypes.TableFile]:
+			eventID = e.ID
+			table = e.Table
+			operation = e.Operation
+		case Event[regtypes.TableMetadata]:
+			eventID = e.ID
+			table = e.Table
+			operation = e.Operation
+		case Event[regtypes.TableStatistic]:
+			eventID = e.ID
+			table = e.Table
+			operation = e.Operation
+		default:
+			s.logger.Warn().
+				Str("subscriber", subscriberName).
+				Str("event_type", fmt.Sprintf("%T", event)).
+				Msg("Unknown event type, skipping")
+			continue
+		}
+
+		// Convert the event to Event[any] for the component
+		var eventAny Event[any]
+		switch e := event.(type) {
+		case Event[regtypes.Table]:
+			eventAny = Event[any]{
+				ID:        e.ID,
+				Table:     e.Table,
+				Operation: e.Operation,
+				Data:      e.Data,
+				Timestamp: e.Timestamp,
+				CreatedAt: e.CreatedAt,
+			}
+		case Event[regtypes.TableFile]:
+			eventAny = Event[any]{
+				ID:        e.ID,
+				Table:     e.Table,
+				Operation: e.Operation,
+				Data:      e.Data,
+				Timestamp: e.Timestamp,
+				CreatedAt: e.CreatedAt,
+			}
+		case Event[regtypes.TableMetadata]:
+			eventAny = Event[any]{
+				ID:        e.ID,
+				Table:     e.Table,
+				Operation: e.Operation,
+				Data:      e.Data,
+				Timestamp: e.Timestamp,
+				CreatedAt: e.CreatedAt,
+			}
+		case Event[regtypes.TableStatistic]:
+			eventAny = Event[any]{
+				ID:        e.ID,
+				Table:     e.Table,
+				Operation: e.Operation,
+				Data:      e.Data,
+				Timestamp: e.Timestamp,
+				CreatedAt: e.CreatedAt,
+			}
+		default:
+			s.logger.Warn().
+				Str("subscriber", subscriberName).
+				Str("event_type", fmt.Sprintf("%T", event)).
+				Msg("Unknown event type, skipping")
+			continue
+		}
+
+		// Call the component's OnEvent method
+		if err := instance.OnEvent(s.ctx, eventAny); err != nil {
 			s.logger.Error().
 				Err(err).
-				Int64("event_id", event.ID).
+				Int64("event_id", eventID).
+				Str("table", table).
+				Str("operation", operation).
+				Str("subscriber", subscriberName).
+				Msg("Failed to process event in component")
+
+			// Mark component as having an error
+			s.UpdateComponentHealth(subscriberName, "error")
+			continue
+		}
+
+		// Mark event as processed
+		if err := s.eventStore.MarkEventProcessed(s.ctx, eventID); err != nil {
+			s.logger.Error().
+				Err(err).
+				Int64("event_id", eventID).
 				Str("subscriber", subscriberName).
 				Msg("Failed to mark event as processed")
 		}
 
-		s.logger.Trace().
-			Int64("event_id", event.ID).
-			Str("table", event.Table).
-			Str("operation", event.Operation).
+		s.logger.Debug().
+			Int64("event_id", eventID).
+			Str("table", table).
 			Str("subscriber", subscriberName).
-			Msg("Event distributed to subscriber")
+			Msg("Event successfully processed by component")
 	}
 }
 
@@ -326,11 +469,11 @@ func (s *Scheduler) GetSchedulerStats() map[string]interface{} {
 	processedCount := s.eventStore.GetProcessedCount()
 
 	return map[string]interface{}{
-		"component_count":    len(s.components),
-		"table_count":        len(s.subscriptions),
-		"event_counts":       eventCounts,
-		"processed_events":   processedCount,
-		"active_components":  s.getActiveComponentCount(),
+		"component_count":   len(s.components),
+		"table_count":       len(s.subscriptions),
+		"event_counts":      eventCounts,
+		"processed_events":  processedCount,
+		"active_components": s.getActiveComponentCount(),
 	}
 }
 
@@ -344,4 +487,3 @@ func (s *Scheduler) getActiveComponentCount() int {
 	}
 	return count
 }
-

@@ -10,6 +10,7 @@ import (
 	"github.com/TFMV/icebox/server/catalog"
 	"github.com/TFMV/icebox/server/metadata/iceberg"
 	"github.com/TFMV/icebox/server/metadata/registry"
+	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
 	"github.com/TFMV/icebox/server/paths"
 	"github.com/rs/zerolog"
 	"github.com/uptrace/bun"
@@ -153,7 +154,7 @@ func (mm *MetadataManager) initializeAstha(ctx context.Context) error {
 	// Register Iceberg component with Astha
 	icebergComponent := iceberg.NewIcebergComponent(mm.icebergManager, mm.logger)
 
-	if err := asthaInstance.RegisterComponent(icebergComponent.GetComponentInfo()); err != nil {
+	if err := asthaInstance.RegisterComponentWithInstance(icebergComponent.GetComponentInfo(), icebergComponent.AsSubscriberAny()); err != nil {
 		return fmt.Errorf("failed to register iceberg component: %w", err)
 	}
 
@@ -176,7 +177,9 @@ func (mm *MetadataManager) loadPendingFiles(ctx context.Context) error {
 
 		// Process pending files in batches
 		for _, file := range pendingFiles {
-			if err := mm.icebergManager.ProcessFile(file); err != nil {
+			// Convert regtypes.TableFile to registry.FileInfo
+			fileInfo := convertTableFileToFileInfo(file)
+			if err := mm.icebergManager.ProcessFile(fileInfo); err != nil {
 				mm.logger.Warn().
 					Err(err).
 					Int64("file_id", file.ID).
@@ -186,6 +189,25 @@ func (mm *MetadataManager) loadPendingFiles(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// convertTableFileToFileInfo converts regtypes.TableFile to registry.FileInfo
+func convertTableFileToFileInfo(tableFile *regtypes.TableFile) registry.FileInfo {
+	return registry.FileInfo{
+		ID:            tableFile.ID,
+		TableID:       tableFile.TableID,
+		FileName:      tableFile.FileName,
+		FilePath:      tableFile.FilePath,
+		FileSize:      tableFile.FileSize,
+		FileType:      tableFile.FileType,
+		PartitionPath: tableFile.PartitionPath,
+		RowCount:      tableFile.RowCount,
+		Checksum:      tableFile.Checksum,
+		IsCompressed:  tableFile.IsCompressed,
+		CreatedAt:     tableFile.CreatedAt.Format("2006-01-02 15:04:05"),
+		ModifiedAt:    tableFile.ModifiedAt.Format("2006-01-02 15:04:05"),
+		State:         tableFile.IcebergMetadataState,
+	}
 }
 
 // EnsureDeploymentReady ensures the system is ready for deployment

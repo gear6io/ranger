@@ -8,8 +8,25 @@ import (
 	"time"
 
 	"github.com/TFMV/icebox/server/metadata/registry"
+	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
 	"github.com/rs/zerolog"
 )
+
+// =============================================================================
+// TYPE ALIASES FOR CLEANER USAGE
+// =============================================================================
+
+// TableEvent represents an event with Table data
+type TableEvent = Event[regtypes.Table]
+
+// TableFileEvent represents an event with TableFile data
+type TableFileEvent = Event[regtypes.TableFile]
+
+// TableMetadataEvent represents an event with TableMetadata data
+type TableMetadataEvent = Event[regtypes.TableMetadata]
+
+// TableStatisticEvent represents an event with TableStatistic data
+type TableStatisticEvent = Event[regtypes.TableStatistic]
 
 // CDCConsumer polls the CDC log table and processes changes
 type CDCConsumer struct {
@@ -195,15 +212,77 @@ func (c *CDCConsumer) deleteProcessedLogs(ctx context.Context, changes []registr
 	return nil
 }
 
-// convertChangeToEvent converts a CDC change to an Astha event
-func (c *CDCConsumer) convertChangeToEvent(change registry.CDCLogEntry) (Event[any], error) {
+// convertChangeToEvent converts a CDC change to an Astha event with type safety
+func (c *CDCConsumer) convertChangeToEvent(change registry.CDCLogEntry) (any, error) {
+
+	// Use the new generic functions for full type safety
+	switch change.TableName {
+	case "tables":
+		event, err := convertChangeToEventGeneric[regtypes.Table](change)
+		if err != nil {
+			c.logger.Error().
+				Err(err).
+				Str("table", change.TableName).
+				Str("operation", change.Operation).
+				Msg("Failed to parse table data")
+			return nil, fmt.Errorf("failed to parse table data: %w", err)
+		}
+		return event, nil
+
+	case "table_files":
+		event, err := convertChangeToEventGeneric[regtypes.TableFile](change)
+		if err != nil {
+			c.logger.Error().
+				Err(err).
+				Str("table", change.TableName).
+				Str("operation", change.Operation).
+				Msg("Failed to parse table data")
+			return nil, fmt.Errorf("failed to parse table data: %w", err)
+		}
+		return event, nil
+
+	case "table_metadata":
+		event, err := convertChangeToEventGeneric[regtypes.TableMetadata](change)
+		if err != nil {
+			c.logger.Error().
+				Err(err).
+				Str("table", change.TableName).
+				Str("operation", change.Operation).
+				Msg("Failed to parse table data")
+			return nil, fmt.Errorf("failed to parse table data: %w", err)
+		}
+		return event, nil
+
+	case "table_statistics":
+		event, err := convertChangeToEventGeneric[regtypes.TableStatistic](change)
+		if err != nil {
+			c.logger.Error().
+				Err(err).
+				Str("table", change.TableName).
+				Str("operation", change.Operation).
+				Msg("Failed to parse table data")
+			return nil, fmt.Errorf("failed to parse table data: %w", err)
+		}
+		return event, nil
+
+	default:
+		return nil, fmt.Errorf("unknown table type: %s", change.TableName)
+	}
+}
+
+// =============================================================================
+// STANDALONE GENERIC FUNCTIONS FOR TYPE SAFETY
+// =============================================================================
+
+// convertChangeToEventGeneric is a standalone generic function that converts CDC changes to typed events
+func convertChangeToEventGeneric[T any](change registry.CDCLogEntry) (Event[T], error) {
 	// Parse timestamp with subsecond precision
 	timestamp, err := time.Parse("2006-01-02 15:04:05.999999999", change.Timestamp)
 	if err != nil {
 		// Try without subseconds
 		timestamp, err = time.Parse("2006-01-02 15:04:05", change.Timestamp)
 		if err != nil {
-			return Event[any]{}, fmt.Errorf("failed to parse timestamp: %w", err)
+			return Event[T]{}, fmt.Errorf("failed to parse timestamp: %w", err)
 		}
 	}
 
@@ -212,130 +291,73 @@ func (c *CDCConsumer) convertChangeToEvent(change registry.CDCLogEntry) (Event[a
 	if err != nil {
 		createdAt, err = time.Parse("2006-01-02 15:04:05", change.CreatedAt)
 		if err != nil {
-			return Event[any]{}, fmt.Errorf("failed to parse created_at: %w", err)
+			return Event[T]{}, fmt.Errorf("failed to parse created_at: %w", err)
 		}
 	}
 
-	// Parse table-specific data based on operation
-	var data any
-	switch change.TableName {
-	case "tables":
-		data = c.parseTableStats(change)
-	case "table_files":
-		data = c.parseTableFile(change)
-	case "file_statistics":
-		data = c.parseFileStatistics(change)
-	case "table_metadata":
-		data = c.parseTableMetadata(change)
-	default:
-		// For unknown tables, use raw JSON data
-		if change.Operation == "INSERT" || change.Operation == "UPDATE" {
-			data = change.After
-		} else {
-			data = change.Before
-		}
+	// Parse data to type T directly
+	var data T
+	if err := parseDataToType[T](change, &data); err != nil {
+		return Event[T]{}, fmt.Errorf("failed to parse data to type %T: %w", data, err)
 	}
 
-	return Event[any]{
+	return Event[T]{
 		ID:        change.ID,
 		Table:     change.TableName,
 		Operation: change.Operation,
-		Data:      data,
+		Data:      data, // This is type T, maintaining full type safety!
 		Timestamp: timestamp,
 		CreatedAt: createdAt,
 	}, nil
 }
 
-// parseTableStats parses table statistics from CDC change
-// Note: This will use the actual Registry table structure
-func (c *CDCConsumer) parseTableStats(change registry.CDCLogEntry) map[string]interface{} {
-	var stats map[string]interface{}
-
+// parseDataToType is a standalone generic function that parses JSON data to any type T
+func parseDataToType[T any](change registry.CDCLogEntry, result *T) error {
+	// Determine which data to parse based on operation
+	var jsonData string
 	switch change.Operation {
 	case "INSERT", "UPDATE":
-		if change.After != "" {
-			if err := json.Unmarshal([]byte(change.After), &stats); err != nil {
-				c.logger.Error().Err(err).Msg("Failed to parse table stats from CDC change")
-			}
-		}
+		jsonData = change.After
 	case "DELETE":
-		if change.Before != "" {
-			if err := json.Unmarshal([]byte(change.Before), &stats); err != nil {
-				c.logger.Error().Err(err).Msg("Failed to parse table stats from CDC change")
-			}
-		}
+		jsonData = change.Before
+	default:
+		return fmt.Errorf("unknown operation %s", change.Operation)
 	}
 
-	return stats
+	if jsonData == "" {
+		return fmt.Errorf("no data available for operation %s", change.Operation)
+	}
+
+	// Parse directly to type T
+	if err := json.Unmarshal([]byte(jsonData), result); err != nil {
+		return fmt.Errorf("failed to parse data to type %T: %w", result, err)
+	}
+
+	return nil
 }
 
-// parseTableFile parses table file information from CDC change
-// Note: This will use the actual Registry table structure
-func (c *CDCConsumer) parseTableFile(change registry.CDCLogEntry) map[string]interface{} {
-	var file map[string]interface{}
+// =============================================================================
+// TYPE-SAFE CONVERSION HELPERS
+// =============================================================================
 
-	switch change.Operation {
-	case "INSERT", "UPDATE":
-		if change.After != "" {
-			if err := json.Unmarshal([]byte(change.After), &file); err != nil {
-				c.logger.Error().Err(err).Msg("Failed to parse table file from CDC change")
-			}
-		}
-	case "DELETE":
-		if change.Before != "" {
-			if err := json.Unmarshal([]byte(change.Before), &file); err != nil {
-				c.logger.Error().Err(err).Msg("Failed to parse table file from CDC change")
-			}
-		}
-	}
-
-	return file
+// ConvertToTableEvent converts a CDC change to a TableEvent with type safety
+func ConvertToTableEvent(change registry.CDCLogEntry) (TableEvent, error) {
+	return convertChangeToEventGeneric[regtypes.Table](change)
 }
 
-// parseFileStatistics parses file statistics from CDC change
-// Note: This will use the actual Registry table structure
-func (c *CDCConsumer) parseFileStatistics(change registry.CDCLogEntry) map[string]interface{} {
-	var stats map[string]interface{}
-
-	switch change.Operation {
-	case "INSERT", "UPDATE":
-		if change.After != "" {
-			if err := json.Unmarshal([]byte(change.After), &stats); err != nil {
-				c.logger.Error().Err(err).Msg("Failed to parse file statistics from CDC change")
-			}
-		}
-	case "DELETE":
-		if change.Before != "" {
-			if err := json.Unmarshal([]byte(change.Before), &stats); err != nil {
-				c.logger.Error().Err(err).Msg("Failed to parse file statistics from CDC change")
-			}
-		}
-	}
-
-	return stats
+// ConvertToTableFileEvent converts a CDC change to a TableFileEvent with type safety
+func ConvertToTableFileEvent(change registry.CDCLogEntry) (TableFileEvent, error) {
+	return convertChangeToEventGeneric[regtypes.TableFile](change)
 }
 
-// parseTableMetadata parses table metadata from CDC change
-// Note: This will use the actual Registry table structure
-func (c *CDCConsumer) parseTableMetadata(change registry.CDCLogEntry) map[string]interface{} {
-	var metadata map[string]interface{}
+// ConvertToTableMetadataEvent converts a CDC change to a TableMetadataEvent with type safety
+func ConvertToTableMetadataEvent(change registry.CDCLogEntry) (TableMetadataEvent, error) {
+	return convertChangeToEventGeneric[regtypes.TableMetadata](change)
+}
 
-	switch change.Operation {
-	case "INSERT", "UPDATE":
-		if change.After != "" {
-			if err := json.Unmarshal([]byte(change.After), &metadata); err != nil {
-				c.logger.Error().Err(err).Msg("Failed to parse table metadata from CDC change")
-			}
-		}
-	case "DELETE":
-		if change.Before != "" {
-			if err := json.Unmarshal([]byte(change.Before), &metadata); err != nil {
-				c.logger.Error().Err(err).Msg("Failed to parse table metadata from CDC change")
-			}
-		}
-	}
-
-	return metadata
+// ConvertToTableStatisticEvent converts a CDC change to a TableStatisticEvent with type safety
+func ConvertToTableStatisticEvent(change registry.CDCLogEntry) (TableStatisticEvent, error) {
+	return convertChangeToEventGeneric[regtypes.TableStatistic](change)
 }
 
 // SetBatchSize sets the batch size for processing
