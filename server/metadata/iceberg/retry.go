@@ -5,24 +5,30 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/metadata/registry"
 	"github.com/rs/zerolog"
 )
 
+// Package-specific error codes for retry operations
+var (
+	RetryOperationFailed = errors.MustNewCode("iceberg.retry.operation_failed")
+)
+
 // RetryConfig holds retry configuration
 type RetryConfig struct {
-	MaxAttempts int           `json:"max_attempts"`
-	BaseDelay   time.Duration `json:"base_delay"`
-	MaxDelay    time.Duration `json:"max_delay"`
-	BackoffFactor float64     `json:"backoff_factor"`
+	MaxAttempts   int           `json:"max_attempts"`
+	BaseDelay     time.Duration `json:"base_delay"`
+	MaxDelay      time.Duration `json:"max_delay"`
+	BackoffFactor float64       `json:"backoff_factor"`
 }
 
 // DefaultRetryConfig returns default retry configuration
 func DefaultRetryConfig() *RetryConfig {
 	return &RetryConfig{
-		MaxAttempts:  3,
-		BaseDelay:    1 * time.Second,
-		MaxDelay:     30 * time.Second,
+		MaxAttempts:   3,
+		BaseDelay:     1 * time.Second,
+		MaxDelay:      30 * time.Second,
 		BackoffFactor: 2.0,
 	}
 }
@@ -85,7 +91,7 @@ func RetryWithBackoff(ctx context.Context, config *RetryConfig, operation Retrya
 	}
 
 	// All attempts failed
-	return fmt.Errorf("operation failed after %d attempts: %w", config.MaxAttempts, lastErr)
+	return errors.New(RetryOperationFailed, "operation failed after retry attempts").AddContext("max_attempts", fmt.Sprintf("%d", config.MaxAttempts)).WithCause(lastErr)
 }
 
 // RetryableFileOperation represents a file operation that can be retried

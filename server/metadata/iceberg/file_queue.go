@@ -4,7 +4,14 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/metadata/registry"
+)
+
+// Package-specific error codes for file queue
+var (
+	FileQueueAlreadyQueued = errors.MustNewCode("iceberg.file_queue.already_queued")
+	FileQueueNotProcessing = errors.MustNewCode("iceberg.file_queue.not_processing")
 )
 
 // FileQueue manages a FIFO queue of files for Iceberg metadata processing
@@ -41,7 +48,7 @@ func (q *FileQueue) Enqueue(fileInfo registry.FileInfo) error {
 
 	// Check if file is already in queue or processing
 	if q.isFileInQueue(fileInfo.ID) || q.isFileProcessing(fileInfo.ID) {
-		return fmt.Errorf("file %d is already queued or processing", fileInfo.ID)
+		return errors.New(FileQueueAlreadyQueued, "file is already queued or processing").AddContext("file_id", fmt.Sprintf("%d", fileInfo.ID))
 	}
 
 	q.pending = append(q.pending, fileInfo)
@@ -78,7 +85,7 @@ func (q *FileQueue) MarkCompleted(fileID int64) error {
 	defer q.mu.Unlock()
 
 	if !q.isFileProcessing(fileID) {
-		return fmt.Errorf("file %d is not in processing state", fileID)
+		return errors.New(FileQueueNotProcessing, "file is not in processing state").AddContext("file_id", fmt.Sprintf("%d", fileID))
 	}
 
 	delete(q.processing, fileID)
@@ -94,7 +101,7 @@ func (q *FileQueue) MarkFailed(fileID int64) error {
 	defer q.mu.Unlock()
 
 	if !q.isFileProcessing(fileID) {
-		return fmt.Errorf("file %d is not in processing state", fileID)
+		return errors.New(FileQueueNotProcessing, "file is not in processing state").AddContext("file_id", fmt.Sprintf("%d", fileID))
 	}
 
 	delete(q.processing, fileID)

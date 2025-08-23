@@ -3,14 +3,22 @@ package iceberg
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/metadata/registry"
 	"github.com/TFMV/icebox/server/paths"
 	"github.com/rs/zerolog"
+)
+
+// Package-specific error codes for metadata generation
+var (
+	MetadataGenerationFailed = errors.MustNewCode("iceberg.metadata.generation_failed")
+	MetadataDirectoryFailed  = errors.MustNewCode("iceberg.metadata.directory_failed")
+	MetadataFileFailed       = errors.MustNewCode("iceberg.metadata.file_failed")
 )
 
 // MetadataGenerator handles the creation of Iceberg metadata files
@@ -81,11 +89,11 @@ func (mg *MetadataGenerator) GenerateManifest(ctx context.Context, batch BatchIn
 	// Get manifest directory path
 	manifestDir := mg.pathManager.GetTableManifestPath([]string{"default"}, tableInfo.Name) // TODO: Get actual database from tableInfo
 	if err := mg.ensureDirectory(manifestDir); err != nil {
-		return "", fmt.Errorf("failed to create manifest directory: %w", err)
+		return "", errors.WithAdditional(err, "while creating manifest directory %s", manifestDir)
 	}
 
 	// Generate manifest filename
-	manifestFile := fmt.Sprintf("manifest-%s-%d.avro", batch.ID, time.Now().Unix())
+	manifestFile := "manifest-" + batch.ID + "-" + strconv.FormatInt(time.Now().Unix(), 10) + ".avro"
 	manifestPath := filepath.Join(manifestDir, manifestFile)
 
 	// Create manifest entries for each file
@@ -127,11 +135,11 @@ func (mg *MetadataGenerator) GenerateManifest(ctx context.Context, batch BatchIn
 
 	manifestBytes, err := json.MarshalIndent(manifestData, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal manifest data: %w", err)
+		return "", errors.WithAdditional(err, "while marshaling manifest data")
 	}
 
 	if err := os.WriteFile(manifestPath, manifestBytes, 0644); err != nil {
-		return "", fmt.Errorf("failed to write manifest file: %w", err)
+		return "", errors.WithAdditional(err, "while writing manifest file %s", manifestPath)
 	}
 
 	mg.logger.Debug().
@@ -147,11 +155,11 @@ func (mg *MetadataGenerator) UpdateMetadataFile(ctx context.Context, batch Batch
 	// Get metadata directory path
 	metadataDir := mg.pathManager.GetTableMetadataPath([]string{"default"}, tableInfo.Name) // TODO: Get actual database from tableInfo
 	if err := mg.ensureDirectory(metadataDir); err != nil {
-		return fmt.Errorf("failed to create metadata directory: %w", err)
+		return errors.WithAdditional(err, "while creating metadata directory %s", metadataDir)
 	}
 
 	// Generate metadata filename
-	metadataFile := fmt.Sprintf("metadata-%d.json", time.Now().Unix())
+	metadataFile := "metadata-" + strconv.FormatInt(time.Now().Unix(), 10) + ".json"
 	metadataPath := filepath.Join(metadataDir, metadataFile)
 
 	// Create snapshot
@@ -160,9 +168,9 @@ func (mg *MetadataGenerator) UpdateMetadataFile(ctx context.Context, batch Batch
 		TimestampMs: time.Now().UnixMilli(),
 		Summary: map[string]string{
 			"operation":        "append",
-			"added-files":      fmt.Sprintf("%d", len(batch.Files)),
-			"added-records":    fmt.Sprintf("%d", mg.calculateTotalRows(batch.Files)),
-			"added-files-size": fmt.Sprintf("%d", mg.calculateTotalSize(batch.Files)),
+			"added-files":      strconv.Itoa(len(batch.Files)),
+			"added-records":    strconv.FormatInt(mg.calculateTotalRows(batch.Files), 10),
+			"added-files-size": strconv.FormatInt(mg.calculateTotalSize(batch.Files), 10),
 		},
 		ManifestList: "", // TODO: Implement manifest list
 		SchemaID:     0,  // TODO: Get actual schema ID
@@ -182,11 +190,11 @@ func (mg *MetadataGenerator) UpdateMetadataFile(ctx context.Context, batch Batch
 	// Write metadata file
 	metadataBytes, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
+		return errors.WithAdditional(err, "while marshaling metadata")
 	}
 
 	if err := os.WriteFile(metadataPath, metadataBytes, 0644); err != nil {
-		return fmt.Errorf("failed to write metadata file: %w", err)
+		return errors.WithAdditional(err, "while writing metadata file %s", metadataPath)
 	}
 
 	mg.logger.Debug().
@@ -200,7 +208,7 @@ func (mg *MetadataGenerator) UpdateMetadataFile(ctx context.Context, batch Batch
 // ensureDirectory creates a directory if it doesn't exist
 func (mg *MetadataGenerator) ensureDirectory(path string) error {
 	if err := os.MkdirAll(path, 0755); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", path, err)
+		return errors.WithAdditional(err, "while creating directory %s", path)
 	}
 	return nil
 }

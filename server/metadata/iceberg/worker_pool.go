@@ -2,11 +2,18 @@ package iceberg
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/rs/zerolog"
+)
+
+// Package-specific error codes for worker pool
+var (
+	WorkerPoolAlreadyRunning = errors.MustNewCode("iceberg.worker_pool.already_running")
+	WorkerPoolNotRunning     = errors.MustNewCode("iceberg.worker_pool.not_running")
+	WorkerPoolStartupFailed  = errors.MustNewCode("iceberg.worker_pool.startup_failed")
 )
 
 // Task interface that all worker pool tasks must implement
@@ -86,13 +93,13 @@ func (wp *WorkerPool) Start() error {
 	defer wp.mu.Unlock()
 
 	if wp.running {
-		return fmt.Errorf("worker pool is already running")
+		return errors.New(WorkerPoolAlreadyRunning, "worker pool is already running")
 	}
 
 	// Start all workers
 	for _, worker := range wp.workers {
 		if err := worker.start(); err != nil {
-			return fmt.Errorf("failed to start worker %d: %w", worker.id, err)
+			return err
 		}
 	}
 
@@ -110,7 +117,7 @@ func (wp *WorkerPool) Stop() error {
 	defer wp.mu.Unlock()
 
 	if !wp.running {
-		return fmt.Errorf("worker pool is not running")
+		return errors.New(WorkerPoolNotRunning, "worker pool is not running")
 	}
 
 	// Stop all workers
@@ -132,7 +139,7 @@ func (wp *WorkerPool) Submit(task Task) error {
 	defer wp.mu.RUnlock()
 
 	if !wp.running {
-		return fmt.Errorf("worker pool is not running")
+		return errors.New(WorkerPoolNotRunning, "worker pool is not running")
 	}
 
 	select {

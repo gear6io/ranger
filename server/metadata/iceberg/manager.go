@@ -7,9 +7,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/metadata/registry"
 	"github.com/TFMV/icebox/server/paths"
 	"github.com/rs/zerolog"
+)
+
+// Package-specific error codes for iceberg management
+var (
+	IcebergManagerAlreadyRunning  = errors.MustNewCode("iceberg.already_running")
+	IcebergManagerNotRunning      = errors.MustNewCode("iceberg.not_running")
+	IcebergManagerStartupFailed   = errors.MustNewCode("iceberg.startup_failed")
+	IcebergManagerOperationFailed = errors.MustNewCode("iceberg.operation_failed")
 )
 
 // Manager handles Iceberg metadata generation and updates
@@ -69,12 +78,12 @@ func (m *Manager) Start() error {
 	defer m.mu.Unlock()
 
 	if m.running {
-		return fmt.Errorf("manager is already running")
+		return errors.New(IcebergManagerAlreadyRunning, "manager is already running")
 	}
 
 	// Start worker pool
 	if err := m.workerPool.Start(); err != nil {
-		return fmt.Errorf("failed to start worker pool: %w", err)
+		return err
 	}
 
 	// Load pending files from startup
@@ -93,7 +102,7 @@ func (m *Manager) Stop() error {
 	defer m.mu.Unlock()
 
 	if !m.running {
-		return fmt.Errorf("manager is not running")
+		return errors.New(IcebergManagerNotRunning, "manager is not running")
 	}
 
 	// Stop worker pool
@@ -112,12 +121,12 @@ func (m *Manager) ProcessFile(fileInfo registry.FileInfo) error {
 	defer m.mu.RUnlock()
 
 	if !m.running {
-		return fmt.Errorf("manager is not running")
+		return errors.New(IcebergManagerNotRunning, "manager is not running")
 	}
 
 	// Add file to queue
 	if err := m.fileQueue.Enqueue(fileInfo); err != nil {
-		return fmt.Errorf("failed to enqueue file: %w", err)
+		return err
 	}
 
 	// Submit processing task to worker pool
@@ -127,7 +136,7 @@ func (m *Manager) ProcessFile(fileInfo registry.FileInfo) error {
 	}
 
 	if err := m.workerPool.Submit(task); err != nil {
-		return fmt.Errorf("failed to submit file processing task: %w", err)
+		return err
 	}
 
 	m.logger.Debug().
@@ -144,7 +153,7 @@ func (m *Manager) ProcessBatch(batch BatchInfo) error {
 	defer m.mu.RUnlock()
 
 	if !m.running {
-		return fmt.Errorf("manager is not running")
+		return errors.New(IcebergManagerNotRunning, "manager is not running")
 	}
 
 	// Submit batch processing task to worker pool
@@ -154,7 +163,7 @@ func (m *Manager) ProcessBatch(batch BatchInfo) error {
 	}
 
 	if err := m.workerPool.Submit(task); err != nil {
-		return fmt.Errorf("failed to submit batch processing task: %w", err)
+		return err
 	}
 
 	m.logger.Debug().

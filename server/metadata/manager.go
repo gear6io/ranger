@@ -2,10 +2,10 @@ package metadata
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"sync"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/astha"
 	"github.com/TFMV/icebox/server/catalog"
 	"github.com/TFMV/icebox/server/metadata/iceberg"
@@ -14,6 +14,16 @@ import (
 	"github.com/TFMV/icebox/server/paths"
 	"github.com/rs/zerolog"
 	"github.com/uptrace/bun"
+)
+
+// Package-specific error codes for metadata management
+var (
+	MetadataManagerAlreadyRunning = errors.MustNewCode("metadata.already_running")
+	MetadataManagerNotRunning     = errors.MustNewCode("metadata.not_running")
+	MetadataManagerStartupFailed  = errors.MustNewCode("metadata.startup_failed")
+	MetadataManagerShutdownFailed = errors.MustNewCode("metadata.shutdown_failed")
+	MetadataManagerNotAvailable   = errors.MustNewCode("metadata.not_available")
+	MetadataOperationFailed       = errors.MustNewCode("metadata.operation_failed")
 )
 
 // ComponentType defines the metadata manager component type identifier
@@ -37,7 +47,7 @@ func NewMetadataManager(catalog catalog.CatalogInterface, dbPath, basePath strin
 	// Create storage with bun migrations
 	storage, err := registry.NewStore(dbPath, basePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create storage: %w", err)
+		return nil, err
 	}
 
 	// Create path manager
@@ -57,7 +67,7 @@ func NewMetadataManager(catalog catalog.CatalogInterface, dbPath, basePath strin
 	// Create hybrid deployment manager
 	bunMigrator := storage.GetBunMigrationManager()
 	if bunMigrator == nil {
-		return nil, fmt.Errorf("bun migrator not available")
+		return nil, errors.New(MetadataManagerNotAvailable, "bun migrator not available")
 	}
 	manager.hybrid = registry.NewHybridDeploymentManager(storage, bunMigrator)
 
@@ -70,22 +80,22 @@ func (mm *MetadataManager) Start(ctx context.Context) error {
 	defer mm.mu.Unlock()
 
 	if mm.running {
-		return fmt.Errorf("metadata manager is already running")
+		return errors.New(MetadataManagerAlreadyRunning, "metadata manager is already running")
 	}
 
 	// Start Iceberg manager
 	if err := mm.icebergManager.Start(); err != nil {
-		return fmt.Errorf("failed to start iceberg manager: %w", err)
+		return err
 	}
 
 	// Initialize Astha CDC scheduler
 	if err := mm.initializeAstha(ctx); err != nil {
-		return fmt.Errorf("failed to initialize astha: %w", err)
+		return err
 	}
 
 	// Start Astha
 	if err := mm.astha.Start(); err != nil {
-		return fmt.Errorf("failed to start astha: %w", err)
+		return err
 	}
 
 	// Load pending files for Iceberg metadata generation
@@ -104,7 +114,7 @@ func (mm *MetadataManager) Stop(ctx context.Context) error {
 	defer mm.mu.Unlock()
 
 	if !mm.running {
-		return fmt.Errorf("metadata manager is not running")
+		return errors.New(MetadataManagerNotRunning, "metadata manager is not running")
 	}
 
 	// Stop Astha
@@ -131,7 +141,7 @@ func (mm *MetadataManager) initializeAstha(ctx context.Context) error {
 	// Get database connection from bun migration manager
 	bunDB := mm.hybrid.GetBunDB()
 	if bunDB == nil {
-		return fmt.Errorf("database connection not available")
+		return errors.New(MetadataManagerNotAvailable, "database connection not available")
 	}
 
 	// Get the underlying sql.DB from bun.DB
@@ -148,14 +158,14 @@ func (mm *MetadataManager) initializeAstha(ctx context.Context) error {
 	// Create Astha instance
 	asthaInstance, err := astha.NewAstha(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to create astha: %w", err)
+		return err
 	}
 
 	// Register Iceberg component with Astha
 	icebergComponent := iceberg.NewIcebergComponent(mm.icebergManager, mm.logger)
 
 	if err := asthaInstance.RegisterComponentWithInstance(icebergComponent.GetComponentInfo(), icebergComponent.AsSubscriberAny()); err != nil {
-		return fmt.Errorf("failed to register iceberg component: %w", err)
+		return err
 	}
 
 	mm.astha = asthaInstance
@@ -167,7 +177,7 @@ func (mm *MetadataManager) loadPendingFiles(ctx context.Context) error {
 	// Get pending files from Registry
 	pendingFiles, err := mm.storage.GetPendingFilesForIceberg(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get pending files from registry: %w", err)
+		return err
 	}
 
 	if len(pendingFiles) > 0 {
@@ -220,7 +230,7 @@ func (mm *MetadataManager) EnsureDeploymentReady(ctx context.Context) error {
 func (mm *MetadataManager) CreateDatabase(ctx context.Context, dbName string) error {
 	// Create in personal metadata storage
 	if err := mm.storage.CreateDatabase(ctx, dbName); err != nil {
-		return fmt.Errorf("failed to create database in storage: %w", err)
+		return err
 	}
 
 	// Create in Iceberg catalog if needed
@@ -234,7 +244,7 @@ func (mm *MetadataManager) CreateDatabase(ctx context.Context, dbName string) er
 func (mm *MetadataManager) DropDatabase(ctx context.Context, dbName string) error {
 	// Drop from personal metadata storage
 	if err := mm.storage.DropDatabase(ctx, dbName); err != nil {
-		return fmt.Errorf("failed to drop database from storage: %w", err)
+		return err
 	}
 
 	// Drop from Iceberg catalog if needed
@@ -259,7 +269,7 @@ func (mm *MetadataManager) CreateTable(ctx context.Context, dbName, tableName st
 	// Create table with complete metadata in a single operation
 	_, err := mm.storage.CreateTable(ctx, dbName, tableName, schema, storageEngine, engineConfig)
 	if err != nil {
-		return fmt.Errorf("failed to create table with metadata: %w", err)
+		return err
 	}
 
 	// Create in Iceberg catalog if needed
@@ -273,7 +283,7 @@ func (mm *MetadataManager) CreateTable(ctx context.Context, dbName, tableName st
 func (mm *MetadataManager) DropTable(ctx context.Context, dbName, tableName string) error {
 	// Drop from personal metadata storage
 	if err := mm.storage.DropTable(ctx, dbName, tableName); err != nil {
-		return fmt.Errorf("failed to drop database from storage: %w", err)
+		return err
 	}
 
 	// Drop from Iceberg catalog if needed
@@ -312,12 +322,12 @@ func (mm *MetadataManager) Shutdown(ctx context.Context) error {
 
 	// Stop the manager first
 	if err := mm.Stop(ctx); err != nil {
-		return fmt.Errorf("failed to stop metadata manager: %w", err)
+		return err
 	}
 
 	// Close metadata manager
 	if err := mm.Close(); err != nil {
-		return fmt.Errorf("failed to close metadata manager: %w", err)
+		return err
 	}
 
 	log.Printf("Metadata manager shut down successfully")
@@ -364,7 +374,7 @@ func (mm *MetadataManager) CreateTableMetadata(ctx context.Context, database, ta
 
 // LoadTableMetadata loads detailed metadata for a table
 func (mm *MetadataManager) LoadTableMetadata(ctx context.Context, database, tableName string) (*registry.TableMetadata, error) {
-	return nil, fmt.Errorf("not implemented")
+	return nil, errors.New(MetadataOperationFailed, "not implemented")
 }
 
 // ListAllTables returns a list of all tables across all databases (for storage manager)

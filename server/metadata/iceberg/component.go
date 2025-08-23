@@ -5,9 +5,18 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/astha"
 	"github.com/TFMV/icebox/server/metadata/registry"
 	"github.com/rs/zerolog"
+)
+
+// Package-specific error codes for iceberg component
+var (
+	IcebergComponentUnknownOperation = errors.MustNewCode("iceberg.component.unknown_operation")
+	IcebergComponentManagerNil       = errors.MustNewCode("iceberg.component.manager_nil")
+	IcebergComponentStatsFailed      = errors.MustNewCode("iceberg.component.stats_failed")
+	IcebergComponentProcessingFailed = errors.MustNewCode("iceberg.component.processing_failed")
 )
 
 // IcebergComponent implements the Subscriber interface for Astha events
@@ -40,7 +49,7 @@ func (ic *IcebergComponent) OnEvent(ctx context.Context, event astha.Event[regis
 	case "DELETE":
 		return ic.handleFileDelete(ctx, event.Data)
 	default:
-		return fmt.Errorf("unknown operation: %s", event.Operation)
+		return errors.New(IcebergComponentUnknownOperation, "unknown operation").AddContext("operation", event.Operation)
 	}
 }
 
@@ -48,13 +57,13 @@ func (ic *IcebergComponent) OnEvent(ctx context.Context, event astha.Event[regis
 func (ic *IcebergComponent) OnHealth(ctx context.Context) error {
 	// Check if the Iceberg manager is running
 	if ic.manager == nil {
-		return fmt.Errorf("iceberg manager is nil")
+		return errors.New(IcebergComponentManagerNil, "iceberg manager is nil")
 	}
 
 	// Get stats to verify manager is responsive
 	stats := ic.manager.GetStats()
 	if stats == nil {
-		return fmt.Errorf("failed to get iceberg manager stats")
+		return errors.New(IcebergComponentStatsFailed, "failed to get iceberg manager stats")
 	}
 
 	ic.logger.Debug().
@@ -71,7 +80,7 @@ func (ic *IcebergComponent) OnRefresh(ctx context.Context) error {
 
 	// Get pending files from the manager's queue
 	pendingFiles := ic.manager.GetPendingFiles()
-	
+
 	ic.logger.Info().
 		Int("pending_count", len(pendingFiles)).
 		Msg("Refreshed pending files count")
@@ -98,7 +107,7 @@ func (ic *IcebergComponent) handleFileInsert(ctx context.Context, fileInfo regis
 
 	// Add file to Iceberg manager for processing
 	if err := ic.manager.ProcessFile(fileInfo); err != nil {
-		return fmt.Errorf("failed to process file insert: %w", err)
+		return err
 	}
 
 	ic.logger.Debug().
@@ -120,7 +129,7 @@ func (ic *IcebergComponent) handleFileUpdate(ctx context.Context, fileInfo regis
 	if fileInfo.State != registry.IcebergMetadataGenerationStateCompleted {
 		// File needs metadata regeneration
 		if err := ic.manager.ProcessFile(fileInfo); err != nil {
-			return fmt.Errorf("failed to process file update: %w", err)
+			return err
 		}
 
 		ic.logger.Debug().
@@ -145,7 +154,7 @@ func (ic *IcebergComponent) handleFileDelete(ctx context.Context, fileInfo regis
 	// For deletes, we need to update the Iceberg metadata to reflect the removal
 	// This would typically involve creating a new snapshot with the file marked as deleted
 	// For now, we'll log the event and handle it in future phases
-	
+
 	ic.logger.Info().
 		Int64("file_id", fileInfo.ID).
 		Msg("File delete event received - deletion handling will be implemented in future phases")
@@ -234,7 +243,7 @@ func (a *icebergComponentAdapter) OnEvent(ctx context.Context, event astha.Event
 				fileInfo.State = state
 			}
 		} else {
-			return fmt.Errorf("failed to convert event data to FileInfo: unexpected type %T", event.Data)
+			return errors.New(IcebergComponentProcessingFailed, "failed to convert event data to FileInfo").AddContext("unexpected_type", fmt.Sprintf("%T", event.Data))
 		}
 	}
 

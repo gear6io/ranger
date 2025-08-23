@@ -2,11 +2,20 @@ package iceberg
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/metadata/registry"
+)
+
+// Package-specific error codes for task processing
+var (
+	TaskProcessingFailed = errors.MustNewCode("iceberg.task.processing_failed")
+	TaskManifestFailed   = errors.MustNewCode("iceberg.task.manifest_failed")
+	TaskMetadataFailed   = errors.MustNewCode("iceberg.task.metadata_failed")
+	TaskCompletionFailed = errors.MustNewCode("iceberg.task.completion_failed")
 )
 
 // ProcessFileTask processes a single file for Iceberg metadata generation
@@ -19,7 +28,7 @@ type ProcessFileTask struct {
 func (t *ProcessFileTask) Execute(ctx context.Context) error {
 	// Mark file as processing
 	if err := t.Manager.fileQueue.MarkCompleted(t.FileInfo.ID); err != nil {
-		return fmt.Errorf("failed to mark file as completed: %w", err)
+		return err
 	}
 
 	// TODO: Implement actual file processing
@@ -33,7 +42,7 @@ func (t *ProcessFileTask) Execute(ctx context.Context) error {
 
 // GetID returns the task identifier
 func (t *ProcessFileTask) GetID() string {
-	return fmt.Sprintf("file-%d", t.FileInfo.ID)
+	return "file-" + strconv.FormatInt(t.FileInfo.ID, 10)
 }
 
 // ProcessBatchTask processes a batch of files together
@@ -47,18 +56,18 @@ func (t *ProcessBatchTask) Execute(ctx context.Context) error {
 	// Generate manifest for the batch
 	manifestPath, err := t.Manager.generateManifest(t.Batch)
 	if err != nil {
-		return fmt.Errorf("failed to generate manifest: %w", err)
+		return err
 	}
 
 	// Update metadata file with new snapshot
 	if err := t.Manager.updateMetadataFile(t.Batch, manifestPath); err != nil {
-		return fmt.Errorf("failed to update metadata file: %w", err)
+		return err
 	}
 
 	// Mark all files in batch as completed
 	for _, file := range t.Batch.Files {
 		if err := t.Manager.fileQueue.MarkCompleted(file.ID); err != nil {
-			return fmt.Errorf("failed to mark file %d as completed: %w", file.ID, err)
+			return err
 		}
 	}
 
@@ -67,7 +76,7 @@ func (t *ProcessBatchTask) Execute(ctx context.Context) error {
 
 // GetID returns the task identifier
 func (t *ProcessBatchTask) GetID() string {
-	return fmt.Sprintf("batch-%s", t.Batch.ID)
+	return "batch-" + t.Batch.ID
 }
 
 // BatchProcessor handles batching logic for optimal metadata generation
@@ -144,7 +153,7 @@ func (bp *BatchProcessor) CreateBatches(files []registry.FileInfo) []BatchInfo {
 // createBatchInfo creates a BatchInfo from a slice of files
 func (bp *BatchProcessor) createBatchInfo(files []registry.FileInfo) BatchInfo {
 	return BatchInfo{
-		ID:        fmt.Sprintf("batch-%d", time.Now().UnixNano()),
+		ID:        "batch-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 		Files:     files,
 		CreatedAt: time.Now(),
 		Status:    "pending",
