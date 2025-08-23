@@ -1,0 +1,39 @@
+# GolangCI-Lint configuration for Icebox project
+version: 1.0.0
+run:
+  timeout: 5m
+  go: "1.21"
+
+linters:
+  enable:
+    - gofmt
+    - goimports
+    - govet
+    - staticcheck
+    - unused
+    - gosimple
+    - ineffassign
+    - typecheck
+    - gocyclo
+    - dupl
+    - goconst
+    - misspell
+    - unparam
+    - nakedret
+    - prealloc
+    - dns
+    - gocritic
+    - errorcode  # Custom ErrorCode analyzer
+  
+  disable:
+    - gosec
+    - lll
+    - gomnd
+
+
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new: false
+  fix: false

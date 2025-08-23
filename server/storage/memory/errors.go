@@ -30,7 +30,6 @@ var (
 	// Parquet manager errors
 	ErrDataManagerClosed      = errors.MustNewCode("memory.data_manager_closed")
 	ErrDataValidationFailed   = errors.MustNewCode("memory.data_validation_failed")
-	ErrDataConversionFailed   = errors.MustNewCode("memory.data_conversion_failed")
 	ErrMemoryLimitExceeded    = errors.MustNewCode("memory.memory_limit_exceeded")
 	ErrRecordConversionFailed = errors.MustNewCode("memory.record_conversion_failed")
 	ErrSchemaIsNil            = errors.MustNewCode("memory.schema_is_nil")

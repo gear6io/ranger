@@ -47,7 +47,7 @@ func NewParquetManager(schema *arrow.Schema, config *parquet.ParquetConfig) *Par
 // StoreData stores data in memory using Parquet format
 func (dm *ParquetManager) StoreData(data [][]interface{}) error {
 	if dm.closed {
-		return errors.New(ErrDataManagerClosed, "data manager is closed")
+		return errors.New(ErrDataManagerClosed, "data manager is closed", nil)
 	}
 
 	if len(data) == 0 {
@@ -59,13 +59,13 @@ func (dm *ParquetManager) StoreData(data [][]interface{}) error {
 	// Validate data against schema
 	schemaManager := parquet.NewSchemaManager(dm.config)
 	if err := schemaManager.ValidateData(data, dm.schema); err != nil {
-		return errors.New(ErrDataValidationFailed, "data validation failed").WithCause(err)
+		return errors.New(ErrDataValidationFailed, "data validation failed", err)
 	}
 
 	// Convert data to Arrow arrays
 	arrays, err := dm.convertDataToArrays(data)
 	if err != nil {
-		return errors.New(ErrDataConversionFailed, "failed to convert data to arrays").WithCause(err)
+		return err
 	}
 
 	// Create Arrow record
@@ -74,7 +74,7 @@ func (dm *ParquetManager) StoreData(data [][]interface{}) error {
 	// Check memory usage
 	if err := dm.checkMemoryUsage(record); err != nil {
 		record.Release()
-		return errors.New(ErrMemoryLimitExceeded, "memory limit exceeded").WithCause(err)
+		return err
 	}
 
 	// Store the record
@@ -97,7 +97,7 @@ func (dm *ParquetManager) GetData() ([][]interface{}, error) {
 	defer dm.mu.RUnlock()
 
 	if dm.closed {
-		return nil, errors.New(ErrDataManagerClosed, "data manager is closed")
+		return nil, errors.New(ErrDataManagerClosed, "data manager is closed", nil)
 	}
 
 	var allData [][]interface{}
@@ -105,7 +105,7 @@ func (dm *ParquetManager) GetData() ([][]interface{}, error) {
 	for _, record := range dm.recordBatches {
 		data, err := dm.convertRecordToData(record)
 		if err != nil {
-			return nil, errors.New(ErrRecordConversionFailed, "failed to convert record").WithCause(err)
+			return nil, err
 		}
 		allData = append(allData, data...)
 	}
@@ -119,7 +119,7 @@ func (dm *ParquetManager) GetDataBatch(batchSize int) (<-chan [][]interface{}, e
 	defer dm.mu.RUnlock()
 
 	if dm.closed {
-		return nil, errors.New(ErrDataManagerClosed, "data manager is closed")
+		return nil, errors.New(ErrDataManagerClosed, "data manager is closed", nil)
 	}
 
 	dataChan := make(chan [][]interface{}, batchSize)
@@ -221,7 +221,7 @@ func (dm *ParquetManager) convertDataToArrays(data [][]interface{}) ([]arrow.Arr
 	}
 
 	if dm.schema == nil {
-		return nil, errors.New(ErrSchemaIsNil, "schema is nil")
+		return nil, errors.New(ErrSchemaIsNil, "schema is nil", nil)
 	}
 
 	numCols := len(dm.schema.Fields())
@@ -232,7 +232,7 @@ func (dm *ParquetManager) convertDataToArrays(data [][]interface{}) ([]arrow.Arr
 
 		array, err := dm.convertColumnToArray(data, colIdx, field)
 		if err != nil {
-			return nil, errors.New(ErrColumnConversionFailed, "failed to convert column").AddContext("column_name", field.Name).WithCause(err)
+			return nil, err
 		}
 		arrays[colIdx] = array
 	}
@@ -251,12 +251,12 @@ func (dm *ParquetManager) convertColumnToArray(data [][]interface{}, colIdx int,
 	// Convert each value in the column
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 		if colIdx >= len(data[rowIdx]) {
-			return nil, errors.New(ErrInsufficientColumns, "row has insufficient columns").AddContext("row_index", fmt.Sprintf("%d", rowIdx))
+			return nil, errors.New(ErrInsufficientColumns, "row has insufficient columns", nil).AddContext("row_index", fmt.Sprintf("%d", rowIdx))
 		}
 
 		value := data[rowIdx][colIdx]
 		if err := dm.appendValueToBuilder(builder, value, field.Type); err != nil {
-			return nil, errors.New(ErrValueAppendFailed, "failed to append value at row").AddContext("row_index", fmt.Sprintf("%d", rowIdx)).WithCause(err)
+			return nil, errors.New(ErrValueAppendFailed, "failed to append value at row", err).AddContext("row_index", fmt.Sprintf("%d", rowIdx))
 		}
 	}
 
@@ -277,46 +277,46 @@ func (dm *ParquetManager) appendValueToBuilder(builder array.Builder, value inte
 		if boolVal, ok := value.(bool); ok {
 			builder.(*array.BooleanBuilder).Append(boolVal)
 		} else {
-			return errors.New(ErrTypeMismatch, "expected bool").AddContext("actual_type", fmt.Sprintf("%T", value))
+			return errors.New(ErrTypeMismatch, "expected bool", nil).AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	case *arrow.Int32Type:
 		if intVal, ok := dm.convertToInt32(value); ok {
 			builder.(*array.Int32Builder).Append(intVal)
 		} else {
-			return errors.New(ErrTypeMismatch, "expected int32").AddContext("actual_type", fmt.Sprintf("%T", value))
+			return errors.New(ErrTypeMismatch, "expected int32", nil).AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	case *arrow.Int64Type:
 		if intVal, ok := dm.convertToInt64(value); ok {
 			builder.(*array.Int64Builder).Append(intVal)
 		} else {
-			return errors.New(ErrTypeMismatch, "expected int64").AddContext("actual_type", fmt.Sprintf("%T", value))
+			return errors.New(ErrTypeMismatch, "expected int64", nil).AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	case *arrow.Float32Type:
 		if floatVal, ok := dm.convertToFloat32(value); ok {
 			builder.(*array.Float32Builder).Append(floatVal)
 		} else {
-			return errors.New(ErrTypeMismatch, "expected float32").AddContext("actual_type", fmt.Sprintf("%T", value))
+			return errors.New(ErrTypeMismatch, "expected float32", nil).AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	case *arrow.Float64Type:
 		if floatVal, ok := dm.convertToFloat64(value); ok {
 			builder.(*array.Float64Builder).Append(floatVal)
 		} else {
-			return errors.New(ErrTypeMismatch, "expected float64").AddContext("actual_type", fmt.Sprintf("%T", value))
+			return errors.New(ErrTypeMismatch, "expected float64", nil).AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	case *arrow.StringType:
 		if strVal, ok := value.(string); ok {
 			builder.(*array.StringBuilder).Append(strVal)
 		} else {
-			return errors.New(ErrTypeMismatch, "expected string").AddContext("actual_type", fmt.Sprintf("%T", value))
+			return errors.New(ErrTypeMismatch, "expected string", nil).AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	default:
-		return errors.New(ErrUnsupportedDataType, "unsupported data type").AddContext("data_type", fmt.Sprintf("%T", dataType))
+		return errors.New(ErrUnsupportedDataType, "unsupported data type", nil).AddContext("data_type", fmt.Sprintf("%T", dataType))
 	}
 
 	return nil
@@ -344,7 +344,7 @@ func (dm *ParquetManager) convertRecordToData(record arrow.Record) ([][]interfac
 
 			value, err := dm.extractValue(col, rowIdx, field.Type)
 			if err != nil {
-				return nil, errors.New(ErrValueExtractionFailed, "failed to extract value").AddContext("row_index", fmt.Sprintf("%d", rowIdx)).AddContext("col_index", fmt.Sprintf("%d", colIdx)).WithCause(err)
+				return nil, errors.New(ErrValueExtractionFailed, "failed to extract value", err).AddContext("row_index", fmt.Sprintf("%d", rowIdx)).AddContext("col_index", fmt.Sprintf("%d", colIdx))
 			}
 			data[rowIdx][colIdx] = value
 		}
@@ -369,7 +369,7 @@ func (dm *ParquetManager) extractValue(col arrow.Array, rowIdx int, dataType arr
 	case *arrow.StringType:
 		return col.(*array.String).Value(rowIdx), nil
 	default:
-		return nil, errors.New(ErrUnsupportedDataType, "unsupported data type").AddContext("data_type", fmt.Sprintf("%T", dt))
+		return nil, errors.New(ErrUnsupportedDataType, "unsupported data type", nil).AddContext("data_type", fmt.Sprintf("%T", dt))
 	}
 }
 
@@ -382,7 +382,7 @@ func (dm *ParquetManager) checkMemoryUsage(record arrow.Record) error {
 	dm.mu.RUnlock()
 
 	if currentUsage+estimatedSize > dm.config.MaxMemoryUsage {
-		return errors.New(ErrMemoryLimitExceeded, "memory limit exceeded").AddContext("current_usage", fmt.Sprintf("%d", currentUsage)).AddContext("estimated_size", fmt.Sprintf("%d", estimatedSize)).AddContext("limit", fmt.Sprintf("%d", dm.config.MaxMemoryUsage))
+		return errors.New(ErrMemoryLimitExceeded, "memory limit exceeded", nil).AddContext("current_usage", fmt.Sprintf("%d", currentUsage)).AddContext("estimated_size", fmt.Sprintf("%d", estimatedSize)).AddContext("limit", fmt.Sprintf("%d", dm.config.MaxMemoryUsage))
 	}
 
 	return nil

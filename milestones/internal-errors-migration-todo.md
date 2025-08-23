@@ -18,8 +18,10 @@ This document tracks the migration of all packages from using Go's standard `fmt
 
 ### ✅ Already Using Internal Errors Package
 - `server/catalog/shared` - Uses internal errors package
-- `server/storage/memory` - ✅ **FULLY COMPLIANT** - Uses internal errors package with proper error codes
-- `server/catalog/json` - Uses internal errors package
+- `server/storage/memory` - ⚠️ **API UPDATE NEEDED** - Uses internal errors but with old `.WithCause()` API
+- `server/catalog/json` - ✅ **FULLY COMPLIANT** - Migrated to internal errors package with proper error codes
+- `server/catalog/rest` - ✅ **FULLY COMPLIANT** - Migrated to internal errors package with proper error codes
+- `server/catalog/sqlite` - ✅ **FULLY COMPLIANT** - Migrated to internal errors package with proper error codes
 - `client/config` - ✅ **FULLY COMPLIANT** - Migrated to internal errors package with proper error codes
 - `client/commands` - ✅ **FULLY COMPLIANT** - Migrated to internal errors package with proper error codes
 - `client` - ✅ **FULLY COMPLIANT** - Migrated to internal errors package with proper error codes

@@ -188,6 +188,11 @@ lint: ## Run linting (requires golangci-lint)
 	@echo "Running golangci-lint..."
 	@golangci-lint run
 
+.PHONY: check-errorcodes
+check-errorcodes: ## Check for unused ErrorCodes and forbidden error patterns in server packages
+	@echo "Checking ErrorCodes and error patterns in server packages..."
+	@cd scripts/linters/errorcode-checker && $(MAKE) check-server
+
 .PHONY: mod-tidy
 mod-tidy: ## Tidy go.mod and go.sum
 	@echo "Tidying go.mod and go.sum..."
@@ -256,7 +261,7 @@ uninstall-pre-commit-framework: ## Uninstall pre-commit framework hooks
 	fi
 
 .PHONY: pre-commit
-pre-commit: fmt-all vet mod-tidy mod-verify deps ## Run pre-commit checks
+pre-commit: fmt-all vet check-errorcodes mod-tidy mod-verify deps ## Run pre-commit checks
 	@echo "✅ Pre-commit checks passed"
 
 # Release targets
