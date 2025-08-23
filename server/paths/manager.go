@@ -119,6 +119,12 @@ func (pm *Manager) GetTableMetadataFile(database, tableName string, version int)
 	return filepath.Join(pm.GetTableMetadataPath([]string{database}, tableName), fmt.Sprintf("v%d.metadata.json", version))
 }
 
+// GetTableManifestPath returns the manifest directory path for a table
+func (pm *Manager) GetTableManifestPath(namespace []string, tableName string) string {
+	nsPath := strings.Join(namespace, "/")
+	return filepath.Join(pm.basePath, "tables", nsPath, tableName, "manifests")
+}
+
 // GetNamespacePath returns the namespace path
 func (pm *Manager) GetNamespacePath(namespace []string) string {
 	if len(namespace) == 0 {

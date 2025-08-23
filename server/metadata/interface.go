@@ -3,7 +3,7 @@ package metadata
 import (
 	"context"
 
-	"github.com/TFMV/icebox/server/metadata/types"
+	"github.com/TFMV/icebox/server/metadata/registry"
 )
 
 // MetadataManagerInterface defines the interface for the metadata manager
@@ -21,27 +21,11 @@ type MetadataManagerInterface interface {
 	TableExists(ctx context.Context, dbName, tableName string) bool
 
 	// Table metadata operations (for storage manager) - these work with explicit database and table names
-	LoadTableMetadata(ctx context.Context, database, tableName string) (*types.TableMetadata, error)
+	LoadTableMetadata(ctx context.Context, database, tableName string) (*registry.TableMetadata, error)
 	ListAllTables(ctx context.Context) ([]string, error)
 
 	// Close releases resources
 	Close() error
-}
-
-// DatabaseInfo represents database metadata
-type DatabaseInfo struct {
-	Name       string `json:"name"`
-	Created    string `json:"created"`
-	Modified   string `json:"modified"`
-	TableCount int    `json:"table_count"`
-}
-
-// TableInfo represents table metadata
-type TableInfo struct {
-	DatabaseName string `json:"database_name"`
-	TableName    string `json:"table_name"`
-	Created      string `json:"created"`
-	Modified     string `json:"modified"`
 }
 
 // ManagerConfig holds configuration for the metadata manager

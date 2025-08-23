@@ -100,6 +100,12 @@ func (m *MockPathManager) GetTableMetadataFile(database, tableName string, versi
 	return m.BasePath + "/data/" + database + "/" + tableName + "/metadata/v" + fmt.Sprintf("%d", version) + ".metadata.json"
 }
 
+// GetTableManifestPath returns the manifest directory path for a table
+func (m *MockPathManager) GetTableManifestPath(namespace []string, tableName string) string {
+	nsPath := strings.Join(namespace, "/")
+	return m.BasePath + "/tables/" + nsPath + "/" + tableName + "/manifests"
+}
+
 // GetNamespacePath returns the namespace path
 func (m *MockPathManager) GetNamespacePath(namespace []string) string {
 	if len(namespace) == 0 {

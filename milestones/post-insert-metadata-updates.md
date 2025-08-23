@@ -30,29 +30,45 @@ After files are stored successfully from the Query Engine, both the registry and
 
 ## 🏗️ Implementation Tasks
 
-### Phase 1: Registry Updates (Week 1)
+### Phase 1: Registry Updates (Week 1) - COMPLETED ✅
 
 #### 1.1 File Tracking Implementation
-- [ ] **Create `updateTableFiles` method in Storage Manager**
-  - [ ] Track new data files in `table_files` table
-  - [ ] Update file metadata (size, row count, checksum)
-  - [ ] Handle file rotation and cleanup
-  - [ ] Support multiple file formats (JSON, Parquet)
-  - [ ] **Note**: File rotation timing will be used for batch metadata updates
+- [x] **Create `updateTableFiles` method in Storage Manager**
+  - [x] Track new data files in `table_files` table
+  - [x] Update file metadata (size, row count, checksum)
+  - [x] Handle file rotation and cleanup
+  - [x] Support multiple file formats (JSON, Parquet)
+  - [x] **Note**: File rotation timing will be used for batch metadata updates
 
 #### 1.2 Statistics Management
-- [ ] **Create `updateTableStatistics` method**
-  - [ ] Update `row_count` in `tables` table
-  - [ ] Update `total_size` in `tables` table
-  - [ ] Update `file_count` in `tables` table
-  - [ ] Update `last_modified` timestamps
+- [x] **Create `updateTableStatistics` method**
+  - [x] Update `row_count` in `tables` table
+  - [x] Update `total_size` in `tables` table
+  - [x] Update `file_count` in `tables` table
+  - [x] Update `last_modified` timestamps
 
 #### 1.3 Transaction Support
-- [ ] **Add metadata transaction handling**
-  - [ ] Ensure metadata consistency
-  - [ ] Handle rollback scenarios
-  - [ ] Atomic updates for related metadata
-  - [ ] Concurrent insertion support
+- [x] **Add metadata transaction handling**
+  - [x] Ensure metadata consistency
+  - [x] Handle rollback scenarios
+  - [x] Atomic updates for related metadata
+  - [x] Concurrent insertion support
+
+#### 1.4 Astha CDC Scheduler Implementation
+- [x] **Create Registry CDC integration** (`server/metadata/registry/cdc.go`)
+  - [x] Implement CDC log table and triggers
+  - [x] Create automatic triggers for INSERT/UPDATE/DELETE operations
+  - [x] Add updated_at triggers for automatic timestamp updates
+- [x] **Build Astha package structure** (`server/astha/`)
+  - [x] Implement generic event types and subscriber interface
+  - [x] Create CDC consumer with immediate cleanup
+  - [x] Build in-memory event store
+  - [x] Implement event distribution scheduler
+  - [x] Add component subscription system
+- [x] **Add comprehensive testing and documentation**
+  - [x] Unit tests for all components
+  - [x] Integration tests for CDC flow
+  - [x] Complete API documentation and examples
 
 ### Phase 2: Iceberg Metadata Updates (Week 2)
 
@@ -1080,3 +1096,72 @@ func (a *Astha) routeEvent(event Event[any]) error {
     return nil
 }
 ```
+
+## 🚧 Phase 2: Iceberg Metadata Updates - IN PROGRESS
+
+### 2.1 Iceberg Manager Implementation - COMPLETED ✅
+
+- [x] **Core Iceberg Manager in Metadata Package**
+  - [x] Located in `server/metadata/iceberg/` (corrected location)
+  - [x] Integrated with Registry's `FileInfo` type
+  - [x] Worker pool for concurrent metadata generation
+  - [x] FIFO queue for file processing order
+  - [x] Task system for file and batch processing
+
+- [x] **Supporting Components**
+  - [x] Generic worker pool with configurable worker count
+  - [x] File queue with FIFO ordering and state tracking
+  - [x] Task implementations for file and batch processing
+  - [x] Batch processor with hybrid size/count batching strategy
+
+- [x] **Registry Schema Updates**
+  - [x] Added `iceberg_metadata_state` column to `table_files` table in original migration
+  - [x] Added performance index for `iceberg_metadata_state` column
+  - [x] Added constants for state values and table names
+  - [x] Updated Registry types with proper `FileInfo` structure
+
+### 2.2 Path Manager Integration - COMPLETED ✅
+
+- [x] **Manifest Path Support**
+  - [x] Added `GetTableManifestPath` method to PathManager interface
+  - [x] Implemented in concrete PathManager and MockPathManager
+  - [x] Paths follow consistent structure: `{base}/tables/{namespace}/{table}/manifests`
+
+### 2.3 MetadataManager Integration - COMPLETED ✅
+
+- [x] **MetadataManager Integration - COMPLETED ✅**
+  - [x] Integrate Iceberg manager with MetadataManager
+  - [x] Subscribe to `table_files` events from Astha
+  - [x] Implement startup recovery for pending files
+  - [x] Add retry mechanism for failed operations
+
+- [x] **Iceberg Metadata Generation - COMPLETED ✅**
+  - [x] Implement actual manifest generation (JSON format for now, Avro format planned)
+  - [x] Implement metadata file updates with snapshots
+  - [x] Add file statistics and basic metadata support
+  - [x] Create MetadataGenerator component for clean separation of concerns
+
+- [x] **Testing and Validation - COMPLETED ✅**
+  - [x] Unit tests for Iceberg manager components
+  - [x] Unit tests for MetadataGenerator component
+  - [x] End-to-end metadata generation tests
+  - [ ] Integration tests with Registry and Astha (next step)
+  - [ ] Performance testing for batch processing (future enhancement)
+
+### 2.4 Next Steps - PENDING ⏳
+
+- [ ] **Integration Testing**
+  - [ ] Test MetadataManager startup with Iceberg integration
+  - [ ] Test Astha CDC event processing for table_files
+  - [ ] Test startup recovery for pending files
+  - [ ] Test retry mechanism for failed operations
+
+- [ ] **Real Table Info Integration**
+  - [ ] Replace placeholder table info with actual Registry lookups
+  - [ ] Implement proper database/table name resolution
+  - [ ] Add table metadata validation
+
+- [ ] **Avro Format Implementation**
+  - [ ] Upgrade from JSON to proper Avro format for manifests
+  - [ ] Implement Iceberg-compliant manifest structure
+  - [ ] Add proper schema validation

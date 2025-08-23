@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
 	"github.com/uptrace/bun"
 )
 
@@ -108,18 +109,7 @@ func (m *Migration001) insertInitialData(ctx context.Context, tx bun.Tx) error {
 // createUsersTable creates the users table for access control
 func (m *Migration001) createUsersTable(ctx context.Context, tx bun.Tx) error {
 	_, err := tx.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel `bun:"table:users"`
-			ID            int64  `bun:"id,pk,autoincrement"`
-			Username      string `bun:"username,unique,notnull,type:text"`
-			Email         string `bun:"email,unique,notnull,type:text"`
-			FullName      string `bun:"full_name,type:text"`
-			Role          string `bun:"role,notnull,type:text,default:'user'"`
-			IsActive      bool   `bun:"is_active,notnull,default:true"`
-			LastLogin     string `bun:"last_login,type:text"`
-			CreatedAt     string `bun:"created_at,notnull,type:text"`
-			UpdatedAt     string `bun:"updated_at,notnull,type:text"`
-		}{}).
+		Model((*regtypes.User)(nil)).
 		IfNotExists().
 		Exec(ctx)
 	return err
@@ -128,19 +118,7 @@ func (m *Migration001) createUsersTable(ctx context.Context, tx bun.Tx) error {
 // createDatabasesTable creates the normalized databases table
 func (m *Migration001) createDatabasesTable(ctx context.Context, tx bun.Tx) error {
 	_, err := tx.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel `bun:"table:databases"`
-			ID            int64  `bun:"id,pk,autoincrement"`
-			Name          string `bun:"name,unique,notnull,type:text"`
-			Description   string `bun:"description,type:text"`
-			IsSystem      bool   `bun:"is_system,notnull,default:false"`
-			IsReadOnly    bool   `bun:"is_read_only,notnull,default:false"`
-			TableCount    int    `bun:"table_count,notnull,default:0"`
-			TotalSize     int64  `bun:"total_size,notnull,default:0"`
-			CreatedAt     string `bun:"created_at,notnull,type:text"`
-			UpdatedAt     string `bun:"updated_at,notnull,type:text"`
-			DeletedAt     string `bun:"deleted_at,type:text"`
-		}{}).
+		Model((*regtypes.Database)(nil)).
 		IfNotExists().
 		Exec(ctx)
 	return err
@@ -149,23 +127,7 @@ func (m *Migration001) createDatabasesTable(ctx context.Context, tx bun.Tx) erro
 // createTablesTable creates the normalized tables table
 func (m *Migration001) createTablesTable(ctx context.Context, tx bun.Tx) error {
 	_, err := tx.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel `bun:"table:tables"`
-			ID            int64  `bun:"id,pk,autoincrement"`
-			DatabaseID    int64  `bun:"database_id,notnull"`
-			Name          string `bun:"name,notnull,type:text"`
-			DisplayName   string `bun:"display_name,type:text"`
-			Description   string `bun:"description,type:text"`
-			TableType     string `bun:"table_type,notnull,type:text,default:'user'"`
-			IsTemporary   bool   `bun:"is_temporary,notnull,default:false"`
-			IsExternal    bool   `bun:"is_external,notnull,default:false"`
-			RowCount      int64  `bun:"row_count,notnull,default:0"`
-			FileCount     int    `bun:"file_count,notnull,default:0"`
-			TotalSize     int64  `bun:"total_size,notnull,default:0"`
-			CreatedAt     string `bun:"created_at,notnull,type:text"`
-			UpdatedAt     string `bun:"updated_at,notnull,type:text"`
-			DeletedAt     string `bun:"deleted_at,type:text"`
-		}{}).
+		Model((*regtypes.Table)(nil)).
 		ForeignKey(`("database_id") REFERENCES "databases" ("id") ON DELETE CASCADE`).
 		IfNotExists().
 		Exec(ctx)
@@ -175,23 +137,7 @@ func (m *Migration001) createTablesTable(ctx context.Context, tx bun.Tx) error {
 // createTableMetadataTable creates the comprehensive table metadata table
 func (m *Migration001) createTableMetadataTable(ctx context.Context, tx bun.Tx) error {
 	_, err := tx.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel `bun:"table:table_metadata"`
-			ID            int64  `bun:"id,pk,autoincrement"`
-			TableID       int64  `bun:"table_id,notnull"`
-			SchemaVersion int    `bun:"schema_version,notnull,default:1"`
-			Schema        []byte `bun:"schema,type:blob"`
-			StorageEngine string `bun:"storage_engine,notnull,type:text"`
-			EngineConfig  string `bun:"engine_config,type:text,default:'{}'"`
-			Format        string `bun:"format,type:text"`
-			Compression   string `bun:"compression,type:text"`
-			PartitionBy   string `bun:"partition_by,type:text"`
-			SortBy        string `bun:"sort_by,type:text"`
-			Properties    string `bun:"properties,type:text,default:'{}'"`
-			LastModified  string `bun:"last_modified,notnull,type:text"`
-			CreatedAt     string `bun:"created_at,notnull,type:text"`
-			UpdatedAt     string `bun:"updated_at,notnull,type:text"`
-		}{}).
+		Model((*regtypes.TableMetadata)(nil)).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
 		IfNotExists().
 		Exec(ctx)
@@ -201,21 +147,7 @@ func (m *Migration001) createTableMetadataTable(ctx context.Context, tx bun.Tx) 
 // createTableFilesTable creates the table files tracking table
 func (m *Migration001) createTableFilesTable(ctx context.Context, tx bun.Tx) error {
 	_, err := tx.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel `bun:"table:table_files"`
-			ID            int64  `bun:"id,pk,autoincrement"`
-			TableID       int64  `bun:"table_id,notnull"`
-			FileName      string `bun:"file_name,notnull,type:text"`
-			FilePath      string `bun:"file_path,notnull,type:text"`
-			FileSize      int64  `bun:"file_size,notnull"`
-			FileType      string `bun:"file_type,notnull,type:text"`
-			PartitionPath string `bun:"partition_path,type:text"`
-			RowCount      int64  `bun:"row_count,notnull,default:0"`
-			Checksum      string `bun:"checksum,type:text"`
-			IsCompressed  bool   `bun:"is_compressed,notnull,default:false"`
-			CreatedAt     string `bun:"created_at,notnull,type:text"`
-			ModifiedAt    string `bun:"modified_at,notnull,type:text"`
-		}{}).
+		Model((*regtypes.TableFile)(nil)).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
 		IfNotExists().
 		Exec(ctx)
@@ -225,20 +157,7 @@ func (m *Migration001) createTableFilesTable(ctx context.Context, tx bun.Tx) err
 // createTablePartitionsTable creates the table partitions tracking table
 func (m *Migration001) createTablePartitionsTable(ctx context.Context, tx bun.Tx) error {
 	_, err := tx.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel `bun:"table:table_partitions"`
-			ID            int64  `bun:"id,pk,autoincrement"`
-			TableID       int64  `bun:"table_id,notnull"`
-			PartitionKey  string `bun:"partition_key,notnull,type:text"`
-			PartitionPath string `bun:"partition_path,notnull,type:text"`
-			RowCount      int64  `bun:"row_count,notnull,default:0"`
-			FileCount     int    `bun:"file_count,notnull,default:0"`
-			TotalSize     int64  `bun:"total_size,notnull,default:0"`
-			MinValues     string `bun:"min_values,type:text"`
-			MaxValues     string `bun:"max_values,type:text"`
-			CreatedAt     string `bun:"created_at,notnull,type:text"`
-			UpdatedAt     string `bun:"updated_at,notnull,type:text"`
-		}{}).
+		Model((*regtypes.TablePartition)(nil)).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
 		IfNotExists().
 		Exec(ctx)
@@ -248,19 +167,7 @@ func (m *Migration001) createTablePartitionsTable(ctx context.Context, tx bun.Tx
 // createTableIndexesTable creates the table indexes tracking table
 func (m *Migration001) createTableIndexesTable(ctx context.Context, tx bun.Tx) error {
 	_, err := tx.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel `bun:"table:table_indexes"`
-			ID            int64  `bun:"id,pk,autoincrement"`
-			TableID       int64  `bun:"table_id,notnull"`
-			IndexName     string `bun:"index_name,notnull,type:text"`
-			IndexType     string `bun:"index_type,notnull,type:text"`
-			Columns       string `bun:"columns,notnull,type:text"`
-			IsUnique      bool   `bun:"is_unique,notnull,default:false"`
-			IsPrimary     bool   `bun:"is_primary,notnull,default:false"`
-			IsActive      bool   `bun:"is_active,notnull,default:true"`
-			CreatedAt     string `bun:"created_at,notnull,type:text"`
-			UpdatedAt     string `bun:"updated_at,notnull,type:text"`
-		}{}).
+		Model((*regtypes.TableIndex)(nil)).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
 		IfNotExists().
 		Exec(ctx)
@@ -270,22 +177,7 @@ func (m *Migration001) createTableIndexesTable(ctx context.Context, tx bun.Tx) e
 // createTableConstraintsTable creates the table constraints tracking table
 func (m *Migration001) createTableConstraintsTable(ctx context.Context, tx bun.Tx) error {
 	_, err := tx.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel    `bun:"table:table_constraints"`
-			ID               int64  `bun:"id,pk,autoincrement"`
-			TableID          int64  `bun:"table_id,notnull"`
-			ConstraintName   string `bun:"constraint_name,notnull,type:text"`
-			ConstraintType   string `bun:"constraint_type,notnull,type:text"`
-			Columns          string `bun:"columns,notnull,type:text"`
-			ReferenceTable   string `bun:"reference_table,type:text"`
-			ReferenceColumns string `bun:"reference_columns,type:text"`
-			OnDelete         string `bun:"on_delete,type:text"`
-			OnUpdate         string `bun:"on_update,type:text"`
-			IsDeferrable     bool   `bun:"is_deferrable,notnull,default:false"`
-			IsDeferred       bool   `bun:"is_deferred,notnull,default:false"`
-			CreatedAt        string `bun:"created_at,notnull,type:text"`
-			UpdatedAt        string `bun:"updated_at,notnull,type:text"`
-		}{}).
+		Model((*regtypes.TableConstraint)(nil)).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
 		IfNotExists().
 		Exec(ctx)
@@ -295,25 +187,7 @@ func (m *Migration001) createTableConstraintsTable(ctx context.Context, tx bun.T
 // createTableColumnsTable creates the table columns tracking table
 func (m *Migration001) createTableColumnsTable(ctx context.Context, tx bun.Tx) error {
 	_, err := tx.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel   `bun:"table:table_columns"`
-			ID              int64  `bun:"id,pk,autoincrement"`
-			TableID         int64  `bun:"table_id,notnull"`
-			ColumnName      string `bun:"column_name,notnull,type:text"`
-			DisplayName     string `bun:"display_name,type:text"`
-			DataType        string `bun:"data_type,notnull,type:text"`
-			IsNullable      bool   `bun:"is_nullable,notnull,default:true"`
-			IsPrimary       bool   `bun:"is_primary,notnull,default:false"`
-			IsUnique        bool   `bun:"is_unique,notnull,default:false"`
-			DefaultValue    string `bun:"default_value,type:text"`
-			Description     string `bun:"description,type:text"`
-			OrdinalPosition int    `bun:"ordinal_position,notnull"`
-			MaxLength       int    `bun:"max_length,type:integer"`
-			Precision       int    `bun:"precision,type:integer"`
-			Scale           int    `bun:"scale,type:integer"`
-			CreatedAt       string `bun:"created_at,notnull,type:text"`
-			UpdatedAt       string `bun:"updated_at,notnull,type:text"`
-		}{}).
+		Model((*regtypes.TableColumn)(nil)).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
 		IfNotExists().
 		Exec(ctx)
@@ -323,17 +197,7 @@ func (m *Migration001) createTableColumnsTable(ctx context.Context, tx bun.Tx) e
 // createTableStatisticsTable creates the table statistics tracking table
 func (m *Migration001) createTableStatisticsTable(ctx context.Context, tx bun.Tx) error {
 	_, err := tx.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel `bun:"table:table_statistics"`
-			ID            int64  `bun:"id,pk,autoincrement"`
-			TableID       int64  `bun:"table_id,notnull"`
-			ColumnName    string `bun:"column_name,type:text"`
-			StatType      string `bun:"stat_type,notnull,type:text"`
-			StatValue     string `bun:"stat_value,type:text"`
-			StatData      string `bun:"stat_data,type:text"`
-			LastUpdated   string `bun:"last_updated,notnull,type:text"`
-			CreatedAt     string `bun:"created_at,notnull,type:text"`
-		}{}).
+		Model((*regtypes.TableStatistic)(nil)).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
 		IfNotExists().
 		Exec(ctx)
@@ -343,20 +207,7 @@ func (m *Migration001) createTableStatisticsTable(ctx context.Context, tx bun.Tx
 // createAccessLogTable creates the access logging table
 func (m *Migration001) createAccessLogTable(ctx context.Context, tx bun.Tx) error {
 	_, err := tx.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel `bun:"table:access_log"`
-			ID            int64  `bun:"id,pk,autoincrement"`
-			UserID        int64  `bun:"user_id,type:integer"`
-			TableID       int64  `bun:"table_id,type:integer"`
-			DatabaseID    int64  `bun:"database_id,type:integer"`
-			Action        string `bun:"action,notnull,type:text"`
-			Details       string `bun:"details,type:text"`
-			IPAddress     string `bun:"ip_address,type:text"`
-			UserAgent     string `bun:"user_agent,type:text"`
-			Timestamp     string `bun:"timestamp,notnull,type:text"`
-			Duration      int64  `bun:"duration,type:integer"`
-			Success       bool   `bun:"success,notnull,default:true"`
-		}{}).
+		Model((*regtypes.AccessLog)(nil)).
 		ForeignKey(`("user_id") REFERENCES "users" ("id") ON DELETE SET NULL`).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE SET NULL`).
 		ForeignKey(`("database_id") REFERENCES "databases" ("id") ON DELETE SET NULL`).
@@ -368,15 +219,7 @@ func (m *Migration001) createAccessLogTable(ctx context.Context, tx bun.Tx) erro
 // createSchemaVersionsTable creates the schema versioning table
 func (m *Migration001) createSchemaVersionsTable(ctx context.Context, tx bun.Tx) error {
 	_, err := tx.NewCreateTable().
-		Model(&struct {
-			bun.BaseModel `bun:"table:schema_versions"`
-			Version       int    `bun:"version,pk,type:integer"`
-			Name          string `bun:"name,notnull,type:text"`
-			Description   string `bun:"description,type:text"`
-			AppliedAt     string `bun:"applied_at,notnull,type:text"`
-			Checksum      string `bun:"checksum,type:text"`
-			AppliedBy     string `bun:"applied_by,type:text"`
-		}{}).
+		Model((*regtypes.SchemaVersion)(nil)).
 		IfNotExists().
 		Exec(ctx)
 	return err
@@ -430,6 +273,11 @@ func (m *Migration001) createPerformanceIndexes(ctx context.Context, tx bun.Tx) 
 		return fmt.Errorf("failed to create table_files partition index: %w", err)
 	}
 
+	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_table_files_iceberg_state ON table_files(iceberg_metadata_state)`)
+	if err != nil {
+		return fmt.Errorf("failed to create table_files iceberg_state index: %w", err)
+	}
+
 	// Access log indexes
 	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_access_log_timestamp ON access_log(timestamp)`)
 	if err != nil {
@@ -473,7 +321,7 @@ func (m *Migration001) insertDefaultUser(ctx context.Context, tx bun.Tx) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT OR IGNORE INTO users (username, email, full_name, role, is_active, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, "system", "system@icebox.local", "System User", "admin", true, now, now)
+		`, "system", "system@icebox.local", "System User", regtypes.UserRoleAdmin, true, now, now)
 
 	return err
 }

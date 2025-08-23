@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 
+	"github.com/TFMV/icebox/server/astha"
 	"github.com/TFMV/icebox/server/catalog"
+	"github.com/TFMV/icebox/server/metadata/iceberg"
 	"github.com/TFMV/icebox/server/metadata/registry"
-	"github.com/TFMV/icebox/server/metadata/types"
+	"github.com/TFMV/icebox/server/paths"
+	"github.com/rs/zerolog"
 	"github.com/uptrace/bun"
 )
 
@@ -16,22 +20,37 @@ const ComponentType = "metadata"
 
 // MetadataManager coordinates between Iceberg catalog and personal metadata storage
 type MetadataManager struct {
-	iceberg catalog.CatalogInterface
-	storage *registry.Store
-	hybrid  *registry.HybridDeploymentManager
+	iceberg        catalog.CatalogInterface
+	storage        *registry.Store
+	hybrid         *registry.HybridDeploymentManager
+	icebergManager *iceberg.Manager
+	astha          *astha.Astha
+	pathManager    paths.PathManager
+	logger         zerolog.Logger
+	mu             sync.RWMutex
+	running        bool
 }
 
 // NewMetadataManager creates a new metadata manager with bun migrations
-func NewMetadataManager(catalog catalog.CatalogInterface, dbPath, basePath string) (*MetadataManager, error) {
+func NewMetadataManager(catalog catalog.CatalogInterface, dbPath, basePath string, logger zerolog.Logger) (*MetadataManager, error) {
 	// Create storage with bun migrations
 	storage, err := registry.NewStore(dbPath, basePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage: %w", err)
 	}
 
+	// Create path manager
+	pathManager := paths.NewManager(basePath)
+
+	// Create Iceberg manager
+	icebergManager := iceberg.NewManager(pathManager, logger)
+
 	manager := &MetadataManager{
-		iceberg: catalog,
-		storage: storage,
+		iceberg:        catalog,
+		storage:        storage,
+		icebergManager: icebergManager,
+		pathManager:    pathManager,
+		logger:         logger,
 	}
 
 	// Create hybrid deployment manager
@@ -42,6 +61,131 @@ func NewMetadataManager(catalog catalog.CatalogInterface, dbPath, basePath strin
 	manager.hybrid = registry.NewHybridDeploymentManager(storage, bunMigrator)
 
 	return manager, nil
+}
+
+// Start starts the MetadataManager and its components
+func (mm *MetadataManager) Start(ctx context.Context) error {
+	mm.mu.Lock()
+	defer mm.mu.Unlock()
+
+	if mm.running {
+		return fmt.Errorf("metadata manager is already running")
+	}
+
+	// Start Iceberg manager
+	if err := mm.icebergManager.Start(); err != nil {
+		return fmt.Errorf("failed to start iceberg manager: %w", err)
+	}
+
+	// Initialize Astha CDC scheduler
+	if err := mm.initializeAstha(ctx); err != nil {
+		return fmt.Errorf("failed to initialize astha: %w", err)
+	}
+
+	// Start Astha
+	if err := mm.astha.Start(); err != nil {
+		return fmt.Errorf("failed to start astha: %w", err)
+	}
+
+	// Load pending files for Iceberg metadata generation
+	if err := mm.loadPendingFiles(ctx); err != nil {
+		mm.logger.Warn().Err(err).Msg("failed to load pending files during startup")
+	}
+
+	mm.running = true
+	mm.logger.Info().Msg("Metadata manager started successfully")
+	return nil
+}
+
+// Stop stops the MetadataManager and its components
+func (mm *MetadataManager) Stop(ctx context.Context) error {
+	mm.mu.Lock()
+	defer mm.mu.Unlock()
+
+	if !mm.running {
+		return fmt.Errorf("metadata manager is not running")
+	}
+
+	// Stop Astha
+	if mm.astha != nil {
+		if err := mm.astha.Stop(); err != nil {
+			mm.logger.Warn().Err(err).Msg("failed to stop astha gracefully")
+		}
+	}
+
+	// Stop Iceberg manager
+	if mm.icebergManager != nil {
+		if err := mm.icebergManager.Stop(); err != nil {
+			mm.logger.Warn().Err(err).Msg("failed to stop iceberg manager gracefully")
+		}
+	}
+
+	mm.running = false
+	mm.logger.Info().Msg("Metadata manager stopped successfully")
+	return nil
+}
+
+// initializeAstha initializes the Astha CDC scheduler
+func (mm *MetadataManager) initializeAstha(ctx context.Context) error {
+	// Get database connection from bun migration manager
+	bunDB := mm.hybrid.GetBunDB()
+	if bunDB == nil {
+		return fmt.Errorf("database connection not available")
+	}
+
+	// Get the underlying sql.DB from bun.DB
+	sqlDB := bunDB.DB
+
+	// Create Astha configuration
+	cfg := &astha.Config{
+		Database:     sqlDB,
+		Logger:       mm.logger,
+		BatchSize:    10,
+		PollInterval: 100, // 100ms
+	}
+
+	// Create Astha instance
+	asthaInstance, err := astha.NewAstha(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create astha: %w", err)
+	}
+
+	// Register Iceberg component with Astha
+	icebergComponent := iceberg.NewIcebergComponent(mm.icebergManager, mm.logger)
+
+	if err := asthaInstance.RegisterComponent(icebergComponent.GetComponentInfo()); err != nil {
+		return fmt.Errorf("failed to register iceberg component: %w", err)
+	}
+
+	mm.astha = asthaInstance
+	return nil
+}
+
+// loadPendingFiles loads files that need Iceberg metadata generation during startup
+func (mm *MetadataManager) loadPendingFiles(ctx context.Context) error {
+	// Get pending files from Registry
+	pendingFiles, err := mm.storage.GetPendingFilesForIceberg(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get pending files from registry: %w", err)
+	}
+
+	if len(pendingFiles) > 0 {
+		mm.logger.Info().
+			Int("count", len(pendingFiles)).
+			Msg("Loading pending files for Iceberg metadata generation")
+
+		// Process pending files in batches
+		for _, file := range pendingFiles {
+			if err := mm.icebergManager.ProcessFile(file); err != nil {
+				mm.logger.Warn().
+					Err(err).
+					Int64("file_id", file.ID).
+					Msg("Failed to process pending file")
+			}
+		}
+	}
+
+	return nil
 }
 
 // EnsureDeploymentReady ensures the system is ready for deployment
@@ -107,12 +251,12 @@ func (mm *MetadataManager) CreateTable(ctx context.Context, dbName, tableName st
 func (mm *MetadataManager) DropTable(ctx context.Context, dbName, tableName string) error {
 	// Drop from personal metadata storage
 	if err := mm.storage.DropTable(ctx, dbName, tableName); err != nil {
-		return fmt.Errorf("failed to drop table from storage: %w", err)
+		return fmt.Errorf("failed to drop database from storage: %w", err)
 	}
 
 	// Drop from Iceberg catalog if needed
 	// This is where you'd coordinate with the Iceberg catalog
-	log.Printf("Dropped table %s.%s from personal metadata", dbName, tableName)
+	log.Printf("Dropped table %s from personal metadata", dbName)
 
 	return nil
 }
@@ -143,12 +287,17 @@ func (mm *MetadataManager) GetType() string {
 // Shutdown gracefully shuts down the metadata manager
 func (mm *MetadataManager) Shutdown(ctx context.Context) error {
 	log.Printf("Shutting down metadata manager")
-	
+
+	// Stop the manager first
+	if err := mm.Stop(ctx); err != nil {
+		return fmt.Errorf("failed to stop metadata manager: %w", err)
+	}
+
 	// Close metadata manager
 	if err := mm.Close(); err != nil {
 		return fmt.Errorf("failed to close metadata manager: %w", err)
 	}
-	
+
 	log.Printf("Metadata manager shut down successfully")
 	return nil
 }
@@ -168,6 +317,11 @@ func (mm *MetadataManager) GetHybridManager() *registry.HybridDeploymentManager 
 	return mm.hybrid
 }
 
+// GetIcebergManager returns the Iceberg metadata manager
+func (mm *MetadataManager) GetIcebergManager() *iceberg.Manager {
+	return mm.icebergManager
+}
+
 // IsUsingBun returns true if the manager is using bun migrations
 func (mm *MetadataManager) IsUsingBun() bool {
 	return true // Always true now
@@ -182,13 +336,13 @@ func (mm *MetadataManager) GetBunDB() *bun.DB {
 }
 
 // CreateTableMetadata creates detailed metadata for a table (for storage operations)
-func (mm *MetadataManager) CreateTableMetadata(ctx context.Context, database, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*types.TableMetadata, error) {
+func (mm *MetadataManager) CreateTableMetadata(ctx context.Context, database, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*registry.TableMetadata, error) {
 	return mm.storage.CreateTableMetadata(ctx, database, tableName, schema, storageEngine, engineConfig)
 }
 
 // LoadTableMetadata loads detailed metadata for a table
-func (mm *MetadataManager) LoadTableMetadata(ctx context.Context, database, tableName string) (*types.TableMetadata, error) {
-	return mm.storage.LoadTableMetadata(ctx, database, tableName)
+func (mm *MetadataManager) LoadTableMetadata(ctx context.Context, database, tableName string) (*registry.TableMetadata, error) {
+	return nil, fmt.Errorf("not implemented")
 }
 
 // ListAllTables returns a list of all tables across all databases (for storage manager)

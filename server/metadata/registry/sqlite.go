@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/TFMV/icebox/server/metadata/types"
+	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -91,6 +91,44 @@ func (sm *Store) IsUsingBun() bool {
 	return true // Always true now
 }
 
+// GetPendingFilesForIceberg returns files that need Iceberg metadata generation
+func (sm *Store) GetPendingFilesForIceberg(ctx context.Context) ([]*regtypes.TableFile, error) {
+	query := `
+		SELECT id, table_id, file_name, file_path, file_size, file_type, 
+		       partition_path, row_count, checksum, is_compressed, 
+		       created_at, modified_at, iceberg_metadata_state
+		FROM table_files 
+		WHERE iceberg_metadata_state != 'completed'
+		ORDER BY created_at ASC
+	`
+
+	rows, err := sm.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query pending files: %w", err)
+	}
+	defer rows.Close()
+
+	var pendingFiles []*regtypes.TableFile
+	for rows.Next() {
+		var file regtypes.TableFile
+		err := rows.Scan(
+			&file.ID, &file.TableID, &file.FileName, &file.FilePath, &file.FileSize,
+			&file.FileType, &file.PartitionPath, &file.RowCount, &file.Checksum,
+			&file.IsCompressed, &file.CreatedAt, &file.ModifiedAt, &file.IcebergMetadataState,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan file info: %w", err)
+		}
+		pendingFiles = append(pendingFiles, &file)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate over rows: %w", err)
+	}
+
+	return pendingFiles, nil
+}
+
 // CreateDatabase creates a new database
 func (sm *Store) CreateDatabase(ctx context.Context, dbName string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -168,7 +206,7 @@ func (sm *Store) DatabaseExists(ctx context.Context, dbName string) bool {
 }
 
 // CreateTable creates a new table with complete metadata in a single transaction
-func (sm *Store) CreateTable(ctx context.Context, database, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*types.TableMetadata, error) {
+func (sm *Store) CreateTable(ctx context.Context, database, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*TableMetadata, error) {
 	// Check if database exists
 	if !sm.DatabaseExists(ctx, database) {
 		return nil, fmt.Errorf("database %s does not exist", database)
@@ -341,7 +379,7 @@ func (sm *Store) TableExists(ctx context.Context, dbName, tableName string) bool
 }
 
 // CreateTableMetadata creates detailed metadata for a table (for storage operations)
-func (sm *Store) CreateTableMetadata(ctx context.Context, database, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*types.TableMetadata, error) {
+func (sm *Store) CreateTableMetadata(ctx context.Context, database, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*TableMetadata, error) {
 	// Get table ID
 	var tableID int64
 	query := `SELECT t.id FROM tables t JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ?`
@@ -387,7 +425,7 @@ func (sm *Store) CreateTableMetadata(ctx context.Context, database, tableName st
 }
 
 // LoadTableMetadata loads detailed metadata for a table
-func (sm *Store) LoadTableMetadata(ctx context.Context, database, tableName string) (*types.TableMetadata, error) {
+func (sm *Store) LoadTableMetadata(ctx context.Context, database, tableName string) (*TableMetadata, error) {
 	query := `SELECT tm.schema, tm.storage_engine, tm.engine_config, tm.last_modified, tm.created_at FROM table_metadata tm JOIN tables t ON tm.table_id = t.id JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ?`
 
 	var storageEngine, engineConfigJSON, lastModified, created string
@@ -465,7 +503,7 @@ func (sm *Store) ListAllTables(ctx context.Context) ([]string, error) {
 }
 
 // loadTableFiles loads file information for a table
-func (sm *Store) loadTableFiles(ctx context.Context, database, tableName string) ([]types.FileInfo, error) {
+func (sm *Store) loadTableFiles(ctx context.Context, database, tableName string) ([]StorageFileInfo, error) {
 	query := `SELECT tf.file_name, tf.file_size, tf.created_at, tf.modified_at, tf.partition_path FROM table_files tf JOIN tables t ON tf.table_id = t.id JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ? ORDER BY tf.file_name`
 	rows, err := sm.db.QueryContext(ctx, query, database, tableName)
 	if err != nil {
@@ -473,7 +511,7 @@ func (sm *Store) loadTableFiles(ctx context.Context, database, tableName string)
 	}
 	defer rows.Close()
 
-	var files []types.FileInfo
+	var files []StorageFileInfo
 	for rows.Next() {
 		var fileName, created, modified, partitionPath string
 		var fileSize int64
@@ -482,7 +520,7 @@ func (sm *Store) loadTableFiles(ctx context.Context, database, tableName string)
 			return nil, fmt.Errorf("failed to scan file info: %w", err)
 		}
 
-		fileInfo := types.FileInfo{
+		fileInfo := StorageFileInfo{
 			Name:     fileName,
 			Size:     fileSize,
 			Created:  created,

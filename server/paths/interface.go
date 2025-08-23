@@ -20,6 +20,7 @@ type PathManager interface {
 	GetTableDataPath(namespace []string, tableName string) string
 	GetTableMetadataPath(namespace []string, tableName string) string
 	GetTableMetadataFile(database, tableName string, version int) string
+	GetTableManifestPath(namespace []string, tableName string) string
 
 	// View paths
 	GetViewMetadataPath(namespace []string, viewName string) string

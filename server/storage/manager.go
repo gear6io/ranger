@@ -15,7 +15,7 @@ import (
 	"github.com/TFMV/icebox/server/catalog"
 	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/metadata"
-	"github.com/TFMV/icebox/server/metadata/types"
+	"github.com/TFMV/icebox/server/metadata/registry"
 	"github.com/TFMV/icebox/server/paths"
 	"github.com/TFMV/icebox/server/storage/filesystem"
 	"github.com/TFMV/icebox/server/storage/memory"
@@ -79,7 +79,7 @@ func NewManager(cfg *config.Config, logger zerolog.Logger) (*Manager, error) {
 	}
 
 	// Create metadata manager with internal metadata path from PathManager
-	meta, err := metadata.NewMetadataManager(catalog, pathManager.GetInternalMetadataDBPath(), basePath)
+	meta, err := metadata.NewMetadataManager(catalog, pathManager.GetInternalMetadataDBPath(), basePath, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create metadata manager: %w", err)
 	}
@@ -401,7 +401,7 @@ func (m *Manager) InsertData(ctx context.Context, database, tableName string, da
 }
 
 // GetTableMetadata returns metadata for a table
-func (m *Manager) GetTableMetadata(ctx context.Context, database, tableName string) (*types.TableMetadata, error) {
+func (m *Manager) GetTableMetadata(ctx context.Context, database, tableName string) (*registry.TableMetadata, error) {
 	return m.meta.LoadTableMetadata(ctx, database, tableName)
 }
 

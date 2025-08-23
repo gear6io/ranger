@@ -37,3 +37,4 @@ logs/
 .vscode/
 bin/
 workspace/
+.cursor/
