@@ -144,8 +144,8 @@ func (sm *Store) CreateDatabase(ctx context.Context, dbName string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	// Insert database record using new production schema (no ownership tracking)
-	insertSQL := `INSERT INTO databases (name, description, is_system, is_read_only, table_count, total_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err := sm.db.ExecContext(ctx, insertSQL, dbName, "", false, false, 0, 0, now, now)
+	insertSQL := `INSERT INTO databases (name, description, owner_id, table_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+	_, err := sm.db.ExecContext(ctx, insertSQL, dbName, "", 1, 0, now, now)
 	if err != nil {
 		return errors.New(errors.CommonInternal, "failed to create database", err).AddContext("database", dbName)
 	}
@@ -191,7 +191,7 @@ func (sm *Store) ListDatabases(ctx context.Context) ([]string, error) {
 	query := `SELECT name FROM databases ORDER BY name`
 	rows, err := sm.db.QueryContext(ctx, query)
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to query databases", nil), err
+		return nil, errors.New(errors.CommonInternal, "failed to query databases", err)
 	}
 	defer rows.Close()
 
@@ -199,7 +199,7 @@ func (sm *Store) ListDatabases(ctx context.Context) ([]string, error) {
 	for rows.Next() {
 		var dbName string
 		if err := rows.Scan(&dbName); err != nil {
-			return nil, errors.New(errors.CommonInternal, "failed to scan database name", nil), err
+			return nil, errors.New(errors.CommonInternal, "failed to scan database name", err)
 		}
 		databases = append(databases, dbName)
 	}
@@ -227,13 +227,13 @@ func (sm *Store) CreateTable(ctx context.Context, database, tableName string, sc
 	query := `SELECT id FROM databases WHERE name = ?`
 	err := sm.db.QueryRowContext(ctx, query, database).Scan(&dbID)
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to get database ID", nil).AddContext("database", database), err
+		return nil, errors.New(errors.CommonInternal, "failed to get database ID", err).AddContext("database", database)
 	}
 
 	// Begin transaction
 	tx, err := sm.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, errors.New(RegistryTransactionFailed, "failed to begin transaction", nil), err
+		return nil, errors.New(RegistryTransactionFailed, "failed to begin transaction", err)
 	}
 	defer tx.Rollback()
 
@@ -242,12 +242,12 @@ func (sm *Store) CreateTable(ctx context.Context, database, tableName string, sc
 	insertTableSQL := `INSERT INTO tables (database_id, name, display_name, description, table_type, is_temporary, is_external, row_count, file_count, total_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	result, err := tx.ExecContext(ctx, insertTableSQL, dbID, tableName, tableName, "", "user", false, false, 0, 0, 0, now, now)
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to create table", nil).AddContext("table", tableName), err
+		return nil, errors.New(errors.CommonInternal, "failed to create table", err).AddContext("table", tableName)
 	}
 
 	tableID, err := result.LastInsertId()
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to get table ID", nil), err
+		return nil, errors.New(errors.CommonInternal, "failed to get table ID", err)
 	}
 
 	// Create table metadata record
@@ -255,7 +255,7 @@ func (sm *Store) CreateTable(ctx context.Context, database, tableName string, sc
 	if engineConfig != nil {
 		engineConfigBytes, err := json.Marshal(engineConfig)
 		if err != nil {
-			return nil, errors.New(errors.CommonInternal, "failed to marshal engine config", nil), err
+			return nil, errors.New(errors.CommonInternal, "failed to marshal engine config", err)
 		}
 		engineConfigJSON = string(engineConfigBytes)
 	}
@@ -263,33 +263,33 @@ func (sm *Store) CreateTable(ctx context.Context, database, tableName string, sc
 	insertMetadataSQL := `INSERT INTO table_metadata (table_id, schema_version, schema, storage_engine, engine_config, format, compression, last_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err = tx.ExecContext(ctx, insertMetadataSQL, tableID, 1, schema, storageEngine, engineConfigJSON, "parquet", "snappy", now, now, now)
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to create table metadata", nil).AddContext("table", tableName), err
+		return nil, errors.New(errors.CommonInternal, "failed to create table metadata", err).AddContext("table", tableName)
 	}
 
 	// Create table files record
 	filePath := filepath.Join("databases", database, tableName, "initial.parquet")
-	insertFileSQL := `INSERT INTO table_files (table_id, file_name, file_path, file_size, file_type, partition_path, row_count, checksum, is_compressed, created_at, modified_at, iceberg_metadata_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	insertFileSQL := `INSERT INTO table_files (table_id, file_name, file_path, file_size, file_type, partition_path, row_count, checksum, is_compressed, created_at, modified_at, iceberg_metadata_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err = tx.ExecContext(ctx, insertFileSQL, tableID, "initial.parquet", filePath, 0, "parquet", "", 0, "", true, now, now, "pending")
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to create table file record", nil).AddContext("table", tableName), err
+		return nil, errors.New(errors.CommonInternal, "failed to create table file record", err).AddContext("table", tableName)
 	}
 
 	// Update database table count
 	updateDBSQL := `UPDATE databases SET table_count = table_count + 1, updated_at = ? WHERE id = ?`
 	_, err = tx.ExecContext(ctx, updateDBSQL, now, dbID)
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to update database table count", nil).AddContext("database", database), err
+		return nil, errors.New(errors.CommonInternal, "failed to update database table count", err).AddContext("database", database)
 	}
 
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
-		return nil, errors.New(RegistryTransactionFailed, "failed to commit transaction", nil), err
+		return nil, errors.New(RegistryTransactionFailed, "failed to commit transaction", err)
 	}
 
 	// Create table directory
 	tablePath := filepath.Join(sm.basePath, "databases", database, tableName)
 	if err := os.MkdirAll(tablePath, 0755); err != nil {
-		return nil, errors.New(RegistryFileOperationFailed, "failed to create table directory", nil).AddContext("path", tablePath), err
+		return nil, errors.New(RegistryFileOperationFailed, "failed to create table directory", err).AddContext("path", tablePath)
 	}
 
 	// Create metadata object
@@ -316,13 +316,13 @@ func (sm *Store) DropTable(ctx context.Context, dbName, tableName string) error 
 	query := `SELECT id FROM databases WHERE name = ?`
 	err := sm.db.QueryRowContext(ctx, query, dbName).Scan(&dbID)
 	if err != nil {
-		return errors.New(errors.CommonInternal, "failed to get database ID", nil).AddContext("database", dbName), err
+		return errors.New(errors.CommonInternal, "failed to get database ID", err).AddContext("database", dbName)
 	}
 
 	// Begin transaction
 	tx, err := sm.db.BeginTx(ctx, nil)
 	if err != nil {
-		return errors.New(RegistryTransactionFailed, "failed to begin transaction", nil), err
+		return errors.New(RegistryTransactionFailed, "failed to begin transaction", err)
 	}
 	defer tx.Rollback()
 
@@ -330,12 +330,12 @@ func (sm *Store) DropTable(ctx context.Context, dbName, tableName string) error 
 	deleteTableSQL := `DELETE FROM tables WHERE database_id = ? AND name = ?`
 	result, err := tx.ExecContext(ctx, deleteTableSQL, dbID, tableName)
 	if err != nil {
-		return errors.New(errors.CommonInternal, "failed to drop table", nil).AddContext("table", tableName), err
+		return errors.New(errors.CommonInternal, "failed to drop table", err).AddContext("table", tableName)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return errors.New(errors.CommonInternal, "failed to get rows affected", nil), err
+		return errors.New(errors.CommonInternal, "failed to get rows affected", err)
 	}
 
 	if rowsAffected == 0 {
@@ -347,18 +347,18 @@ func (sm *Store) DropTable(ctx context.Context, dbName, tableName string) error 
 	updateDBSQL := `UPDATE databases SET table_count = table_count - 1, updated_at = ? WHERE id = ?`
 	_, err = tx.ExecContext(ctx, updateDBSQL, now, dbID)
 	if err != nil {
-		return errors.New(errors.CommonInternal, "failed to update database table count", nil).AddContext("database", dbName), err
+		return errors.New(errors.CommonInternal, "failed to update database table count", err).AddContext("database", dbName)
 	}
 
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
-		return errors.New(RegistryTransactionFailed, "failed to commit transaction", nil), err
+		return errors.New(RegistryTransactionFailed, "failed to commit transaction", err)
 	}
 
 	// Remove table directory
 	tablePath := filepath.Join(sm.basePath, "databases", dbName, tableName)
 	if err := os.RemoveAll(tablePath); err != nil {
-		return errors.New(RegistryFileOperationFailed, "failed to remove table directory", nil).AddContext("path", tablePath), err
+		return errors.New(RegistryFileOperationFailed, "failed to remove table directory", err).AddContext("path", tablePath)
 	}
 
 	return nil
@@ -369,7 +369,7 @@ func (sm *Store) ListTables(ctx context.Context, dbName string) ([]string, error
 	query := `SELECT t.name FROM tables t JOIN databases d ON t.database_id = d.id WHERE d.name = ? ORDER BY t.name`
 	rows, err := sm.db.QueryContext(ctx, query, dbName)
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to query tables", nil).AddContext("database", dbName), err
+		return nil, errors.New(errors.CommonInternal, "failed to query tables", err).AddContext("database", dbName)
 	}
 	defer rows.Close()
 
@@ -377,7 +377,7 @@ func (sm *Store) ListTables(ctx context.Context, dbName string) ([]string, error
 	for rows.Next() {
 		var tableName string
 		if err := rows.Scan(&tableName); err != nil {
-			return nil, errors.New(errors.CommonInternal, "failed to scan table name", nil), err
+			return nil, errors.New(errors.CommonInternal, "failed to scan table name", err)
 		}
 		tables = append(tables, tableName)
 	}
@@ -400,7 +400,7 @@ func (sm *Store) CreateTableMetadata(ctx context.Context, database, tableName st
 	query := `SELECT t.id FROM tables t JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ?`
 	err := sm.db.QueryRowContext(ctx, query, database, tableName).Scan(&tableID)
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to get table ID", nil).AddContext("database", database).AddContext("table", tableName), err
+		return nil, errors.New(errors.CommonInternal, "failed to get table ID", err).AddContext("database", database).AddContext("table", tableName)
 	}
 
 	// Serialize engine config to JSON
@@ -408,7 +408,7 @@ func (sm *Store) CreateTableMetadata(ctx context.Context, database, tableName st
 	if engineConfig != nil {
 		configBytes, err := json.Marshal(engineConfig)
 		if err != nil {
-			return nil, errors.New(errors.CommonInternal, "failed to marshal engine config", nil), err
+			return nil, errors.New(errors.CommonInternal, "failed to marshal engine config", err)
 		}
 		engineConfigJSON = string(configBytes)
 	}
@@ -444,7 +444,7 @@ func (sm *Store) LoadTableMetadata(ctx context.Context, database, tableName stri
 
 	err := row.Scan(&schema, &storageEngine, &engineConfig, &lastModified, &createdAt)
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to load table metadata", nil).AddContext("database", database).AddContext("table", tableName), err
+		return nil, errors.New(errors.CommonInternal, "failed to load table metadata", err).AddContext("database", database).AddContext("table", tableName)
 	}
 
 	// Load table files
@@ -481,7 +481,7 @@ func (sm *Store) ListAllTables(ctx context.Context) ([]string, error) {
 	query := `SELECT d.name, t.name FROM tables t JOIN databases d ON t.database_id = d.id ORDER BY d.name, t.name`
 	rows, err := sm.db.QueryContext(ctx, query)
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to query all tables", nil), err
+		return nil, errors.New(errors.CommonInternal, "failed to query all tables", err)
 	}
 	defer rows.Close()
 
@@ -489,7 +489,7 @@ func (sm *Store) ListAllTables(ctx context.Context) ([]string, error) {
 	for rows.Next() {
 		var databaseName, tableName string
 		if err := rows.Scan(&databaseName, &tableName); err != nil {
-			return nil, errors.New(errors.CommonInternal, "failed to scan table info", nil), err
+			return nil, errors.New(errors.CommonInternal, "failed to scan table info", err)
 		}
 		tables = append(tables, fmt.Sprintf("%s.%s", databaseName, tableName))
 	}
@@ -503,7 +503,7 @@ func (sm *Store) UpdateTableAfterInsertion(ctx context.Context, database, tableN
 	// Start a transaction for atomic updates
 	tx, err := sm.db.BeginTx(ctx, nil)
 	if err != nil {
-		return errors.New(RegistryTransactionFailed, "failed to begin transaction", nil), err
+		return errors.New(RegistryTransactionFailed, "failed to begin transaction", err)
 	}
 	defer tx.Rollback()
 
@@ -511,7 +511,7 @@ func (sm *Store) UpdateTableAfterInsertion(ctx context.Context, database, tableN
 	var tableID int64
 	tableQuery := `SELECT t.id FROM tables t JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ?`
 	if err := tx.QueryRowContext(ctx, tableQuery, database, tableName).Scan(&tableID); err != nil {
-		return errors.New(errors.CommonInternal, "failed to get table ID", nil).AddContext("database", database).AddContext("table", tableName), err
+		return errors.New(errors.CommonInternal, "failed to get table ID", err).AddContext("database", database).AddContext("table", tableName)
 	}
 
 	// 1. Insert table file record
@@ -533,19 +533,19 @@ func (sm *Store) UpdateTableAfterInsertion(ctx context.Context, database, tableN
 		IcebergMetadataGenerationStatePending)
 
 	if err != nil {
-		return errors.New(errors.CommonInternal, "failed to insert table file", nil).AddContext("table", tableName), err
+		return errors.New(errors.CommonInternal, "failed to insert table file", err).AddContext("table", tableName)
 	}
 
 	// 2. Update table statistics
 	updateStatsSQL := `UPDATE tables SET row_count = row_count + ?, file_count = file_count + 1, total_size = total_size + ?, updated_at = ? WHERE id = ?`
 	_, err = tx.ExecContext(ctx, updateStatsSQL, fileInfo.RowCount, fileInfo.FileSize, now, tableID)
 	if err != nil {
-		return errors.New(errors.CommonInternal, "failed to update table statistics", nil).AddContext("table", tableName), err
+		return errors.New(errors.CommonInternal, "failed to update table statistics", err).AddContext("table", tableName)
 	}
 
 	// Commit the transaction
 	if err := tx.Commit(); err != nil {
-		return errors.New(RegistryTransactionFailed, "failed to commit transaction", nil), err
+		return errors.New(RegistryTransactionFailed, "failed to commit transaction", err)
 	}
 
 	return nil
@@ -568,7 +568,7 @@ func (sm *Store) loadTableFiles(ctx context.Context, database, tableName string)
 	query := `SELECT tf.file_name, tf.file_size, tf.created_at, tf.modified_at, tf.partition_path FROM table_files tf JOIN tables t ON tf.table_id = t.id JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ? ORDER BY tf.file_name`
 	rows, err := sm.db.QueryContext(ctx, query, database, tableName)
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to load table files", nil).AddContext("database", database).AddContext("table", tableName), err
+		return nil, errors.New(errors.CommonInternal, "failed to load table files", err).AddContext("database", database).AddContext("table", tableName)
 	}
 	defer rows.Close()
 
@@ -578,7 +578,7 @@ func (sm *Store) loadTableFiles(ctx context.Context, database, tableName string)
 		var fileSize int64
 
 		if err := rows.Scan(&fileName, &fileSize, &created, &modified, &partitionPath); err != nil {
-			return nil, errors.New(errors.CommonInternal, "failed to scan table file", nil), err
+			return nil, errors.New(errors.CommonInternal, "failed to scan table file", err)
 		}
 
 		// Parse timestamps

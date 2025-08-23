@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/metadata/registry"
+	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
 )
 
 // Package-specific error codes for task processing
@@ -20,7 +20,7 @@ var (
 
 // ProcessFileTask processes a single file for Iceberg metadata generation
 type ProcessFileTask struct {
-	FileInfo registry.FileInfo
+	FileInfo *regtypes.TableFile
 	Manager  *Manager
 }
 
@@ -54,13 +54,15 @@ type ProcessBatchTask struct {
 // Execute processes the batch task
 func (t *ProcessBatchTask) Execute(ctx context.Context) error {
 	// Generate manifest for the batch
-	manifestPath, err := t.Manager.generateManifest(t.Batch)
+	// TODO: Need table info for manifest generation
+	manifestPath, err := t.Manager.generateManifest(ctx, t.Batch, nil)
 	if err != nil {
 		return err
 	}
 
 	// Update metadata file with new snapshot
-	if err := t.Manager.updateMetadataFile(t.Batch, manifestPath); err != nil {
+	// TODO: Need table info for metadata update
+	if err := t.Manager.updateMetadataFile(ctx, t.Batch, manifestPath, nil); err != nil {
 		return err
 	}
 
@@ -97,7 +99,7 @@ func NewBatchProcessor() *BatchProcessor {
 }
 
 // CreateBatches creates optimal batches from a list of files
-func (bp *BatchProcessor) CreateBatches(files []registry.FileInfo) []BatchInfo {
+func (bp *BatchProcessor) CreateBatches(files []*regtypes.TableFile) []BatchInfo {
 	bp.mu.RLock()
 	defer bp.mu.RUnlock()
 
@@ -106,7 +108,7 @@ func (bp *BatchProcessor) CreateBatches(files []registry.FileInfo) []BatchInfo {
 	}
 
 	var batches []BatchInfo
-	var currentBatch []registry.FileInfo
+	var currentBatch []*regtypes.TableFile
 	var currentSize int64
 
 	for _, file := range files {
@@ -151,7 +153,7 @@ func (bp *BatchProcessor) CreateBatches(files []registry.FileInfo) []BatchInfo {
 }
 
 // createBatchInfo creates a BatchInfo from a slice of files
-func (bp *BatchProcessor) createBatchInfo(files []registry.FileInfo) BatchInfo {
+func (bp *BatchProcessor) createBatchInfo(files []*regtypes.TableFile) BatchInfo {
 	return BatchInfo{
 		ID:        "batch-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 		Files:     files,

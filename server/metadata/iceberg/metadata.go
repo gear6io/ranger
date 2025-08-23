@@ -26,6 +26,7 @@ var (
 type MetadataGenerator struct {
 	pathManager paths.PathManager
 	logger      zerolog.Logger
+	avroCodec   *AvroCodec
 }
 
 // NewMetadataGenerator creates a new metadata generator
@@ -33,6 +34,7 @@ func NewMetadataGenerator(pathManager paths.PathManager, logger zerolog.Logger) 
 	return &MetadataGenerator{
 		pathManager: pathManager,
 		logger:      logger,
+		avroCodec:   NewAvroCodec(),
 	}
 }
 
@@ -160,7 +162,7 @@ func (mg *MetadataGenerator) UpdateMetadataFile(ctx context.Context, batch Batch
 	}
 
 	// Generate metadata filename
-	metadataFile := "metadata-" + strconv.FormatInt(time.Now().Unix(), 10) + ".json"
+	metadataFile := "metadata-" + strconv.FormatInt(time.Now().Unix(), 10) + ".avro"
 	metadataPath := filepath.Join(metadataDir, metadataFile)
 
 	// Create snapshot
@@ -188,14 +190,15 @@ func (mg *MetadataGenerator) UpdateMetadataFile(ctx context.Context, batch Batch
 		},
 	}
 
-	// Write metadata file
-	metadataBytes, err := json.MarshalIndent(snapshot, "", "  ")
+	// Encode snapshot to Avro format
+	metadataBytes, err := mg.avroCodec.EncodeSnapshot(&snapshot)
 	if err != nil {
-		return errors.New(errors.CommonInternal, "while marshaling metadata", err)
+		return errors.New(errors.CommonInternal, "while encoding snapshot to Avro", err)
 	}
 
-	if err := os.WriteFile(metadataPath, metadataBytes, 0644); err != nil {
-		return errors.New(errors.CommonInternal, "while writing metadata file", err).AddContext("path", metadataPath)
+	// Write Avro file with proper header
+	if err := mg.avroCodec.WriteAvroFile(metadataPath, metadataBytes, "snapshot"); err != nil {
+		return errors.New(errors.CommonInternal, "while writing Avro metadata file", err).AddContext("path", metadataPath)
 	}
 
 	mg.logger.Debug().

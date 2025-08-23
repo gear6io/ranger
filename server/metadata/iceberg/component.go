@@ -7,7 +7,7 @@ import (
 
 	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/astha"
-	"github.com/TFMV/icebox/server/metadata/registry"
+	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
 	"github.com/rs/zerolog"
 )
 
@@ -34,7 +34,7 @@ func NewIcebergComponent(manager *Manager, logger zerolog.Logger) *IcebergCompon
 }
 
 // OnEvent handles incoming events for this component
-func (ic *IcebergComponent) OnEvent(ctx context.Context, event astha.Event[registry.FileInfo]) error {
+func (ic *IcebergComponent) OnEvent(ctx context.Context, event astha.Event[*regtypes.TableFile]) error {
 	ic.logger.Debug().
 		Str("table", event.Table).
 		Str("operation", event.Operation).
@@ -49,7 +49,7 @@ func (ic *IcebergComponent) OnEvent(ctx context.Context, event astha.Event[regis
 	case "DELETE":
 		return ic.handleFileDelete(ctx, event.Data)
 	default:
-		return errors.New(IcebergComponentUnknownOperation, "unknown operation").AddContext("operation", event.Operation)
+		return errors.New(IcebergComponentUnknownOperation, "unknown operation", nil).AddContext("operation", event.Operation)
 	}
 }
 
@@ -57,13 +57,13 @@ func (ic *IcebergComponent) OnEvent(ctx context.Context, event astha.Event[regis
 func (ic *IcebergComponent) OnHealth(ctx context.Context) error {
 	// Check if the Iceberg manager is running
 	if ic.manager == nil {
-		return errors.New(IcebergComponentManagerNil, "iceberg manager is nil")
+		return errors.New(IcebergComponentManagerNil, "iceberg manager is nil", nil)
 	}
 
 	// Get stats to verify manager is responsive
 	stats := ic.manager.GetStats()
 	if stats == nil {
-		return errors.New(IcebergComponentStatsFailed, "failed to get iceberg manager stats")
+		return errors.New(IcebergComponentStatsFailed, "failed to get iceberg manager stats", nil)
 	}
 
 	ic.logger.Debug().
@@ -99,7 +99,7 @@ func (ic *IcebergComponent) OnRefresh(ctx context.Context) error {
 }
 
 // handleFileInsert processes file insert events
-func (ic *IcebergComponent) handleFileInsert(ctx context.Context, fileInfo registry.FileInfo) error {
+func (ic *IcebergComponent) handleFileInsert(ctx context.Context, fileInfo *regtypes.TableFile) error {
 	ic.logger.Debug().
 		Int64("file_id", fileInfo.ID).
 		Str("file_name", fileInfo.FileName).
@@ -118,7 +118,7 @@ func (ic *IcebergComponent) handleFileInsert(ctx context.Context, fileInfo regis
 }
 
 // handleFileUpdate processes file update events
-func (ic *IcebergComponent) handleFileUpdate(ctx context.Context, fileInfo registry.FileInfo) error {
+func (ic *IcebergComponent) handleFileUpdate(ctx context.Context, fileInfo *regtypes.TableFile) error {
 	ic.logger.Debug().
 		Int64("file_id", fileInfo.ID).
 		Str("file_name", fileInfo.FileName).
@@ -126,7 +126,7 @@ func (ic *IcebergComponent) handleFileUpdate(ctx context.Context, fileInfo regis
 
 	// For updates, we need to check if the file needs reprocessing
 	// This could happen if file size, row count, or other metadata changed
-	if fileInfo.State != registry.IcebergMetadataGenerationStateCompleted {
+	if fileInfo.IcebergMetadataState != regtypes.IcebergMetadataGenerationStateCompleted {
 		// File needs metadata regeneration
 		if err := ic.manager.ProcessFile(fileInfo); err != nil {
 			return err
@@ -145,7 +145,7 @@ func (ic *IcebergComponent) handleFileUpdate(ctx context.Context, fileInfo regis
 }
 
 // handleFileDelete processes file delete events
-func (ic *IcebergComponent) handleFileDelete(ctx context.Context, fileInfo registry.FileInfo) error {
+func (ic *IcebergComponent) handleFileDelete(ctx context.Context, fileInfo *regtypes.TableFile) error {
 	ic.logger.Debug().
 		Int64("file_id", fileInfo.ID).
 		Str("file_name", fileInfo.FileName).
@@ -197,12 +197,12 @@ func (a *icebergComponentAdapter) OnEvent(ctx context.Context, event astha.Event
 	}
 
 	// Convert the generic data to FileInfo
-	fileInfo, ok := event.Data.(*registry.FileInfo)
+	fileInfo, ok := event.Data.(*regtypes.TableFile)
 	if !ok {
 		// Try to parse from map if it's a map
 		if dataMap, ok := event.Data.(map[string]interface{}); ok {
 			// Convert map to FileInfo
-			fileInfo = &registry.FileInfo{}
+			fileInfo = &regtypes.TableFile{}
 			if id, ok := dataMap["id"].(float64); ok {
 				fileInfo.ID = int64(id)
 			}
@@ -234,25 +234,29 @@ func (a *icebergComponentAdapter) OnEvent(ctx context.Context, event astha.Event
 				fileInfo.IsCompressed = isCompressed
 			}
 			if createdAt, ok := dataMap["created_at"].(string); ok {
-				fileInfo.CreatedAt = createdAt
+				if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+					fileInfo.CreatedAt = t
+				}
 			}
 			if modifiedAt, ok := dataMap["modified_at"].(string); ok {
-				fileInfo.ModifiedAt = modifiedAt
+				if t, err := time.Parse(time.RFC3339, modifiedAt); err == nil {
+					fileInfo.ModifiedAt = t
+				}
 			}
 			if state, ok := dataMap["iceberg_metadata_state"].(string); ok {
-				fileInfo.State = state
+				fileInfo.IcebergMetadataState = state
 			}
 		} else {
-			return errors.New(IcebergComponentProcessingFailed, "failed to convert event data to FileInfo").AddContext("unexpected_type", fmt.Sprintf("%T", event.Data))
+			return errors.New(IcebergComponentProcessingFailed, "failed to convert event data to FileInfo", nil).AddContext("unexpected_type", fmt.Sprintf("%T", event.Data))
 		}
 	}
 
 	// Create a typed event for the component
-	typedEvent := astha.Event[registry.FileInfo]{
+	typedEvent := astha.Event[*regtypes.TableFile]{
 		ID:        event.ID,
 		Table:     event.Table,
 		Operation: event.Operation,
-		Data:      *fileInfo,
+		Data:      fileInfo,
 		Timestamp: event.Timestamp,
 		CreatedAt: event.CreatedAt,
 	}

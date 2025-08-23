@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/metadata/registry"
+	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
 	"github.com/rs/zerolog"
 )
 
@@ -91,14 +91,14 @@ func RetryWithBackoff(ctx context.Context, config *RetryConfig, operation Retrya
 	}
 
 	// All attempts failed
-	return errors.New(RetryOperationFailed, "operation failed after retry attempts").AddContext("max_attempts", fmt.Sprintf("%d", config.MaxAttempts)).WithCause(lastErr)
+	return errors.New(RetryOperationFailed, "operation failed after retry attempts", lastErr).AddContext("max_attempts", fmt.Sprintf("%d", config.MaxAttempts))
 }
 
 // RetryableFileOperation represents a file operation that can be retried
-type RetryableFileOperation func(ctx context.Context, fileInfo registry.FileInfo) error
+type RetryableFileOperation func(ctx context.Context, fileInfo *regtypes.TableFile) error
 
 // RetryFileOperation executes a file operation with retry logic
-func RetryFileOperation(ctx context.Context, config *RetryConfig, fileInfo registry.FileInfo, operation RetryableFileOperation, logger zerolog.Logger) error {
+func RetryFileOperation(ctx context.Context, config *RetryConfig, fileInfo *regtypes.TableFile, operation RetryableFileOperation, logger zerolog.Logger) error {
 	return RetryWithBackoff(ctx, config, func(ctx context.Context) error {
 		return operation(ctx, fileInfo)
 	}, logger)

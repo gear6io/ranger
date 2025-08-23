@@ -151,7 +151,7 @@ func (m *Manager) initializeStorageEngines(cfg *config.Config) error {
 		m.engineRegistry.defaultEngine = memory.Type
 	} else {
 		// This is an origin-stage validation error - appropriate to create
-		return errors.New(StorageManagerNoEnginesAvailable, "no storage engines available")
+		return errors.New(StorageManagerNoEnginesAvailable, "no storage engines available", nil)
 	}
 
 	return nil
@@ -245,7 +245,7 @@ func (m *Manager) GetFileSystem() FileSystem {
 func (m *Manager) GetEngineForTable(ctx context.Context, database, tableName string) (FileSystem, error) {
 	// Check if table exists in metadata
 	if !m.meta.TableExists(ctx, database, tableName) {
-		return nil, errors.New(errors.CommonNotFound, "table does not exist").AddContext("database", database).AddContext("tableName", tableName)
+		return nil, errors.New(errors.CommonNotFound, "table does not exist", nil).AddContext("database", database).AddContext("tableName", tableName)
 	}
 
 	// Get table metadata to determine storage engine
@@ -287,7 +287,7 @@ func (m *Manager) CreateTable(ctx context.Context, database, tableName string, s
 
 	// Validate storage engine
 	if !m.engineRegistry.EngineExists(storageEngine) {
-		return errors.New(StorageManagerUnsupportedEngine, "unsupported storage engine").AddContext("storage_engine", storageEngine)
+		return errors.New(StorageManagerUnsupportedEngine, "unsupported storage engine", nil).AddContext("storage_engine", storageEngine)
 	}
 
 	// Create table with complete metadata in internal storage
@@ -332,7 +332,7 @@ func (m *Manager) InsertData(ctx context.Context, database, tableName string, da
 
 	// Check if table exists in metadata
 	if !m.meta.TableExists(ctx, database, tableName) {
-		return errors.New(errors.CommonNotFound, "table does not exist").AddContext("database", database).AddContext("tableName", tableName)
+		return errors.New(errors.CommonNotFound, "table does not exist", nil).AddContext("database", database).AddContext("tableName", tableName)
 	}
 
 	// Get table metadata to determine storage engine
@@ -510,7 +510,7 @@ func (m *Manager) GetTableData(ctx context.Context, database, tableName string) 
 
 	// Check if table exists in metadata
 	if !m.meta.TableExists(ctx, database, tableName) {
-		return nil, errors.New(errors.CommonNotFound, "table does not exist").AddContext("database", database).AddContext("tableName", tableName)
+		return nil, errors.New(errors.CommonNotFound, "table does not exist", nil).AddContext("database", database).AddContext("tableName", tableName)
 	}
 
 	// Get table metadata to determine storage engine
@@ -573,7 +573,7 @@ func (m *Manager) GetTableData(ctx context.Context, database, tableName string) 
 func (m *Manager) GetTableSchema(ctx context.Context, database, tableName string) ([]byte, error) {
 	// Check if table exists in metadata
 	if !m.meta.TableExists(ctx, database, tableName) {
-		return nil, errors.New(errors.CommonNotFound, "table does not exist").AddContext("database", database).AddContext("table", tableName)
+		return nil, errors.New(errors.CommonNotFound, "table does not exist", nil).AddContext("database", database).AddContext("table", tableName)
 	}
 
 	// Get table metadata
@@ -594,7 +594,7 @@ func (m *Manager) RemoveTable(ctx context.Context, database, tableName string) e
 
 	// Check if table exists in metadata
 	if !m.meta.TableExists(ctx, database, tableName) {
-		return errors.New(errors.CommonNotFound, "table does not exist").AddContext("database", database).AddContext("tableName", tableName)
+		return errors.New(errors.CommonNotFound, "table does not exist", nil).AddContext("database", database).AddContext("tableName", tableName)
 	}
 
 	// Get table metadata to determine storage engine
@@ -639,13 +639,13 @@ func (m *Manager) createIcebergMetadata(database, tableName string, schema []byt
 	// Create table metadata directory
 	metadataDir := m.pathManager.GetTableMetadataPath([]string{database}, tableName)
 	if err := os.MkdirAll(metadataDir, 0755); err != nil {
-		return errors.New(StorageManagerDirectoryFailed, "failed to create metadata directory").AddContext("path", metadataDir).WithCause(err)
+		return errors.New(StorageManagerDirectoryFailed, "failed to create metadata directory", nil).AddContext("path", metadataDir).AddContext("cause", err)
 	}
 
 	// Create data directory
 	dataDir := m.pathManager.GetTableDataPath([]string{database}, tableName)
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		return errors.New(StorageManagerDirectoryFailed, "failed to create data directory").AddContext("path", dataDir).WithCause(err)
+		return errors.New(StorageManagerDirectoryFailed, "failed to create data directory", nil).AddContext("path", dataDir).AddContext("cause", err)
 	}
 
 	// Create Iceberg metadata file (version 1)
@@ -654,7 +654,7 @@ func (m *Manager) createIcebergMetadata(database, tableName string, schema []byt
 	// Parse the schema to get column information
 	var schemaData map[string]interface{}
 	if err := json.Unmarshal(schema, &schemaData); err != nil {
-		return errors.New(StorageManagerMetadataFailed, "failed to parse schema").AddContext("database", database).AddContext("table", tableName).WithCause(err)
+		return errors.New(StorageManagerMetadataFailed, "failed to parse schema", nil).AddContext("database", database).AddContext("table", tableName).AddContext("cause", err)
 	}
 
 	// Create proper Iceberg metadata structure
@@ -704,7 +704,7 @@ func (m *Manager) createIcebergMetadata(database, tableName string, schema []byt
 
 	file, err := os.Create(tempFile)
 	if err != nil {
-		return errors.New(StorageManagerWriteFailed, "failed to create temporary metadata file").AddContext("path", tempFile).WithCause(err)
+		return errors.New(StorageManagerWriteFailed, "failed to create temporary metadata file", nil).AddContext("path", tempFile).AddContext("cause", err)
 	}
 
 	encoder := json.NewEncoder(file)
@@ -713,21 +713,21 @@ func (m *Manager) createIcebergMetadata(database, tableName string, schema []byt
 
 	if err := encoder.Encode(icebergMetadata); err != nil {
 		file.Close()
-		return errors.New(StorageManagerWriteFailed, "failed to encode metadata JSON").AddContext("database", database).AddContext("table", tableName).WithCause(err)
+		return errors.New(StorageManagerWriteFailed, "failed to encode metadata JSON", nil).AddContext("database", database).AddContext("table", tableName).AddContext("cause", err)
 	}
 
 	if err := file.Sync(); err != nil {
 		file.Close()
-		return errors.New(StorageManagerWriteFailed, "failed to sync metadata file").AddContext("path", tempFile).WithCause(err)
+		return errors.New(StorageManagerWriteFailed, "failed to sync metadata file", nil).AddContext("path", tempFile).AddContext("cause", err)
 	}
 
 	if err := file.Close(); err != nil {
-		return errors.New(StorageManagerWriteFailed, "failed to close metadata file").AddContext("path", tempFile).WithCause(err)
+		return errors.New(StorageManagerWriteFailed, "failed to close metadata file", nil).AddContext("path", tempFile).AddContext("cause", err)
 	}
 
 	// Atomic rename
 	if err := os.Rename(tempFile, metadataFile); err != nil {
-		return errors.New(StorageManagerWriteFailed, "failed to atomically write metadata file").AddContext("path", metadataFile).WithCause(err)
+		return errors.New(StorageManagerWriteFailed, "failed to atomically write metadata file", nil).AddContext("path", metadataFile).AddContext("cause", err)
 	}
 
 	m.logger.Info().

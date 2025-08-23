@@ -30,4 +30,6 @@ var (
 	ErrStorageManagerCloseFailed   = errors.MustNewCode("query.storage_manager_close_failed")
 	ErrMultipleCloseErrors         = errors.MustNewCode("query.multiple_close_errors")
 	ErrQueryPanic                  = errors.MustNewCode("query.panic")
+	ErrQueryNotFound               = errors.MustNewCode("query.not_found")
+	ErrQueryNotRunning             = errors.MustNewCode("query.not_running")
 )

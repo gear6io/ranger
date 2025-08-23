@@ -93,7 +93,7 @@ func (wp *WorkerPool) Start() error {
 	defer wp.mu.Unlock()
 
 	if wp.running {
-		return errors.New(WorkerPoolAlreadyRunning, "worker pool is already running")
+		return errors.New(WorkerPoolAlreadyRunning, "worker pool is already running", nil)
 	}
 
 	// Start all workers
@@ -117,7 +117,7 @@ func (wp *WorkerPool) Stop() error {
 	defer wp.mu.Unlock()
 
 	if !wp.running {
-		return errors.New(WorkerPoolNotRunning, "worker pool is not running")
+		return errors.New(WorkerPoolNotRunning, "worker pool is not running", nil)
 	}
 
 	// Stop all workers
@@ -139,7 +139,7 @@ func (wp *WorkerPool) Submit(task Task) error {
 	defer wp.mu.RUnlock()
 
 	if !wp.running {
-		return errors.New(WorkerPoolNotRunning, "worker pool is not running")
+		return errors.New(WorkerPoolNotRunning, "worker pool is not running", nil)
 	}
 
 	select {

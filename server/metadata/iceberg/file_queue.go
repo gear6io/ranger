@@ -5,7 +5,7 @@ import (
 	"sync"
 
 	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/metadata/registry"
+	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
 )
 
 // Package-specific error codes for file queue
@@ -16,8 +16,8 @@ var (
 
 // FileQueue manages a FIFO queue of files for Iceberg metadata processing
 type FileQueue struct {
-	pending    []registry.FileInfo
-	processing map[int64]registry.FileInfo // file ID -> file info
+	pending    []*regtypes.TableFile
+	processing map[int64]*regtypes.TableFile // file ID -> file info
 	mu         sync.RWMutex
 	stats      *QueueStats
 }
@@ -35,20 +35,20 @@ type QueueStats struct {
 // NewFileQueue creates a new file queue
 func NewFileQueue() *FileQueue {
 	return &FileQueue{
-		pending:    make([]registry.FileInfo, 0),
-		processing: make(map[int64]registry.FileInfo),
+		pending:    make([]*regtypes.TableFile, 0),
+		processing: make(map[int64]*regtypes.TableFile),
 		stats:      &QueueStats{},
 	}
 }
 
 // Enqueue adds a file to the pending queue
-func (q *FileQueue) Enqueue(fileInfo registry.FileInfo) error {
+func (q *FileQueue) Enqueue(fileInfo *regtypes.TableFile) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	// Check if file is already in queue or processing
 	if q.isFileInQueue(fileInfo.ID) || q.isFileProcessing(fileInfo.ID) {
-		return errors.New(FileQueueAlreadyQueued, "file is already queued or processing").AddContext("file_id", fmt.Sprintf("%d", fileInfo.ID))
+		return errors.New(FileQueueAlreadyQueued, "file is already queued or processing", nil).AddContext("file_id", fmt.Sprintf("%d", fileInfo.ID))
 	}
 
 	q.pending = append(q.pending, fileInfo)
@@ -59,12 +59,12 @@ func (q *FileQueue) Enqueue(fileInfo registry.FileInfo) error {
 }
 
 // Dequeue removes and returns the next file from the pending queue
-func (q *FileQueue) Dequeue() (registry.FileInfo, bool) {
+func (q *FileQueue) Dequeue() (*regtypes.TableFile, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	if len(q.pending) == 0 {
-		return registry.FileInfo{}, false
+		return nil, false
 	}
 
 	// Get first file (FIFO)
@@ -85,7 +85,7 @@ func (q *FileQueue) MarkCompleted(fileID int64) error {
 	defer q.mu.Unlock()
 
 	if !q.isFileProcessing(fileID) {
-		return errors.New(FileQueueNotProcessing, "file is not in processing state").AddContext("file_id", fmt.Sprintf("%d", fileID))
+		return errors.New(FileQueueNotProcessing, "file is not in processing state", nil).AddContext("file_id", fmt.Sprintf("%d", fileID))
 	}
 
 	delete(q.processing, fileID)
@@ -101,7 +101,7 @@ func (q *FileQueue) MarkFailed(fileID int64) error {
 	defer q.mu.Unlock()
 
 	if !q.isFileProcessing(fileID) {
-		return errors.New(FileQueueNotProcessing, "file is not in processing state").AddContext("file_id", fmt.Sprintf("%d", fileID))
+		return errors.New(FileQueueNotProcessing, "file is not in processing state", nil).AddContext("file_id", fmt.Sprintf("%d", fileID))
 	}
 
 	delete(q.processing, fileID)
@@ -112,21 +112,21 @@ func (q *FileQueue) MarkFailed(fileID int64) error {
 }
 
 // GetPendingFiles returns all files waiting to be processed
-func (q *FileQueue) GetPendingFiles() []registry.FileInfo {
+func (q *FileQueue) GetPendingFiles() []*regtypes.TableFile {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
-	files := make([]registry.FileInfo, len(q.pending))
+	files := make([]*regtypes.TableFile, len(q.pending))
 	copy(files, q.pending)
 	return files
 }
 
 // GetProcessingFiles returns all files currently being processed
-func (q *FileQueue) GetProcessingFiles() []registry.FileInfo {
+func (q *FileQueue) GetProcessingFiles() []*regtypes.TableFile {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
-	files := make([]registry.FileInfo, 0, len(q.processing))
+	files := make([]*regtypes.TableFile, 0, len(q.processing))
 	for _, file := range q.processing {
 		files = append(files, file)
 	}
@@ -134,7 +134,7 @@ func (q *FileQueue) GetProcessingFiles() []registry.FileInfo {
 }
 
 // GetBatch returns a batch of files for processing (up to maxFiles)
-func (q *FileQueue) GetBatch(maxFiles int) []registry.FileInfo {
+func (q *FileQueue) GetBatch(maxFiles int) []*regtypes.TableFile {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -185,8 +185,8 @@ func (q *FileQueue) Clear() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	q.pending = make([]registry.FileInfo, 0)
-	q.processing = make(map[int64]registry.FileInfo)
+	q.pending = make([]*regtypes.TableFile, 0)
+	q.processing = make(map[int64]*regtypes.TableFile)
 	q.stats = &QueueStats{}
 }
 

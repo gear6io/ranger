@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/TFMV/icebox/server/metadata/registry"
+	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,26 +35,26 @@ func TestMetadataGenerator_GenerateManifest(t *testing.T) {
 	// Create test batch
 	batch := BatchInfo{
 		ID: "test-batch-1",
-		Files: []registry.FileInfo{
+		Files: []*regtypes.TableFile{
 			{
-				ID:       1,
-				TableID:  1,
-				FileName: "test1.parquet",
-				FilePath: "/data/test1.parquet",
-				FileSize: 1024,
-				FileType: "PARQUET",
-				RowCount: 100,
-				State:    "pending",
+				ID:                   1,
+				TableID:              1,
+				FileName:             "test1.parquet",
+				FilePath:             "/data/test1.parquet",
+				FileSize:             1024,
+				FileType:             "PARQUET",
+				RowCount:             100,
+				IcebergMetadataState: "pending",
 			},
 			{
-				ID:       2,
-				TableID:  1,
-				FileName: "test2.parquet",
-				FilePath: "/data/test2.parquet",
-				FileSize: 2048,
-				FileType: "PARQUET",
-				RowCount: 200,
-				State:    "pending",
+				ID:                   2,
+				TableID:              1,
+				FileName:             "test2.parquet",
+				FilePath:             "/data/test2.parquet",
+				FileSize:             2048,
+				FileType:             "PARQUET",
+				RowCount:             200,
+				IcebergMetadataState: "pending",
 			},
 		},
 		CreatedAt: time.Now(),
@@ -61,9 +62,12 @@ func TestMetadataGenerator_GenerateManifest(t *testing.T) {
 	}
 
 	// Create test table info
-	tableInfo := &registry.TableInfo{
-		ID:   1,
-		Name: "test_table",
+	tableInfo := &registry.CompleteTableInfo{
+		Database: "default",
+		Table: &regtypes.Table{
+			ID:   1,
+			Name: "test_table",
+		},
 	}
 
 	// Generate manifest
@@ -102,16 +106,16 @@ func TestMetadataGenerator_UpdateMetadataFile(t *testing.T) {
 	// Create test batch
 	batch := BatchInfo{
 		ID: "test-batch-1",
-		Files: []registry.FileInfo{
+		Files: []*regtypes.TableFile{
 			{
-				ID:       1,
-				TableID:  1,
-				FileName: "test1.parquet",
-				FilePath: "/data/test1.parquet",
-				FileSize: 1024,
-				FileType: "PARQUET",
-				RowCount: 100,
-				State:    "pending",
+				ID:                   1,
+				TableID:              1,
+				FileName:             "test1.parquet",
+				FilePath:             "/data/test1.parquet",
+				FileSize:             1024,
+				FileType:             "PARQUET",
+				RowCount:             100,
+				IcebergMetadataState: "pending",
 			},
 		},
 		CreatedAt: time.Now(),
@@ -119,9 +123,12 @@ func TestMetadataGenerator_UpdateMetadataFile(t *testing.T) {
 	}
 
 	// Create test table info
-	tableInfo := &registry.TableInfo{
-		ID:   1,
-		Name: "test_table",
+	tableInfo := &registry.CompleteTableInfo{
+		Database: "default",
+		Table: &regtypes.Table{
+			ID:   1,
+			Name: "test_table",
+		},
 	}
 
 	// Update metadata file

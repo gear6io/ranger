@@ -46,7 +46,7 @@ func (r *StorageEngineRegistry) GetEngine(engineName string) (FileSystem, error)
 		return engine, nil
 	}
 
-	return nil, errors.New(StorageRegistryEngineNotFound, "storage engine not found").AddContext("engine_name", engineName)
+	return nil, errors.New(StorageRegistryEngineNotFound, "storage engine not found", nil).AddContext("engine_name", engineName)
 }
 
 // GetDefaultEngine returns the default storage engine

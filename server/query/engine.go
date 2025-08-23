@@ -703,7 +703,7 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 // Close closes the engine and releases resources
 func (e *Engine) Close() error {
 	if err := e.duckdbEngine.Close(); err != nil {
-		return errors.New(ErrQueryEngineCloseFailed, "failed to close query engine", closeErrors)
+		return errors.New(ErrQueryEngineCloseFailed, "failed to close query engine", err)
 	}
 
 	return nil
