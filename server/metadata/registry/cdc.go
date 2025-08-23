@@ -57,13 +57,13 @@ func (c *CDCSetup) SetupCDC(ctx context.Context) error {
 
 	// Create CDC log table
 	if err := c.createCDCLogTable(ctx); err != nil {
-		return errors.New(RegistryCDCCreationFailed, "failed to create CDC log table").WithCause(err)
+		return errors.New(RegistryCDCCreationFailed, "failed to create CDC log table", err)
 	}
 
 	// Create triggers for each monitored table
 	for _, table := range c.monitoredTables {
 		if err := c.createTableTriggers(ctx, table); err != nil {
-			return errors.New(RegistryCDCTriggerFailed, "failed to create triggers for table").AddContext("table", table).WithCause(err)
+			return errors.New(RegistryCDCTriggerFailed, "failed to create triggers for table", err).AddContext("table", table)
 		}
 	}
 
@@ -84,7 +84,7 @@ func (c *CDCSetup) TeardownCDC(ctx context.Context) error {
 
 	// Drop CDC log table
 	if err := c.dropCDCLogTable(ctx); err != nil {
-		return errors.New(RegistryCDCCreationFailed, "failed to drop CDC log table").WithCause(err)
+		return errors.New(RegistryCDCCreationFailed, "failed to drop CDC log table", err)
 	}
 
 	c.logger.Info().Msg("CDC infrastructure teardown completed")

@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/storage/parquet"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -43,10 +44,10 @@ func NewParquetManager(schema *arrow.Schema, config *parquet.ParquetConfig) *Par
 	}
 }
 
-// StoreData stores data in memory as Arrow records
-func (pm *ParquetManager) StoreData(data [][]interface{}) error {
-	if pm.closed {
-		return fmt.Errorf("data manager is closed")
+// StoreData stores data in memory using Parquet format
+func (dm *ParquetManager) StoreData(data [][]interface{}) error {
+	if dm.closed {
+		return errors.New(ErrDataManagerClosed, "data manager is closed")
 	}
 
 	if len(data) == 0 {
@@ -56,55 +57,55 @@ func (pm *ParquetManager) StoreData(data [][]interface{}) error {
 	startTime := time.Now()
 
 	// Validate data against schema
-	schemaManager := parquet.NewSchemaManager(pm.config)
-	if err := schemaManager.ValidateData(data, pm.schema); err != nil {
-		return fmt.Errorf("data validation failed: %w", err)
+	schemaManager := parquet.NewSchemaManager(dm.config)
+	if err := schemaManager.ValidateData(data, dm.schema); err != nil {
+		return errors.New(ErrDataValidationFailed, "data validation failed").WithCause(err)
 	}
 
 	// Convert data to Arrow arrays
-	arrays, err := pm.convertDataToArrays(data)
+	arrays, err := dm.convertDataToArrays(data)
 	if err != nil {
-		return fmt.Errorf("failed to convert data to arrays: %w", err)
+		return errors.New(ErrDataConversionFailed, "failed to convert data to arrays").WithCause(err)
 	}
 
 	// Create Arrow record
-	record := array.NewRecord(pm.schema, arrays, int64(len(data)))
+	record := array.NewRecord(dm.schema, arrays, int64(len(data)))
 
 	// Check memory usage
-	if err := pm.checkMemoryUsage(record); err != nil {
+	if err := dm.checkMemoryUsage(record); err != nil {
 		record.Release()
-		return fmt.Errorf("memory limit exceeded: %w", err)
+		return errors.New(ErrMemoryLimitExceeded, "memory limit exceeded").WithCause(err)
 	}
 
 	// Store the record
-	pm.mu.Lock()
-	pm.recordBatches = append(pm.recordBatches, record)
-	pm.stats.RowsWritten += int64(len(data))
-	pm.stats.MemoryUsage = pm.calculateMemoryUsage()
-	pm.mu.Unlock()
+	dm.mu.Lock()
+	dm.recordBatches = append(dm.recordBatches, record)
+	dm.stats.RowsWritten += int64(len(data))
+	dm.stats.MemoryUsage = dm.calculateMemoryUsage()
+	dm.mu.Unlock()
 
 	// Update stats
 	duration := time.Since(startTime).Nanoseconds()
-	pm.stats.WriteDuration = duration
+	dm.stats.WriteDuration = duration
 
 	return nil
 }
 
 // GetData retrieves all stored data as interface slices
-func (pm *ParquetManager) GetData() ([][]interface{}, error) {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
+func (dm *ParquetManager) GetData() ([][]interface{}, error) {
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
 
-	if pm.closed {
-		return nil, fmt.Errorf("data manager is closed")
+	if dm.closed {
+		return nil, errors.New(ErrDataManagerClosed, "data manager is closed")
 	}
 
 	var allData [][]interface{}
 
-	for _, record := range pm.recordBatches {
-		data, err := pm.convertRecordToData(record)
+	for _, record := range dm.recordBatches {
+		data, err := dm.convertRecordToData(record)
 		if err != nil {
-			return nil, fmt.Errorf("failed to convert record: %w", err)
+			return nil, errors.New(ErrRecordConversionFailed, "failed to convert record").WithCause(err)
 		}
 		allData = append(allData, data...)
 	}
@@ -113,12 +114,12 @@ func (pm *ParquetManager) GetData() ([][]interface{}, error) {
 }
 
 // GetDataBatch provides streaming data retrieval
-func (pm *ParquetManager) GetDataBatch(batchSize int) (<-chan [][]interface{}, error) {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
+func (dm *ParquetManager) GetDataBatch(batchSize int) (<-chan [][]interface{}, error) {
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
 
-	if pm.closed {
-		return nil, fmt.Errorf("data manager is closed")
+	if dm.closed {
+		return nil, errors.New(ErrDataManagerClosed, "data manager is closed")
 	}
 
 	dataChan := make(chan [][]interface{}, batchSize)
@@ -126,8 +127,8 @@ func (pm *ParquetManager) GetDataBatch(batchSize int) (<-chan [][]interface{}, e
 	go func() {
 		defer close(dataChan)
 
-		for _, record := range pm.recordBatches {
-			data, err := pm.convertRecordToData(record)
+		for _, record := range dm.recordBatches {
+			data, err := dm.convertRecordToData(record)
 			if err != nil {
 				// Log error but continue with other records
 				fmt.Printf("Error converting record: %v\n", err)
@@ -149,64 +150,64 @@ func (pm *ParquetManager) GetDataBatch(batchSize int) (<-chan [][]interface{}, e
 }
 
 // GetSchema returns the current schema
-func (pm *ParquetManager) GetSchema() *arrow.Schema {
-	return pm.schema
+func (dm *ParquetManager) GetSchema() *arrow.Schema {
+	return dm.schema
 }
 
 // GetStats returns writing statistics
-func (pm *ParquetManager) GetStats() *parquet.WriteStats {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	return pm.stats
+func (dm *ParquetManager) GetStats() *parquet.WriteStats {
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
+	return dm.stats
 }
 
 // GetRowCount returns the total number of rows stored
-func (pm *ParquetManager) GetRowCount() int64 {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	return pm.stats.RowsWritten
+func (dm *ParquetManager) GetRowCount() int64 {
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
+	return dm.stats.RowsWritten
 }
 
 // GetMemoryUsage returns current memory usage
-func (pm *ParquetManager) GetMemoryUsage() int64 {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	return pm.stats.MemoryUsage
+func (dm *ParquetManager) GetMemoryUsage() int64 {
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
+	return dm.stats.MemoryUsage
 }
 
 // ClearData clears all stored data
-func (pm *ParquetManager) ClearData() {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
+func (dm *ParquetManager) ClearData() {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
 
 	// Release all records
-	for _, record := range pm.recordBatches {
+	for _, record := range dm.recordBatches {
 		record.Release()
 	}
 
-	pm.recordBatches = make([]arrow.Record, 0)
-	pm.stats.RowsWritten = 0
-	pm.stats.MemoryUsage = 0
+	dm.recordBatches = make([]arrow.Record, 0)
+	dm.stats.RowsWritten = 0
+	dm.stats.MemoryUsage = 0
 }
 
 // Close releases resources
-func (pm *ParquetManager) Close() error {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
+func (dm *ParquetManager) Close() error {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
 
-	if pm.closed {
+	if dm.closed {
 		return nil
 	}
 
-	pm.closed = true
+	dm.closed = true
 
 	// Release all records
-	for _, record := range pm.recordBatches {
+	for _, record := range dm.recordBatches {
 		record.Release()
 	}
 
-	pm.recordBatches = nil
-	pm.memoryPool = nil
+	dm.recordBatches = nil
+	dm.memoryPool = nil
 
 	return nil
 }
@@ -214,24 +215,24 @@ func (pm *ParquetManager) Close() error {
 // Helper methods
 
 // convertDataToArrays converts data to Arrow arrays
-func (pm *ParquetManager) convertDataToArrays(data [][]interface{}) ([]arrow.Array, error) {
+func (dm *ParquetManager) convertDataToArrays(data [][]interface{}) ([]arrow.Array, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
 
-	if pm.schema == nil {
-		return nil, fmt.Errorf("schema is nil")
+	if dm.schema == nil {
+		return nil, errors.New(ErrSchemaIsNil, "schema is nil")
 	}
 
-	numCols := len(pm.schema.Fields())
+	numCols := len(dm.schema.Fields())
 	arrays := make([]arrow.Array, numCols)
 
 	for colIdx := 0; colIdx < numCols; colIdx++ {
-		field := pm.schema.Field(colIdx)
+		field := dm.schema.Field(colIdx)
 
-		array, err := pm.convertColumnToArray(data, colIdx, field)
+		array, err := dm.convertColumnToArray(data, colIdx, field)
 		if err != nil {
-			return nil, fmt.Errorf("failed to convert column %s: %w", field.Name, err)
+			return nil, errors.New(ErrColumnConversionFailed, "failed to convert column").AddContext("column_name", field.Name).WithCause(err)
 		}
 		arrays[colIdx] = array
 	}
@@ -240,22 +241,22 @@ func (pm *ParquetManager) convertDataToArrays(data [][]interface{}) ([]arrow.Arr
 }
 
 // convertColumnToArray converts a single column to Arrow array
-func (pm *ParquetManager) convertColumnToArray(data [][]interface{}, colIdx int, field arrow.Field) (arrow.Array, error) {
+func (dm *ParquetManager) convertColumnToArray(data [][]interface{}, colIdx int, field arrow.Field) (arrow.Array, error) {
 	numRows := len(data)
 
 	// Create array builder
-	builder := array.NewBuilder(pm.memoryPool, field.Type)
+	builder := array.NewBuilder(dm.memoryPool, field.Type)
 	defer builder.Release()
 
 	// Convert each value in the column
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 		if colIdx >= len(data[rowIdx]) {
-			return nil, fmt.Errorf("row %d has insufficient columns", rowIdx)
+			return nil, errors.New(ErrInsufficientColumns, "row has insufficient columns").AddContext("row_index", fmt.Sprintf("%d", rowIdx))
 		}
 
 		value := data[rowIdx][colIdx]
-		if err := pm.appendValueToBuilder(builder, value, field.Type); err != nil {
-			return nil, fmt.Errorf("failed to append value at row %d: %w", rowIdx, err)
+		if err := dm.appendValueToBuilder(builder, value, field.Type); err != nil {
+			return nil, errors.New(ErrValueAppendFailed, "failed to append value at row").AddContext("row_index", fmt.Sprintf("%d", rowIdx)).WithCause(err)
 		}
 	}
 
@@ -265,7 +266,7 @@ func (pm *ParquetManager) convertColumnToArray(data [][]interface{}, colIdx int,
 }
 
 // appendValueToBuilder appends a value to an Arrow array builder
-func (pm *ParquetManager) appendValueToBuilder(builder array.Builder, value interface{}, dataType arrow.DataType) error {
+func (dm *ParquetManager) appendValueToBuilder(builder array.Builder, value interface{}, dataType arrow.DataType) error {
 	if value == nil {
 		builder.AppendNull()
 		return nil
@@ -276,53 +277,53 @@ func (pm *ParquetManager) appendValueToBuilder(builder array.Builder, value inte
 		if boolVal, ok := value.(bool); ok {
 			builder.(*array.BooleanBuilder).Append(boolVal)
 		} else {
-			return fmt.Errorf("expected bool, got %T", value)
+			return errors.New(ErrTypeMismatch, "expected bool").AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	case *arrow.Int32Type:
-		if intVal, ok := pm.convertToInt32(value); ok {
+		if intVal, ok := dm.convertToInt32(value); ok {
 			builder.(*array.Int32Builder).Append(intVal)
 		} else {
-			return fmt.Errorf("expected int32, got %T", value)
+			return errors.New(ErrTypeMismatch, "expected int32").AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	case *arrow.Int64Type:
-		if intVal, ok := pm.convertToInt64(value); ok {
+		if intVal, ok := dm.convertToInt64(value); ok {
 			builder.(*array.Int64Builder).Append(intVal)
 		} else {
-			return fmt.Errorf("expected int64, got %T", value)
+			return errors.New(ErrTypeMismatch, "expected int64").AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	case *arrow.Float32Type:
-		if floatVal, ok := pm.convertToFloat32(value); ok {
+		if floatVal, ok := dm.convertToFloat32(value); ok {
 			builder.(*array.Float32Builder).Append(floatVal)
 		} else {
-			return fmt.Errorf("expected float32, got %T", value)
+			return errors.New(ErrTypeMismatch, "expected float32").AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	case *arrow.Float64Type:
-		if floatVal, ok := pm.convertToFloat64(value); ok {
+		if floatVal, ok := dm.convertToFloat64(value); ok {
 			builder.(*array.Float64Builder).Append(floatVal)
 		} else {
-			return fmt.Errorf("expected float64, got %T", value)
+			return errors.New(ErrTypeMismatch, "expected float64").AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	case *arrow.StringType:
 		if strVal, ok := value.(string); ok {
 			builder.(*array.StringBuilder).Append(strVal)
 		} else {
-			return fmt.Errorf("expected string, got %T", value)
+			return errors.New(ErrTypeMismatch, "expected string").AddContext("actual_type", fmt.Sprintf("%T", value))
 		}
 
 	default:
-		return fmt.Errorf("unsupported data type: %T", dataType)
+		return errors.New(ErrUnsupportedDataType, "unsupported data type").AddContext("data_type", fmt.Sprintf("%T", dataType))
 	}
 
 	return nil
 }
 
 // convertRecordToData converts Arrow record to interface data
-func (pm *ParquetManager) convertRecordToData(record arrow.Record) ([][]interface{}, error) {
+func (dm *ParquetManager) convertRecordToData(record arrow.Record) ([][]interface{}, error) {
 	numRows := int(record.NumRows())
 	numCols := int(record.NumCols())
 
@@ -341,9 +342,9 @@ func (pm *ParquetManager) convertRecordToData(record arrow.Record) ([][]interfac
 				continue
 			}
 
-			value, err := pm.extractValue(col, rowIdx, field.Type)
+			value, err := dm.extractValue(col, rowIdx, field.Type)
 			if err != nil {
-				return nil, fmt.Errorf("failed to extract value at row %d, col %d: %w", rowIdx, colIdx, err)
+				return nil, errors.New(ErrValueExtractionFailed, "failed to extract value").AddContext("row_index", fmt.Sprintf("%d", rowIdx)).AddContext("col_index", fmt.Sprintf("%d", colIdx)).WithCause(err)
 			}
 			data[rowIdx][colIdx] = value
 		}
@@ -353,7 +354,7 @@ func (pm *ParquetManager) convertRecordToData(record arrow.Record) ([][]interfac
 }
 
 // extractValue extracts a value from an Arrow array
-func (pm *ParquetManager) extractValue(col arrow.Array, rowIdx int, dataType arrow.DataType) (interface{}, error) {
+func (dm *ParquetManager) extractValue(col arrow.Array, rowIdx int, dataType arrow.DataType) (interface{}, error) {
 	switch dt := dataType.(type) {
 	case *arrow.BooleanType:
 		return col.(*array.Boolean).Value(rowIdx), nil
@@ -368,37 +369,36 @@ func (pm *ParquetManager) extractValue(col arrow.Array, rowIdx int, dataType arr
 	case *arrow.StringType:
 		return col.(*array.String).Value(rowIdx), nil
 	default:
-		return nil, fmt.Errorf("unsupported data type: %T", dt)
+		return nil, errors.New(ErrUnsupportedDataType, "unsupported data type").AddContext("data_type", fmt.Sprintf("%T", dt))
 	}
 }
 
 // checkMemoryUsage checks if adding a record would exceed memory limits
-func (pm *ParquetManager) checkMemoryUsage(record arrow.Record) error {
-	estimatedSize := pm.estimateRecordSize(record)
+func (dm *ParquetManager) checkMemoryUsage(record arrow.Record) error {
+	estimatedSize := dm.estimateRecordSize(record)
 
-	pm.mu.RLock()
-	currentUsage := pm.stats.MemoryUsage
-	pm.mu.RUnlock()
+	dm.mu.RLock()
+	currentUsage := dm.stats.MemoryUsage
+	dm.mu.RUnlock()
 
-	if currentUsage+estimatedSize > pm.config.MaxMemoryUsage {
-		return fmt.Errorf("memory limit exceeded: current=%d, estimated=%d, limit=%d",
-			currentUsage, estimatedSize, pm.config.MaxMemoryUsage)
+	if currentUsage+estimatedSize > dm.config.MaxMemoryUsage {
+		return errors.New(ErrMemoryLimitExceeded, "memory limit exceeded").AddContext("current_usage", fmt.Sprintf("%d", currentUsage)).AddContext("estimated_size", fmt.Sprintf("%d", estimatedSize)).AddContext("limit", fmt.Sprintf("%d", dm.config.MaxMemoryUsage))
 	}
 
 	return nil
 }
 
 // calculateMemoryUsage calculates total memory usage
-func (pm *ParquetManager) calculateMemoryUsage() int64 {
+func (dm *ParquetManager) calculateMemoryUsage() int64 {
 	var totalSize int64
-	for _, record := range pm.recordBatches {
-		totalSize += pm.estimateRecordSize(record)
+	for _, record := range dm.recordBatches {
+		totalSize += dm.estimateRecordSize(record)
 	}
 	return totalSize
 }
 
 // estimateRecordSize estimates the memory size of a record
-func (pm *ParquetManager) estimateRecordSize(record arrow.Record) int64 {
+func (dm *ParquetManager) estimateRecordSize(record arrow.Record) int64 {
 	// Rough estimation: sum of all array sizes
 	var totalSize int64
 	for i := 0; i < int(record.NumCols()); i++ {
@@ -426,7 +426,7 @@ func (pm *ParquetManager) estimateRecordSize(record arrow.Record) int64 {
 }
 
 // Type conversion helpers
-func (pm *ParquetManager) convertToInt32(value interface{}) (int32, bool) {
+func (dm *ParquetManager) convertToInt32(value interface{}) (int32, bool) {
 	switch v := value.(type) {
 	case int32:
 		return v, true
@@ -443,7 +443,7 @@ func (pm *ParquetManager) convertToInt32(value interface{}) (int32, bool) {
 	}
 }
 
-func (pm *ParquetManager) convertToInt64(value interface{}) (int64, bool) {
+func (dm *ParquetManager) convertToInt64(value interface{}) (int64, bool) {
 	switch v := value.(type) {
 	case int64:
 		return v, true
@@ -460,7 +460,7 @@ func (pm *ParquetManager) convertToInt64(value interface{}) (int64, bool) {
 	}
 }
 
-func (pm *ParquetManager) convertToFloat32(value interface{}) (float32, bool) {
+func (dm *ParquetManager) convertToFloat32(value interface{}) (float32, bool) {
 	switch v := value.(type) {
 	case float32:
 		return v, true
@@ -477,7 +477,7 @@ func (pm *ParquetManager) convertToFloat32(value interface{}) (float32, bool) {
 	}
 }
 
-func (pm *ParquetManager) convertToFloat64(value interface{}) (float64, bool) {
+func (dm *ParquetManager) convertToFloat64(value interface{}) (float64, bool) {
 	switch v := value.(type) {
 	case float64:
 		return v, true

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/rs/zerolog"
 )
 
@@ -37,13 +38,13 @@ func CleanupLogFile(filePath string) error {
 	// Create log directory if it doesn't exist
 	logDir := filepath.Dir(filePath)
 	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return fmt.Errorf("failed to create log directory: %w", err)
+		return errors.New(ErrLogDirectoryCreationFailed, "failed to create log directory", err)
 	}
 
 	// Truncate the file to clear its contents
 	file, err := os.OpenFile(filePath, os.O_WRONLY|os.O_TRUNC, 0666)
 	if err != nil {
-		return fmt.Errorf("failed to open log file for cleanup: %w", err)
+		return errors.New(ErrLogFileOpenFailed, "failed to open log file for cleanup", err)
 	}
 	defer file.Close()
 
@@ -54,24 +55,24 @@ func CleanupLogFile(filePath string) error {
 // GetWriter returns a writer that handles log rotation
 func (lm *LogManager) GetWriter() (io.Writer, error) {
 	if lm.config.FilePath == "" {
-		return nil, fmt.Errorf("no log file path specified")
+		return nil, errors.New(ErrLogFilePathRequired, "no log file path specified", nil)
 	}
 
 	// Create log directory if it doesn't exist
 	logDir := filepath.Dir(lm.config.FilePath)
 	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create log directory: %w", err)
+		return nil, errors.New(ErrLogDirectoryCreationFailed, "failed to create log directory", err)
 	}
 
 	// Check if we need to rotate the log file
 	if err := lm.checkRotation(); err != nil {
-		return nil, fmt.Errorf("failed to check log rotation: %w", err)
+		return nil, errors.New(ErrLogRotationCheckFailed, "failed to check log rotation", err)
 	}
 
 	// Open or create the log file
 	file, err := os.OpenFile(lm.config.FilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open log file: %w", err)
+		return nil, errors.New(ErrLogFileOpenFailed, "failed to open log file", err)
 	}
 
 	lm.currentLog = file
@@ -90,7 +91,7 @@ func (lm *LogManager) checkRotation() error {
 		return nil // File doesn't exist, no rotation needed
 	}
 	if err != nil {
-		return fmt.Errorf("failed to stat log file: %w", err)
+		return errors.New(ErrLogFileStatFailed, "failed to stat log file", err)
 	}
 
 	// Check if file size exceeds max size (convert MB to bytes)
@@ -117,7 +118,7 @@ func (lm *LogManager) rotateLog() error {
 
 	// Rename current log file to backup
 	if err := os.Rename(lm.config.FilePath, backupPath); err != nil {
-		return fmt.Errorf("failed to rotate log file: %w", err)
+		return errors.New(ErrLogRotationFailed, "failed to rotate log file", err)
 	}
 
 	// Clean up old backup files
@@ -141,7 +142,7 @@ func (lm *LogManager) cleanupOldBackups() error {
 	// Read directory to find backup files
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
-		return fmt.Errorf("failed to read log directory: %w", err)
+		return errors.New(ErrLogBackupReadFailed, "failed to read log directory", err)
 	}
 
 	var backups []backupInfo
@@ -182,7 +183,7 @@ func (lm *LogManager) cleanupOldBackups() error {
 		toRemove := len(backups) - lm.config.MaxBackups
 		for i := 0; i < toRemove; i++ {
 			if err := os.Remove(backups[i].path); err != nil {
-				return fmt.Errorf("failed to remove old backup %s: %w", backups[i].path, err)
+				return errors.New(ErrLogBackupRemoveFailed, "failed to remove old backup", err).AddContext("backup_path", backups[i].path)
 			}
 		}
 	}
@@ -192,7 +193,7 @@ func (lm *LogManager) cleanupOldBackups() error {
 		for _, backup := range backups {
 			if backup.modTime.Before(cutoffTime) {
 				if err := os.Remove(backup.path); err != nil {
-					return fmt.Errorf("failed to remove old backup %s: %w", backup.path, err)
+					return errors.New(ErrLogBackupRemoveFailed, "failed to remove old backup", err).AddContext("backup_path", backup.path)
 				}
 			}
 		}
@@ -249,14 +250,14 @@ func SetupLogger(cfg *Config) (zerolog.Logger, error) {
 		// Clean up the log file before starting logging if enabled
 		if cfg.Log.Cleanup {
 			if err := CleanupLogFile(cfg.Log.FilePath); err != nil {
-				return zerolog.Logger{}, fmt.Errorf("failed to cleanup log file: %w", err)
+				return zerolog.Logger{}, errors.New(ErrLogCleanupFailed, "failed to cleanup log file", err)
 			}
 		}
 
 		logManager := NewLogManager(&cfg.Log)
 		fileWriter, err := logManager.GetWriter()
 		if err != nil {
-			return zerolog.Logger{}, fmt.Errorf("failed to setup file writer: %w", err)
+			return zerolog.Logger{}, errors.New(ErrLogFileWriterSetupFailed, "failed to setup file writer", err)
 		}
 
 		// Add file writer directly (zerolog will handle JSON formatting)

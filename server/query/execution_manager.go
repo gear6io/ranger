@@ -2,10 +2,10 @@ package query
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/rs/zerolog"
 )
 
@@ -84,7 +84,7 @@ func (em *ExecutionManager) CompleteQuery(queryID string, rowCount int64, err er
 
 	queryInfo, exists := em.queries[queryID]
 	if !exists {
-		return fmt.Errorf("query %s not found", queryID)
+		return errors.New(ErrQueryNotFound, "query not found", nil).AddContext("query_id", queryID)
 	}
 
 	now := time.Now()
@@ -118,11 +118,11 @@ func (em *ExecutionManager) CancelQuery(queryID string) error {
 
 	queryInfo, exists := em.queries[queryID]
 	if !exists {
-		return fmt.Errorf("query %s not found", queryID)
+		return errors.New(ErrQueryNotFound, "query not found", nil).AddContext("query_id", queryID)
 	}
 
 	if queryInfo.Status != QueryStatusRunning {
-		return fmt.Errorf("query %s is not running (status: %s)", queryID, queryInfo.Status)
+		return errors.New(ErrQueryNotRunning, "query is not running", nil).AddContext("query_id", queryID).AddContext("status", string(queryInfo.Status))
 	}
 
 	// Cancel the context
@@ -150,7 +150,7 @@ func (em *ExecutionManager) GetQueryInfo(queryID string) (*QueryInfo, error) {
 
 	queryInfo, exists := em.queries[queryID]
 	if !exists {
-		return nil, fmt.Errorf("query %s not found", queryID)
+		return nil, errors.New(ErrQueryNotFound, "query not found", nil).AddContext("query_id", queryID)
 	}
 
 	return queryInfo, nil

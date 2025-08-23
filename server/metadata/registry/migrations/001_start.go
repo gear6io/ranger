@@ -38,61 +38,61 @@ func (m *Migration001) Description() string {
 func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	// Create all tables in dependency order
 	if err := m.createUsersTable(ctx, tx); err != nil {
-		return errors.New(MigrationTableCreationFailed, "failed to create users table").WithCause(err)
+		return err
 	}
 
 	if err := m.createDatabasesTable(ctx, tx); err != nil {
-		return errors.New(MigrationTableCreationFailed, "failed to create databases table").WithCause(err)
+		return err
 	}
 
 	if err := m.createTablesTable(ctx, tx); err != nil {
-		return errors.New(MigrationTableCreationFailed, "failed to create tables table").WithCause(err)
+		return err
 	}
 
 	if err := m.createTableMetadataTable(ctx, tx); err != nil {
-		return errors.New(MigrationTableCreationFailed, "failed to create table_metadata table").WithCause(err)
+		return err
 	}
 
 	if err := m.createTableFilesTable(ctx, tx); err != nil {
-		return errors.New(MigrationTableCreationFailed, "failed to create table_files table").WithCause(err)
+		return err
 	}
 
 	if err := m.createTablePartitionsTable(ctx, tx); err != nil {
-		return errors.New(MigrationTableCreationFailed, "failed to create table_partitions table").WithCause(err)
+		return err
 	}
 
 	if err := m.createTableIndexesTable(ctx, tx); err != nil {
-		return errors.New(MigrationTableCreationFailed, "failed to create table_indexes table").WithCause(err)
+		return err
 	}
 
 	if err := m.createTableConstraintsTable(ctx, tx); err != nil {
-		return errors.New(MigrationTableCreationFailed, "failed to create table_constraints table").WithCause(err)
+		return err
 	}
 
 	if err := m.createTableColumnsTable(ctx, tx); err != nil {
-		return errors.New(MigrationTableCreationFailed, "failed to create table_columns table").WithCause(err)
+		return err
 	}
 
 	if err := m.createTableStatisticsTable(ctx, tx); err != nil {
-		return errors.New(MigrationTableCreationFailed, "failed to create table_statistics table").WithCause(err)
+		return err
 	}
 
 	if err := m.createAccessLogTable(ctx, tx); err != nil {
-		return errors.New(MigrationTableCreationFailed, "failed to create access_log table").WithCause(err)
+		return err
 	}
 
 	if err := m.createSchemaVersionsTable(ctx, tx); err != nil {
-		return errors.New(MigrationTableCreationFailed, "failed to create schema_versions table").WithCause(err)
+		return err
 	}
 
 	// Create indexes for performance
 	if err := m.createPerformanceIndexes(ctx, tx); err != nil {
-		return errors.New(MigrationIndexCreationFailed, "failed to create performance indexes").WithCause(err)
+		return err
 	}
 
 	// Insert initial data
 	if err := m.insertInitialData(ctx, tx); err != nil {
-		return errors.New(MigrationDataInsertionFailed, "failed to insert initial data").WithCause(err)
+		return err
 	}
 
 	return nil
@@ -102,12 +102,12 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 func (m *Migration001) insertInitialData(ctx context.Context, tx bun.Tx) error {
 	// Insert default system user
 	if err := m.insertDefaultUser(ctx, tx); err != nil {
-		return errors.New(MigrationDataInsertionFailed, "failed to insert default user").WithCause(err)
+		return err
 	}
 
 	// Insert initial schema version
 	if err := m.insertInitialSchemaVersion(ctx, tx); err != nil {
-		return errors.New(MigrationDataInsertionFailed, "failed to insert initial schema version").WithCause(err)
+		return err
 	}
 
 	return nil
@@ -239,66 +239,66 @@ func (m *Migration001) createPerformanceIndexes(ctx context.Context, tx bun.Tx) 
 	// Database indexes
 	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_databases_name ON databases(name)`)
 	if err != nil {
-		return errors.New(MigrationIndexCreationFailed, "failed to create databases name index").WithCause(err)
+		return errors.New(MigrationIndexCreationFailed, "failed to create databases name index", err)
 	}
 
 	// Table indexes
 	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_tables_database ON tables(database_id)`)
 	if err != nil {
-		return errors.New(MigrationIndexCreationFailed, "failed to create tables database index").WithCause(err)
+		return errors.New(MigrationIndexCreationFailed, "failed to create tables database index", err)
 	}
 
 	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_tables_name ON tables(name)`)
 	if err != nil {
-		return errors.New(MigrationIndexCreationFailed, "failed to create tables name index").WithCause(err)
+		return errors.New(MigrationIndexCreationFailed, "failed to create tables name index", err)
 	}
 
 	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_tables_type ON tables(table_type)`)
 	if err != nil {
-		return errors.New(MigrationIndexCreationFailed, "failed to create tables type index").WithCause(err)
+		return errors.New(MigrationIndexCreationFailed, "failed to create tables type index", err)
 	}
 
 	// Table metadata indexes
 	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_table_metadata_table ON table_metadata(table_id)`)
 	if err != nil {
-		return errors.New(MigrationIndexCreationFailed, "failed to create table_metadata table index").WithCause(err)
+		return errors.New(MigrationIndexCreationFailed, "failed to create table_metadata table index", err)
 	}
 
 	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_table_metadata_engine ON table_metadata(storage_engine)`)
 	if err != nil {
-		return errors.New(MigrationIndexCreationFailed, "failed to create table_metadata engine index").WithCause(err)
+		return errors.New(MigrationIndexCreationFailed, "failed to create table_metadata engine index", err)
 	}
 
 	// Table files indexes
 	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_tables_files_table ON table_files(table_id)`)
 	if err != nil {
-		return errors.New(MigrationIndexCreationFailed, "failed to create table_files table index").WithCause(err)
+		return errors.New(MigrationIndexCreationFailed, "failed to create table_files table index", err)
 	}
 
 	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_table_files_partition ON table_files(partition_path)`)
 	if err != nil {
-		return errors.New(MigrationIndexCreationFailed, "failed to create table_files partition index").WithCause(err)
+		return errors.New(MigrationIndexCreationFailed, "failed to create table_files partition index", err)
 	}
 
 	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_table_files_iceberg_state ON table_files(iceberg_metadata_state)`)
 	if err != nil {
-		return errors.New(MigrationIndexCreationFailed, "failed to create table_files iceberg_state index").WithCause(err)
+		return errors.New(MigrationIndexCreationFailed, "failed to create table_files iceberg_state index", err)
 	}
 
 	// Access log indexes
 	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_access_log_timestamp ON access_log(timestamp)`)
 	if err != nil {
-		return errors.New(MigrationIndexCreationFailed, "failed to create access_log timestamp index").WithCause(err)
+		return errors.New(MigrationIndexCreationFailed, "failed to create access_log timestamp index", err)
 	}
 
 	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_access_log_user ON access_log(user_id)`)
 	if err != nil {
-		return errors.New(MigrationIndexCreationFailed, "failed to create access_log user index").WithCause(err)
+		return errors.New(MigrationIndexCreationFailed, "failed to create access_log user index", err)
 	}
 
 	_, err = tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_access_log_action ON access_log(action)`)
 	if err != nil {
-		return errors.New(MigrationIndexCreationFailed, "failed to create access_log action index").WithCause(err)
+		return errors.New(MigrationIndexCreationFailed, "failed to create access_log action index", err)
 	}
 
 	// Create unique constraints for data integrity
@@ -314,7 +314,7 @@ func (m *Migration001) createPerformanceIndexes(ctx context.Context, tx bun.Tx) 
 
 	for _, constraint := range uniqueConstraints {
 		if _, err := tx.ExecContext(ctx, constraint); err != nil {
-			return errors.New(MigrationIndexCreationFailed, "failed to create unique constraint").WithCause(err)
+			return errors.New(MigrationIndexCreationFailed, "failed to create unique constraint", err)
 		}
 	}
 

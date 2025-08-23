@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	
+	"github.com/TFMV/icebox/pkg/errors"
 )
 
 // ComponentType defines the path manager component type identifier
@@ -155,7 +157,7 @@ func (pm *Manager) EnsureDirectoryStructure() error {
 
 	for _, dir := range dirs {
 		if err := ensureDir(dir); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+			return errors.New(ErrDirectoryCreationFailed, "failed to create directory", err).AddContext("directory", dir)
 		}
 	}
 

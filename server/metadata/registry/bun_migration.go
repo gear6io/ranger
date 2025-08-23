@@ -48,7 +48,7 @@ func NewBunMigrationManager(dbPath string) (*BunMigrationManager, error) {
 	// Create SQLite connection
 	sqldb, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on")
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to open SQLite database").AddContext("path", dbPath).WithCause(err)
+		return nil, errors.New(errors.CommonInternal, "failed to open SQLite database", err).AddContext("path", dbPath)
 	}
 
 	// Create bun DB
@@ -77,7 +77,7 @@ func (bmm *BunMigrationManager) MigrateToLatest(ctx context.Context) error {
 	// Get current version
 	currentVersion, err := bmm.GetCurrentVersion(ctx)
 	if err != nil {
-		return errors.New(RegistryBunMigrationFailed, "failed to get current version").WithCause(err)
+		return errors.New(RegistryBunMigrationFailed, "failed to get current version", err)
 	}
 
 	// Get all available migrations
@@ -99,7 +99,7 @@ func (bmm *BunMigrationManager) MigrateToLatest(ctx context.Context) error {
 	// Begin single transaction for all migrations
 	tx, err := bmm.db.BeginTx(ctx, nil)
 	if err != nil {
-		return errors.New(RegistryBunMigrationFailed, "failed to begin transaction for migrations").WithCause(err)
+		return errors.New(RegistryBunMigrationFailed, "failed to begin transaction for migrations", err)
 	}
 
 	// Run all pending migrations within the transaction
@@ -162,13 +162,13 @@ func (bmm *BunMigrationManager) GetCurrentVersion(ctx context.Context) (int, err
 	// First check if migrations table exists
 	exists, err := bmm.tableExists(ctx, "bun_migrations")
 	if err != nil {
-		return 0, errors.New(RegistryBunMigrationFailed, "failed to check migrations table").WithCause(err)
+		return 0, errors.New(RegistryBunMigrationFailed, "failed to check migrations table", err)
 	}
 
 	if !exists {
 		// Create migrations table if it doesn't exist
 		if err := bmm.createMigrationsTable(ctx); err != nil {
-			return 0, errors.New(RegistryBunMigrationFailed, "failed to create migrations table").WithCause(err)
+			return 0, errors.New(RegistryBunMigrationFailed, "failed to create migrations table", err)
 		}
 		return 0, nil
 	}
@@ -186,7 +186,7 @@ func (bmm *BunMigrationManager) GetCurrentVersion(ctx context.Context) (int, err
 		if err == sql.ErrNoRows {
 			return 0, nil
 		}
-		return 0, errors.New(RegistryBunMigrationFailed, "failed to get current version").WithCause(err)
+		return 0, errors.New(RegistryBunMigrationFailed, "failed to get current version", err)
 	}
 
 	return version, nil
@@ -211,7 +211,7 @@ func (bmm *BunMigrationManager) GetMigrationStatus(ctx context.Context) ([]Migra
 	// Check if migrations table exists
 	exists, err := bmm.tableExists(ctx, "bun_migrations")
 	if err != nil {
-		return nil, errors.New(RegistryBunMigrationFailed, "failed to check migrations table").WithCause(err)
+		return nil, errors.New(RegistryBunMigrationFailed, "failed to check migrations table", err)
 	}
 
 	if !exists {
@@ -232,7 +232,7 @@ func (bmm *BunMigrationManager) GetMigrationStatus(ctx context.Context) ([]Migra
 		Scan(ctx)
 
 	if err != nil {
-		return nil, errors.New(RegistryBunMigrationFailed, "failed to query migrations").WithCause(err)
+		return nil, errors.New(RegistryBunMigrationFailed, "failed to query migrations", err)
 	}
 
 	status := make([]MigrationStatus, len(migrations))

@@ -4,8 +4,17 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/parquet/compress"
+)
+
+// Package-specific error codes for parquet compression
+var (
+	ParquetCompressionUnsupportedType = errors.MustNewCode("parquet.compression_unsupported_type")
+	ParquetCompressionInvalidType     = errors.MustNewCode("parquet.compression_invalid_type")
+	ParquetCompressionInvalidLevel    = errors.MustNewCode("parquet.compression_invalid_level")
+	ParquetCompressionFailed          = errors.MustNewCode("parquet.compression_failed")
 )
 
 // CompressionType represents supported compression algorithms
@@ -42,7 +51,7 @@ func GetCompressionCodec(compression string) (compress.Compression, error) {
 	case "zstd":
 		return compress.Codecs.Zstd, nil
 	default:
-		return compress.Codecs.Uncompressed, fmt.Errorf("unsupported compression type: %s", compression)
+		return compress.Codecs.Uncompressed, errors.New(ParquetCompressionUnsupportedType, "unsupported compression type", nil).AddContext("compression", compression)
 	}
 }
 
@@ -50,18 +59,18 @@ func GetCompressionCodec(compression string) (compress.Compression, error) {
 func ValidateCompressionConfig(config *ParquetConfig) error {
 	// Validate main compression
 	if _, err := GetCompressionCodec(config.Compression); err != nil {
-		return fmt.Errorf("invalid compression type: %w", err)
+		return err
 	}
 
 	// Validate compression level
 	if err := validateCompressionLevel(config.Compression, config.CompressionLevel); err != nil {
-		return fmt.Errorf("invalid compression level: %w", err)
+		return err
 	}
 
 	// Validate column-specific compression
 	for column, compression := range config.ColumnCompression {
 		if _, err := GetCompressionCodec(compression); err != nil {
-			return fmt.Errorf("invalid compression type for column %s: %w", column, err)
+			return errors.AddContext(err, "column", column)
 		}
 	}
 
@@ -76,15 +85,15 @@ func validateCompressionLevel(compression string, level int) error {
 		return nil
 	case "gzip", "gz":
 		if level < 1 || level > 9 {
-			return fmt.Errorf("gzip compression level must be between 1 and 9, got %d", level)
+			return errors.New(ParquetCompressionInvalidLevel, "gzip compression level must be between 1 and 9", nil).AddContext("level", fmt.Sprintf("%d", level)).AddContext("compression", "gzip")
 		}
 	case "brotli":
 		if level < 1 || level > 11 {
-			return fmt.Errorf("brotli compression level must be between 1 and 11, got %d", level)
+			return errors.New(ParquetCompressionInvalidLevel, "brotli compression level must be between 1 and 11", nil).AddContext("level", fmt.Sprintf("%d", level)).AddContext("compression", "brotli")
 		}
 	case "zstd":
 		if level < 1 || level > 22 {
-			return fmt.Errorf("zstd compression level must be between 1 and 22, got %d", level)
+			return errors.New(ParquetCompressionInvalidLevel, "zstd compression level must be between 1 and 22", nil).AddContext("level", fmt.Sprintf("%d", level)).AddContext("compression", "zstd")
 		}
 	}
 	return nil
@@ -112,7 +121,7 @@ func CreateWriterProperties(config *ParquetConfig, schema *arrow.Schema) (map[st
 	// Set default compression
 	defaultCodec, err := GetCompressionCodec(config.Compression)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get default compression codec: %w", err)
+		return nil, err
 	}
 	properties["compression"] = defaultCodec
 
@@ -129,7 +138,7 @@ func CreateWriterProperties(config *ParquetConfig, schema *arrow.Schema) (map[st
 
 		codec, err := GetCompressionCodec(compression)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get compression codec for column %s: %w", columnName, err)
+			return nil, err
 		}
 
 		columnCompression[columnName] = codec

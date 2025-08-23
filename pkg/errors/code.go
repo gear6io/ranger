@@ -25,18 +25,13 @@ var (
 	CommonAlreadyExists = MustNewCode("common.already_exists")
 )
 
-// Validation regex: package.name format
-var codeRegex = regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`)
+// Validation regex: package.sub_component.error_code format (supports 2-3 levels)
+var codeRegex = regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
 
 // NewCode creates a new validated Code
 func NewCode(s string) (Code, error) {
 	if !codeRegex.MatchString(s) {
-		return Code{}, fmt.Errorf("invalid code format '%s': must be 'package.name' (lowercase, underscores, dots only)", s)
-	}
-
-	// Check for common patterns that might indicate typos
-	if strings.Contains(s, "error") || strings.Contains(s, "err") {
-		return Code{}, fmt.Errorf("invalid code '%s': should not contain 'error' or 'err'", s)
+		return Code{}, fmt.Errorf("invalid code format '%s': must be 'package.sub_component.error_code' (lowercase, underscores, dots only, supports 2-3 levels)", s)
 	}
 
 	return Code{value: s}, nil
@@ -64,10 +59,30 @@ func (c Code) Package() string {
 	return ""
 }
 
-// Name returns the name part from the code
+// Name returns the name part from the code (everything after the first dot)
 func (c Code) Name() string {
 	if idx := strings.Index(c.value, "."); idx != -1 {
 		return c.value[idx+1:]
+	}
+	return c.value
+}
+
+// Component returns the sub-component part from the code (second level)
+func (c Code) Component() string {
+	parts := strings.Split(c.value, ".")
+	if len(parts) >= 3 {
+		return parts[1]
+	}
+	return ""
+}
+
+// ErrorCode returns the actual error code part (last level)
+func (c Code) ErrorCode() string {
+	parts := strings.Split(c.value, ".")
+	if len(parts) >= 3 {
+		return parts[2]
+	} else if len(parts) == 2 {
+		return parts[1]
 	}
 	return c.value
 }

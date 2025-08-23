@@ -4,7 +4,13 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/rs/zerolog"
+)
+
+// Package-specific error codes for storage registry
+var (
+	StorageRegistryEngineNotFound = errors.MustNewCode("storage.engine_not_found")
 )
 
 // StorageEngineRegistry manages multiple storage engines
@@ -40,7 +46,7 @@ func (r *StorageEngineRegistry) GetEngine(engineName string) (FileSystem, error)
 		return engine, nil
 	}
 
-	return nil, fmt.Errorf("storage engine '%s' not found", engineName)
+	return nil, errors.New(StorageRegistryEngineNotFound, "storage engine not found").AddContext("engine_name", engineName)
 }
 
 // GetDefaultEngine returns the default storage engine

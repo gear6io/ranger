@@ -2,9 +2,9 @@ package gateway
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/protocols/http"
 	"github.com/TFMV/icebox/server/protocols/jdbc"
@@ -43,19 +43,19 @@ func NewGateway(queryEngine *query.Engine, logger zerolog.Logger) (*Gateway, err
 	httpServer, err := http.NewServer(queryEngine, logger)
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("failed to create HTTP server: %w", err)
+		return nil, errors.New(ErrHTTPServerCreationFailed, "failed to create HTTP server", err)
 	}
 
 	jdbcServer, err := jdbc.NewServer(queryEngine, logger)
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("failed to create JDBC server: %w", err)
+		return nil, errors.New(ErrJDBCServerCreationFailed, "failed to create JDBC server", err)
 	}
 
 	nativeServer, err := native.NewServer(queryEngine, logger)
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("failed to create native server: %w", err)
+		return nil, errors.New(ErrNativeServerCreationFailed, "failed to create native server", err)
 	}
 
 	return &Gateway{
@@ -77,7 +77,7 @@ func (g *Gateway) Start(ctx context.Context) error {
 	defer g.mu.Unlock()
 
 	if g.started {
-		return fmt.Errorf("gateway is already started")
+		return errors.New(ErrGatewayAlreadyStarted, "gateway is already started", nil)
 	}
 
 	g.logger.Info().Msg("Starting Gateway...")
@@ -123,7 +123,7 @@ func (g *Gateway) Start(ctx context.Context) error {
 	if startedServers == 0 && totalServers > 0 {
 		g.logger.Error().Msg("All servers failed to start, shutting down gateway")
 		g.cancel()
-		return fmt.Errorf("all servers failed to start")
+		return errors.New(ErrAllServersFailedToStart, "all servers failed to start", nil)
 	}
 
 	if startedServers < totalServers {
@@ -224,7 +224,7 @@ func (g *Gateway) Shutdown(ctx context.Context) error {
 
 	// Stop gateway
 	if err := g.Stop(); err != nil {
-		return fmt.Errorf("failed to stop gateway: %w", err)
+		return errors.New(ErrGatewayStopFailed, "failed to stop gateway", err)
 	}
 
 	g.logger.Info().Msg("Gateway shut down successfully")

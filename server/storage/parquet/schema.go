@@ -4,8 +4,25 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/iceberg-go"
+)
+
+// Package-specific error codes for parquet schema
+var (
+	ParquetSchemaNilSchema              = errors.MustNewCode("parquet.schema_nil_schema")
+	ParquetSchemaFieldConversionFailed  = errors.MustNewCode("parquet.schema_field_conversion_failed")
+	ParquetSchemaTypeConversionFailed   = errors.MustNewCode("parquet.schema_type_conversion_failed")
+	ParquetSchemaUnsupportedType        = errors.MustNewCode("parquet.schema_unsupported_type")
+	ParquetSchemaListConversionFailed   = errors.MustNewCode("parquet.schema_list_conversion_failed")
+	ParquetSchemaMapConversionFailed    = errors.MustNewCode("parquet.schema_map_conversion_failed")
+	ParquetSchemaStructConversionFailed = errors.MustNewCode("parquet.schema_struct_conversion_failed")
+	ParquetSchemaValidationFailed       = errors.MustNewCode("parquet.schema_validation_failed")
+	ParquetSchemaColumnMismatch         = errors.MustNewCode("parquet.schema_column_mismatch")
+	ParquetSchemaRowValidationFailed    = errors.MustNewCode("parquet.schema_row_validation_failed")
+	ParquetSchemaFieldCannotBeNull      = errors.MustNewCode("parquet.schema_field_cannot_be_null")
+	ParquetSchemaTypeMismatch           = errors.MustNewCode("parquet.schema_type_mismatch")
 )
 
 // SchemaManager handles schema conversion and validation
@@ -23,15 +40,15 @@ func NewSchemaManager(config *ParquetConfig) *SchemaManager {
 // ConvertIcebergToArrowSchema converts an Iceberg schema to an Arrow schema
 func (sm *SchemaManager) ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*arrow.Schema, error) {
 	if schema == nil {
-		return nil, fmt.Errorf("iceberg schema cannot be nil")
+		return nil, errors.New(ParquetSchemaNilSchema, "iceberg schema cannot be nil", nil)
 	}
 
 	fields := make([]arrow.Field, 0, len(schema.Fields()))
-	
+
 	for _, field := range schema.Fields() {
 		arrowField, err := sm.convertIcebergField(field)
 		if err != nil {
-			return nil, fmt.Errorf("failed to convert field %s: %w", field.Name, err)
+			return nil, err
 		}
 		fields = append(fields, arrowField)
 	}
@@ -43,7 +60,7 @@ func (sm *SchemaManager) ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*a
 func (sm *SchemaManager) convertIcebergField(field iceberg.NestedField) (arrow.Field, error) {
 	arrowType, err := sm.convertIcebergType(field.Type)
 	if err != nil {
-		return arrow.Field{}, fmt.Errorf("failed to convert type for field %s: %w", field.Name, err)
+		return arrow.Field{}, err
 	}
 
 	return arrow.Field{
@@ -94,7 +111,7 @@ func (sm *SchemaManager) convertIcebergType(icebergType iceberg.Type) (arrow.Dat
 		case *iceberg.StructType:
 			return sm.convertStructType(t)
 		default:
-			return nil, fmt.Errorf("unsupported iceberg type: %T", icebergType)
+			return nil, errors.New(ParquetSchemaUnsupportedType, "unsupported iceberg type", nil).AddContext("type", fmt.Sprintf("%T", icebergType))
 		}
 	}
 }
@@ -103,9 +120,9 @@ func (sm *SchemaManager) convertIcebergType(icebergType iceberg.Type) (arrow.Dat
 func (sm *SchemaManager) convertListType(lt *iceberg.ListType) (arrow.DataType, error) {
 	elementType, err := sm.convertIcebergType(lt.Element)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert list element type: %w", err)
+		return nil, err
 	}
-	
+
 	return arrow.ListOf(elementType), nil
 }
 
@@ -113,54 +130,54 @@ func (sm *SchemaManager) convertListType(lt *iceberg.ListType) (arrow.DataType, 
 func (sm *SchemaManager) convertMapType(mt *iceberg.MapType) (arrow.DataType, error) {
 	keyType, err := sm.convertIcebergType(mt.KeyType)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert map key type: %w", err)
+		return nil, err
 	}
-	
+
 	valueType, err := sm.convertIcebergType(mt.ValueType)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert map value type: %w", err)
+		return nil, err
 	}
-	
+
 	return arrow.MapOf(keyType, valueType), nil
 }
 
 // convertStructType converts Iceberg struct type to Arrow struct type
 func (sm *SchemaManager) convertStructType(st *iceberg.StructType) (arrow.DataType, error) {
 	fields := make([]arrow.Field, 0, len(st.Fields()))
-	
+
 	for _, field := range st.Fields() {
 		arrowField, err := sm.convertIcebergField(field)
 		if err != nil {
-			return nil, fmt.Errorf("failed to convert struct field %s: %w", field.Name, err)
+			return nil, err
 		}
 		fields = append(fields, arrowField)
 	}
-	
+
 	return arrow.StructOf(fields...), nil
 }
 
-// ValidateData validates data against a given Arrow schema
+// ValidateData validates data against a given schema
 func (sm *SchemaManager) ValidateData(data [][]interface{}, schema *arrow.Schema) error {
 	if len(data) == 0 {
 		return nil // Empty data is valid
 	}
 
 	if schema == nil {
-		return fmt.Errorf("schema cannot be nil")
+		return errors.New(ParquetSchemaNilSchema, "schema cannot be nil", nil)
 	}
 
 	expectedColumns := len(schema.Fields())
-	
+
 	for rowIndex, row := range data {
 		if len(row) != expectedColumns {
-			return fmt.Errorf("row %d has %d columns, expected %d", rowIndex, len(row), expectedColumns)
+			return errors.New(ParquetSchemaColumnMismatch, "row has incorrect number of columns", nil).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("actual_columns", fmt.Sprintf("%d", len(row))).AddContext("expected_columns", fmt.Sprintf("%d", expectedColumns))
 		}
-		
+
 		if err := sm.validateRow(row, schema, rowIndex); err != nil {
-			return fmt.Errorf("row %d validation failed: %w", rowIndex, err)
+			return err
 		}
 	}
-	
+
 	return nil
 }
 
@@ -168,12 +185,12 @@ func (sm *SchemaManager) ValidateData(data [][]interface{}, schema *arrow.Schema
 func (sm *SchemaManager) validateRow(row []interface{}, schema *arrow.Schema, rowIndex int) error {
 	for colIndex, value := range row {
 		field := schema.Field(colIndex)
-		
+
 		if err := sm.validateValue(value, field, rowIndex, colIndex); err != nil {
 			return err
 		}
 	}
-	
+
 	return nil
 }
 
@@ -182,16 +199,16 @@ func (sm *SchemaManager) validateValue(value interface{}, field arrow.Field, row
 	// Handle null values
 	if value == nil {
 		if !field.Nullable {
-			return fmt.Errorf("field %s cannot be null (row %d, col %d)", field.Name, rowIndex, colIndex)
+			return errors.New(ParquetSchemaFieldCannotBeNull, "field cannot be null", nil).AddContext("field_name", field.Name).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 		return nil
 	}
-	
+
 	// Validate type compatibility
 	if err := sm.validateType(value, field.Type, field.Name, rowIndex, colIndex); err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
@@ -200,45 +217,45 @@ func (sm *SchemaManager) validateType(value interface{}, arrowType arrow.DataTyp
 	switch arrowType.(type) {
 	case *arrow.BooleanType:
 		if _, ok := value.(bool); !ok {
-			return fmt.Errorf("field %s expects boolean, got %T (row %d, col %d)", fieldName, value, rowIndex, colIndex)
+			return errors.New(ParquetSchemaTypeMismatch, "field expects boolean", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Int32Type:
 		if !sm.isInt32Compatible(value) {
-			return fmt.Errorf("field %s expects int32, got %T (row %d, col %d)", fieldName, value, rowIndex, colIndex)
+			return errors.New(ParquetSchemaTypeMismatch, "field expects int32", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Int64Type:
 		if !sm.isInt64Compatible(value) {
-			return fmt.Errorf("field %s expects int64, got %T (row %d, col %d)", fieldName, value, rowIndex, colIndex)
+			return errors.New(ParquetSchemaTypeMismatch, "field expects int64", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Float32Type:
 		if !sm.isFloat32Compatible(value) {
-			return fmt.Errorf("field %s expects float32, got %T (row %d, col %d)", fieldName, value, rowIndex, colIndex)
+			return errors.New(ParquetSchemaTypeMismatch, "field expects float32", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Float64Type:
 		if !sm.isFloat64Compatible(value) {
-			return fmt.Errorf("field %s expects float64, got %T (row %d, col %d)", fieldName, value, rowIndex, colIndex)
+			return errors.New(ParquetSchemaTypeMismatch, "field expects float64", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.StringType:
 		if _, ok := value.(string); !ok {
-			return fmt.Errorf("field %s expects string, got %T (row %d, col %d)", fieldName, value, rowIndex, colIndex)
+			return errors.New(ParquetSchemaTypeMismatch, "field expects string", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.BinaryType:
 		if _, ok := value.([]byte); !ok {
-			return fmt.Errorf("field %s expects []byte, got %T (row %d, col %d)", fieldName, value, rowIndex, colIndex)
+			return errors.New(ParquetSchemaTypeMismatch, "field expects []byte", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Date32Type:
 		if !sm.isDateCompatible(value) {
-			return fmt.Errorf("field %s expects date, got %T (row %d, col %d)", fieldName, value, rowIndex, colIndex)
+			return errors.New(ParquetSchemaTypeMismatch, "field expects date", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.TimestampType:
 		if !sm.isTimestampCompatible(value) {
-			return fmt.Errorf("field %s expects timestamp, got %T (row %d, col %d)", fieldName, value, rowIndex, colIndex)
+			return errors.New(ParquetSchemaTypeMismatch, "field expects timestamp", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	default:
 		// For complex types, we'll do basic validation
 		return nil
 	}
-	
+
 	return nil
 }
 

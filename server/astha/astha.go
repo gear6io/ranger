@@ -3,9 +3,9 @@ package astha
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/metadata/registry"
 	"github.com/rs/zerolog"
 )
@@ -30,7 +30,7 @@ type Config struct {
 // NewAstha creates a new Astha CDC scheduler
 func NewAstha(cfg *Config) (*Astha, error) {
 	if cfg.Database == nil {
-		return nil, fmt.Errorf("database connection is required")
+		return nil, errors.New(ErrDatabaseConnectionRequired, "database connection is required", nil)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -68,12 +68,12 @@ func (a *Astha) Start() error {
 
 	// Setup CDC infrastructure
 	if err := a.cdcSetup.SetupCDC(a.ctx); err != nil {
-		return fmt.Errorf("failed to setup CDC infrastructure: %w", err)
+		return err
 	}
 
 	// Start scheduler
 	if err := a.scheduler.Start(); err != nil {
-		return fmt.Errorf("failed to start scheduler: %w", err)
+		return err
 	}
 
 	a.logger.Info().Msg("Astha CDC scheduler started successfully")

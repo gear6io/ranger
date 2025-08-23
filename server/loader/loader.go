@@ -2,8 +2,8 @@ package loader
 
 import (
 	"context"
-	"fmt"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/catalog"
 	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/gateway"
@@ -56,7 +56,7 @@ func NewLoader(cfg *config.Config, logger zerolog.Logger) (*Loader, error) {
 
 	// Initialize all components
 	if err := loader.Initialize(); err != nil {
-		return nil, fmt.Errorf("failed to initialize components: %w", err)
+		return nil, errors.New(ErrComponentInitializationFailed, "failed to initialize components", err)
 	}
 
 	return loader, nil
@@ -105,7 +105,7 @@ func (l *Loader) Initialize() error {
 	for i, initFunc := range l.initFunctions {
 		component, err := initFunc(l)
 		if err != nil {
-			return fmt.Errorf("failed to initialize component %d: %w", i, err)
+			return errors.New(ErrComponentInitFailed, "failed to initialize component", err).AddContext("component_index", i)
 		}
 
 		// Store component by its type
@@ -126,7 +126,7 @@ func (l *Loader) Start() error {
 	gateway := l.GetGateway()
 	if gateway != nil {
 		if err := gateway.Start(l.logger.WithContext(context.Background())); err != nil {
-			return fmt.Errorf("failed to start gateway: %w", err)
+			return errors.New(ErrGatewayStartFailed, "failed to start gateway", err)
 		}
 	}
 

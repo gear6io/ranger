@@ -1,13 +1,22 @@
 package filesystem
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/paths"
+)
+
+// Package-specific error codes for filesystem storage
+var (
+	FileStorageSetupFailed      = errors.MustNewCode("filesystem.setup_failed")
+	FileStorageCreateFileFailed = errors.MustNewCode("filesystem.create_file_failed")
+	FileStorageFileNotFound     = errors.MustNewCode("filesystem.file_not_found")
+	FileStorageOpenFileFailed   = errors.MustNewCode("filesystem.open_file_failed")
+	FileStorageCreateDirFailed  = errors.MustNewCode("filesystem.create_dir_failed")
 )
 
 // StorageType constant for this storage engine
@@ -58,7 +67,7 @@ func (mfs *FileStorage) OpenForWrite(path string) (io.WriteCloser, error) {
 func (mfs *FileStorage) OpenTableForWrite(database, tableName string) (io.WriteCloser, error) {
 	// Ensure table environment exists
 	if err := mfs.SetupTable(database, tableName); err != nil {
-		return nil, fmt.Errorf("failed to setup table environment: %w", err)
+		return nil, err
 	}
 
 	// Create data file path using PathManager
@@ -68,7 +77,7 @@ func (mfs *FileStorage) OpenTableForWrite(database, tableName string) (io.WriteC
 	// Open file for direct writing
 	file, err := os.Create(parquetPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create data file: %w", err)
+		return nil, errors.New(FileStorageCreateFileFailed, "failed to create data file").AddContext("filesystem", "external_library_call_failed").WithCause(err)
 	}
 
 	return &tableWriter{
@@ -88,13 +97,13 @@ func (mfs *FileStorage) OpenTableForRead(database, tableName string) (io.ReadClo
 
 	// Check if file exists
 	if _, err := os.Stat(parquetPath); err != nil {
-		return nil, fmt.Errorf("table data file does not exist: %s", parquetPath)
+		return nil, errors.New(FileStorageFileNotFound, "table data file does not exist").AddContext("path", parquetPath).WithCause(err)
 	}
 
 	// Open file for direct reading
 	file, err := os.Open(parquetPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open data file: %w", err)
+		return nil, errors.New(FileStorageOpenFileFailed, "failed to open data file").AddContext("filesystem", "external_library_call_failed").WithCause(err)
 	}
 
 	return file, nil
@@ -108,19 +117,19 @@ func (mfs *FileStorage) SetupTable(database, tableName string) error {
 	// Create table directory structure using PathManager
 	tablePath := mfs.pathManager.GetTablePath(database, tableName)
 	if err := os.MkdirAll(tablePath, 0755); err != nil {
-		return fmt.Errorf("failed to create table directory: %w", err)
+		return errors.New(FileStorageCreateDirFailed, "failed to create table directory").AddContext("filesystem", "external_library_call_failed").WithCause(err)
 	}
 
 	// Create data subdirectory
 	dataPath := mfs.pathManager.GetTableDataPath([]string{database}, tableName)
 	if err := os.MkdirAll(dataPath, 0755); err != nil {
-		return fmt.Errorf("failed to create data directory: %w", err)
+		return errors.New(FileStorageCreateDirFailed, "failed to create data directory").AddContext("filesystem", "external_library_call_failed").WithCause(err)
 	}
 
 	// Create metadata subdirectory
 	metadataPath := mfs.pathManager.GetTableMetadataPath([]string{database}, tableName)
 	if err := os.MkdirAll(metadataPath, 0755); err != nil {
-		return fmt.Errorf("failed to create metadata directory: %w", err)
+		return errors.New(FileStorageCreateDirFailed, "failed to create metadata directory").AddContext("filesystem", "external_library_call_failed").WithCause(err)
 	}
 
 	return nil

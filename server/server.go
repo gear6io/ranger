@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -30,7 +29,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Server, error) {
 	loaderInstance, err := loader.NewLoader(cfg, logger)
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("failed to create loader: %w", err)
+		return nil, err
 	}
 
 	return &Server{
@@ -50,7 +49,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Start the Loader which will start all components including servers
 	if err := s.loader.Start(); err != nil {
-		return fmt.Errorf("failed to start loader: %w", err)
+		return err
 	}
 
 	s.logger.Info().Msg("Icebox server started successfully")

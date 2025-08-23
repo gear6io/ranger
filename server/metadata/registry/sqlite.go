@@ -43,13 +43,13 @@ func NewStore(dbPath, basePath string) (*Store, error) {
 func NewStoreWithOptions(dbPath, basePath string, useBun bool) (*Store, error) {
 	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to create SQLite directory").AddContext("path", dbPath).WithCause(err)
+		return nil, errors.New(errors.CommonInternal, "failed to create SQLite directory", err).AddContext("path", dbPath)
 	}
 
 	// Open SQLite database
 	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on")
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to open SQLite database").AddContext("path", dbPath).WithCause(err)
+		return nil, errors.New(errors.CommonInternal, "failed to open SQLite database", err).AddContext("path", dbPath)
 	}
 
 	store := &Store{
@@ -62,7 +62,7 @@ func NewStoreWithOptions(dbPath, basePath string, useBun bool) (*Store, error) {
 	bunMigrator, err := NewBunMigrationManager(dbPath)
 	if err != nil {
 		db.Close()
-		return nil, errors.New(RegistryMigrationFailed, "failed to create bun migrator").AddContext("path", dbPath).WithCause(err)
+		return nil, errors.New(RegistryMigrationFailed, "failed to create bun migrator", err).AddContext("path", dbPath)
 	}
 	store.bunMigrator = bunMigrator
 
@@ -70,13 +70,13 @@ func NewStoreWithOptions(dbPath, basePath string, useBun bool) (*Store, error) {
 	ctx := context.Background()
 	if err := bunMigrator.MigrateToLatest(ctx); err != nil {
 		db.Close()
-		return nil, errors.New(RegistryMigrationFailed, "failed to run bun migrations").AddContext("path", dbPath).WithCause(err)
+		return nil, errors.New(RegistryMigrationFailed, "failed to run bun migrations", err).AddContext("path", dbPath)
 	}
 
 	// Verify bun schema
 	if err := bunMigrator.VerifySchema(ctx); err != nil {
 		db.Close()
-		return nil, errors.New(RegistrySchemaVerification, "bun schema verification failed").AddContext("path", dbPath).WithCause(err)
+		return nil, errors.New(RegistrySchemaVerification, "bun schema verification failed", err).AddContext("path", dbPath)
 	}
 
 	return store, nil
@@ -117,7 +117,7 @@ func (sm *Store) GetPendingFilesForIceberg(ctx context.Context) ([]*regtypes.Tab
 
 	rows, err := sm.db.QueryContext(ctx, query)
 	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to query pending files").WithCause(err)
+		return nil, errors.New(errors.CommonInternal, "failed to query pending files", err)
 	}
 	defer rows.Close()
 
@@ -130,13 +130,13 @@ func (sm *Store) GetPendingFilesForIceberg(ctx context.Context) ([]*regtypes.Tab
 			&file.IsCompressed, &file.CreatedAt, &file.ModifiedAt, &file.IcebergMetadataState,
 		)
 		if err != nil {
-			return nil, errors.New(errors.CommonInternal, "failed to scan file info").WithCause(err)
+			return nil, errors.New(errors.CommonInternal, "failed to scan file info", err)
 		}
 		pendingFiles = append(pendingFiles, &file)
 	}
 
 	if err = rows.Err(); err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to iterate over rows").WithCause(err)
+		return nil, errors.New(errors.CommonInternal, "failed to iterate over rows", err)
 	}
 
 	return pendingFiles, nil
@@ -150,13 +150,13 @@ func (sm *Store) CreateDatabase(ctx context.Context, dbName string) error {
 	insertSQL := `INSERT INTO databases (name, description, is_system, is_read_only, table_count, total_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := sm.db.ExecContext(ctx, insertSQL, dbName, "", false, false, 0, 0, now, now)
 	if err != nil {
-		return errors.New(errors.CommonInternal, "failed to create database").AddContext("database", dbName).WithCause(err)
+		return errors.New(errors.CommonInternal, "failed to create database", err).AddContext("database", dbName)
 	}
 
 	// Create database directory
 	dbPath := filepath.Join(sm.basePath, "databases", dbName)
 	if err := os.MkdirAll(dbPath, 0755); err != nil {
-		return errors.New(RegistryFileOperationFailed, "failed to create database directory").AddContext("path", dbPath).WithCause(err)
+		return errors.New(RegistryFileOperationFailed, "failed to create database directory", err).AddContext("path", dbPath)
 	}
 
 	return nil

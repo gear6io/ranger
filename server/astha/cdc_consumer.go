@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/metadata/registry"
 	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
 	"github.com/rs/zerolog"
@@ -80,7 +81,7 @@ func (c *CDCConsumer) processChanges(ctx context.Context) error {
 		// 1. Get unprocessed changes (ordered by ID, limited by batch size)
 		changes, err := c.getUnprocessedChanges(ctx)
 		if err != nil {
-			return fmt.Errorf("failed to get unprocessed changes: %w", err)
+			return err
 		}
 
 		if len(changes) == 0 {
@@ -95,12 +96,12 @@ func (c *CDCConsumer) processChanges(ctx context.Context) error {
 
 		// 2. Process the batch
 		if err := c.processBatch(ctx, changes); err != nil {
-			return fmt.Errorf("failed to process batch: %w", err)
+			return err
 		}
 
 		// 3. ONLY if processing succeeds, delete processed logs
 		if err := c.deleteProcessedLogs(ctx, changes); err != nil {
-			return fmt.Errorf("failed to delete processed logs: %w", err)
+			return err
 		}
 
 		c.logger.Debug().
@@ -111,16 +112,11 @@ func (c *CDCConsumer) processChanges(ctx context.Context) error {
 
 // getUnprocessedChanges retrieves unprocessed changes from CDC log
 func (c *CDCConsumer) getUnprocessedChanges(ctx context.Context) ([]registry.CDCLogEntry, error) {
-	query := fmt.Sprintf(`
-		SELECT id, timestamp, tablename, operation, before, after, created_at 
-		FROM %s 
-		ORDER BY id ASC 
-		LIMIT ?
-	`, c.logTable)
+	query := "SELECT id, timestamp, tablename, operation, before, after, created_at FROM " + c.logTable + " ORDER BY id ASC LIMIT ?"
 
 	rows, err := c.db.QueryContext(ctx, query, c.batchSize)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query CDC log: %w", err)
+		return nil, errors.New(ErrCDCQueryLogFailed, "failed to query CDC log", err)
 	}
 	defer rows.Close()
 
@@ -129,7 +125,7 @@ func (c *CDCConsumer) getUnprocessedChanges(ctx context.Context) ([]registry.CDC
 		var change registry.CDCLogEntry
 		if err := rows.Scan(&change.ID, &change.Timestamp, &change.TableName,
 			&change.Operation, &change.Before, &change.After, &change.CreatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan CDC log entry: %w", err)
+			return nil, errors.New(ErrCDCScanLogFailed, "failed to scan CDC log entry", err)
 		}
 		changes = append(changes, change)
 	}
@@ -183,24 +179,24 @@ func (c *CDCConsumer) deleteProcessedLogs(ctx context.Context, changes []registr
 
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return errors.New(ErrCDCTransactionFailed, "failed to begin transaction", err)
 	}
 	defer tx.Rollback()
 
 	// Delete logs up to the highest processed ID
-	deleteQuery := fmt.Sprintf(`DELETE FROM %s WHERE id <= ?`, c.logTable)
+	deleteQuery := "DELETE FROM " + c.logTable + " WHERE id <= ?"
 	result, err := tx.ExecContext(ctx, deleteQuery, maxID)
 	if err != nil {
-		return fmt.Errorf("failed to delete processed logs: %w", err)
+		return errors.New(ErrCDCDeleteLogsFailed, "failed to delete processed logs", err)
 	}
 
 	deletedCount, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("failed to get deleted row count: %w", err)
+		return errors.New(ErrCDCTransactionFailed, "failed to get deleted row count", err)
 	}
 
 	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit deletion: %w", err)
+		return errors.New(ErrCDCTransactionFailed, "failed to commit deletion", err)
 	}
 
 	c.logger.Debug().
@@ -225,7 +221,7 @@ func (c *CDCConsumer) convertChangeToEvent(change registry.CDCLogEntry) (any, er
 				Str("table", change.TableName).
 				Str("operation", change.Operation).
 				Msg("Failed to parse table data")
-			return nil, fmt.Errorf("failed to parse table data: %w", err)
+			return nil, errors.New(ErrCDCParseDataFailed, "failed to parse table data", err)
 		}
 		return event, nil
 
@@ -237,7 +233,7 @@ func (c *CDCConsumer) convertChangeToEvent(change registry.CDCLogEntry) (any, er
 				Str("table", change.TableName).
 				Str("operation", change.Operation).
 				Msg("Failed to parse table data")
-			return nil, fmt.Errorf("failed to parse table data: %w", err)
+			return nil, errors.New(ErrCDCParseDataFailed, "failed to parse table data", err)
 		}
 		return event, nil
 
@@ -249,7 +245,7 @@ func (c *CDCConsumer) convertChangeToEvent(change registry.CDCLogEntry) (any, er
 				Str("table", change.TableName).
 				Str("operation", change.Operation).
 				Msg("Failed to parse table data")
-			return nil, fmt.Errorf("failed to parse table data: %w", err)
+			return nil, errors.New(ErrCDCParseDataFailed, "failed to parse table data", err)
 		}
 		return event, nil
 
@@ -261,12 +257,12 @@ func (c *CDCConsumer) convertChangeToEvent(change registry.CDCLogEntry) (any, er
 				Str("table", change.TableName).
 				Str("operation", change.Operation).
 				Msg("Failed to parse table data")
-			return nil, fmt.Errorf("failed to parse table data: %w", err)
+			return nil, errors.New(ErrCDCParseDataFailed, "failed to parse table data", err)
 		}
 		return event, nil
 
 	default:
-		return nil, fmt.Errorf("unknown table type: %s", change.TableName)
+		return nil, errors.New(ErrCDCUnknownTableType, "unknown table type", nil).AddContext("table_type", change.TableName)
 	}
 }
 
@@ -282,7 +278,7 @@ func convertChangeToEventGeneric[T any](change registry.CDCLogEntry) (Event[T], 
 		// Try without subseconds
 		timestamp, err = time.Parse("2006-01-02 15:04:05", change.Timestamp)
 		if err != nil {
-			return Event[T]{}, fmt.Errorf("failed to parse timestamp: %w", err)
+			return Event[T]{}, errors.New(ErrCDCTimestampParseFailed, "failed to parse timestamp", err)
 		}
 	}
 
@@ -291,14 +287,14 @@ func convertChangeToEventGeneric[T any](change registry.CDCLogEntry) (Event[T], 
 	if err != nil {
 		createdAt, err = time.Parse("2006-01-02 15:04:05", change.CreatedAt)
 		if err != nil {
-			return Event[T]{}, fmt.Errorf("failed to parse created_at: %w", err)
+			return Event[T]{}, errors.New(ErrCDCCreatedAtParseFailed, "failed to parse created_at", err)
 		}
 	}
 
 	// Parse data to type T directly
 	var data T
 	if err := parseDataToType[T](change, &data); err != nil {
-		return Event[T]{}, fmt.Errorf("failed to parse data to type %T: %w", data, err)
+		return Event[T]{}, errors.New(ErrCDCParseDataFailed, "failed to parse data to type", err).AddContext("data_type", fmt.Sprintf("%T", data))
 	}
 
 	return Event[T]{
@@ -321,16 +317,16 @@ func parseDataToType[T any](change registry.CDCLogEntry, result *T) error {
 	case "DELETE":
 		jsonData = change.Before
 	default:
-		return fmt.Errorf("unknown operation %s", change.Operation)
+		return errors.New(ErrCDCUnknownOperation, "unknown operation", nil).AddContext("operation", change.Operation)
 	}
 
 	if jsonData == "" {
-		return fmt.Errorf("no data available for operation %s", change.Operation)
+		return errors.New(ErrCDCNoDataAvailable, "no data available for operation", nil).AddContext("operation", change.Operation)
 	}
 
 	// Parse directly to type T
 	if err := json.Unmarshal([]byte(jsonData), result); err != nil {
-		return fmt.Errorf("failed to parse data to type %T: %w", result, err)
+		return errors.New(ErrCDCParseDataFailed, "failed to parse data to type", err).AddContext("data_type", fmt.Sprintf("%T", result))
 	}
 
 	return nil
