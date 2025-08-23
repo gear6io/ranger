@@ -24,6 +24,9 @@ type MetadataManagerInterface interface {
 	LoadTableMetadata(ctx context.Context, database, tableName string) (*registry.TableMetadata, error)
 	ListAllTables(ctx context.Context) ([]string, error)
 
+	// Post-insertion metadata updates
+	UpdateTableAfterInsertion(ctx context.Context, database, tableName string, fileInfo registry.FileInsertionInfo) error
+
 	// Close releases resources
 	Close() error
 }

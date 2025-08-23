@@ -62,3 +62,36 @@ type FileReference struct {
 	FileID  int64  `json:"file_id"`
 	Path    string `json:"path"`
 }
+
+// FileInfo represents file information for metadata operations
+// This is used by the Iceberg manager and other components
+type FileInfo struct {
+	ID            int64  `json:"id"`
+	TableID       int64  `json:"table_id"`
+	FileName      string `json:"file_name"`
+	FilePath      string `json:"file_path"`
+	FileSize      int64  `json:"file_size"`
+	FileType      string `json:"file_type"`
+	PartitionPath string `json:"partition_path"`
+	RowCount      int64  `json:"row_count"`
+	Checksum      string `json:"checksum"`
+	IsCompressed  bool   `json:"is_compressed"`
+	CreatedAt     string `json:"created_at"`
+	ModifiedAt    string `json:"modified_at"`
+	State         string `json:"state"`
+}
+
+// TableInfo represents table information for Iceberg metadata operations
+type TableInfo struct {
+	ID            int64  `json:"id"`
+	Database      string `json:"database"`
+	Name          string `json:"name"`
+	Schema        []byte `json:"schema"`
+	StorageEngine string `json:"storage_engine"`
+	EngineConfig  string `json:"engine_config"`
+	Format        string `json:"format"`
+	Compression   string `json:"compression"`
+	PartitionBy   string `json:"partition_by"`
+	SortBy        string `json:"sort_by"`
+	Properties    string `json:"properties"`
+}

@@ -371,3 +371,8 @@ func (mm *MetadataManager) LoadTableMetadata(ctx context.Context, database, tabl
 func (mm *MetadataManager) ListAllTables(ctx context.Context) ([]string, error) {
 	return mm.storage.ListAllTables(ctx)
 }
+
+// UpdateTableAfterInsertion performs metadata updates after successful data insertion
+func (mm *MetadataManager) UpdateTableAfterInsertion(ctx context.Context, database, tableName string, fileInfo registry.FileInsertionInfo) error {
+	return mm.storage.UpdateTableAfterInsertion(ctx, database, tableName, fileInfo)
+}

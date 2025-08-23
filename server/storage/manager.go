@@ -397,12 +397,78 @@ func (m *Manager) InsertData(ctx context.Context, database, tableName string, da
 		Int("rows", len(data)).
 		Msg("Data inserted successfully using streaming")
 
+	// Phase 2.4.1: Update metadata after successful data insertion
+	// This will trigger CDC events for Iceberg metadata generation
+	if err := m.updateMetadataAfterInsertion(ctx, database, tableName, len(data), metadata.StorageEngine); err != nil {
+		m.logger.Warn().
+			Err(err).
+			Str("database", database).
+			Str("table", tableName).
+			Msg("Failed to update metadata after insertion, but data insertion succeeded")
+		// Don't fail the insertion if metadata update fails
+	}
+
 	return nil
 }
 
 // GetTableMetadata returns metadata for a table
 func (m *Manager) GetTableMetadata(ctx context.Context, database, tableName string) (*registry.TableMetadata, error) {
 	return m.meta.LoadTableMetadata(ctx, database, tableName)
+}
+
+// Note: Individual metadata update methods have been replaced with a single
+// atomic Registry call in updateMetadataAfterInsertion()
+
+// updateMetadataAfterInsertion performs all metadata updates using a single Registry call
+func (m *Manager) updateMetadataAfterInsertion(ctx context.Context, database, tableName string, rowCount int, storageEngine string) error {
+	m.logger.Debug().
+		Str("database", database).
+		Str("table", tableName).
+		Int("row_count", rowCount).
+		Str("storage_engine", storageEngine).
+		Msg("Starting metadata updates after insertion")
+
+	// Calculate file size (approximate for now)
+	// In a real implementation, this would be the actual file size
+	estimatedFileSize := int64(rowCount * 100) // Rough estimate: 100 bytes per row
+
+	// Generate a file name based on timestamp
+	fileName := fmt.Sprintf("data_%d_%s.parquet", time.Now().Unix(), storageEngine)
+	filePath := fmt.Sprintf("databases/%s/%s/%s", database, tableName, fileName)
+	checksum := fmt.Sprintf("checksum_%d_%s", time.Now().Unix(), storageEngine)
+
+	// Create file insertion info for the Registry
+	fileInfo := registry.FileInsertionInfo{
+		FileName:      fileName,
+		FilePath:      filePath,
+		FileSize:      estimatedFileSize,
+		FileType:      "parquet",
+		PartitionPath: "", // No partitioning for now
+		RowCount:      int64(rowCount),
+		Checksum:      checksum,
+		IsCompressed:  false,
+	}
+
+	// Single atomic call to Registry for all metadata updates
+	// This will update table_files, table statistics, and trigger CDC events
+	if err := m.meta.UpdateTableAfterInsertion(ctx, database, tableName, fileInfo); err != nil {
+		m.logger.Error().
+			Err(err).
+			Str("database", database).
+			Str("table", tableName).
+			Msg("Failed to update metadata after insertion")
+		return fmt.Errorf("failed to update metadata after insertion: %w", err)
+	}
+
+	m.logger.Info().
+		Str("database", database).
+		Str("table", tableName).
+		Int("row_count", rowCount).
+		Str("file_name", fileName).
+		Int64("file_size", estimatedFileSize).
+		Msg("Metadata updates completed successfully after insertion")
+
+	return nil
 }
 
 // ListTableFiles returns a list of files for a table
@@ -414,7 +480,7 @@ func (m *Manager) ListTableFiles(ctx context.Context, database, tableName string
 
 	var files []string
 	for _, file := range metadata.Files {
-		files = append(files, file.Name)
+		files = append(files, file.FileName)
 	}
 
 	return files, nil

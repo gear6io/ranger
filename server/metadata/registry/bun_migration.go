@@ -3,14 +3,21 @@ package registry
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"log"
+	"strconv"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/metadata/registry/migrations"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/sqlitedialect"
+)
+
+// Package-specific error codes for bun migrations
+var (
+	RegistryBunMigrationFailed          = errors.MustNewCode("registry.bun_migration_failed")
+	RegistryBunSchemaVerificationFailed = errors.MustNewCode("registry.bun_schema_verification_failed")
 )
 
 // Migration interface that all migration files must implement
@@ -41,7 +48,7 @@ func NewBunMigrationManager(dbPath string) (*BunMigrationManager, error) {
 	// Create SQLite connection
 	sqldb, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on")
 	if err != nil {
-		return nil, fmt.Errorf("failed to open SQLite database: %w", err)
+		return nil, errors.New(errors.CommonInternal, "failed to open SQLite database").AddContext("path", dbPath).WithCause(err)
 	}
 
 	// Create bun DB
@@ -70,7 +77,7 @@ func (bmm *BunMigrationManager) MigrateToLatest(ctx context.Context) error {
 	// Get current version
 	currentVersion, err := bmm.GetCurrentVersion(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get current version: %w", err)
+		return errors.New(RegistryBunMigrationFailed, "failed to get current version").WithCause(err)
 	}
 
 	// Get all available migrations
@@ -92,7 +99,7 @@ func (bmm *BunMigrationManager) MigrateToLatest(ctx context.Context) error {
 	// Begin single transaction for all migrations
 	tx, err := bmm.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction for migrations: %w", err)
+		return errors.New(RegistryBunMigrationFailed, "failed to begin transaction for migrations").WithCause(err)
 	}
 
 	// Run all pending migrations within the transaction
@@ -155,13 +162,13 @@ func (bmm *BunMigrationManager) GetCurrentVersion(ctx context.Context) (int, err
 	// First check if migrations table exists
 	exists, err := bmm.tableExists(ctx, "bun_migrations")
 	if err != nil {
-		return 0, fmt.Errorf("failed to check migrations table: %w", err)
+		return 0, errors.New(RegistryBunMigrationFailed, "failed to check migrations table").WithCause(err)
 	}
 
 	if !exists {
 		// Create migrations table if it doesn't exist
 		if err := bmm.createMigrationsTable(ctx); err != nil {
-			return 0, fmt.Errorf("failed to create migrations table: %w", err)
+			return 0, errors.New(RegistryBunMigrationFailed, "failed to create migrations table").WithCause(err)
 		}
 		return 0, nil
 	}
@@ -179,7 +186,7 @@ func (bmm *BunMigrationManager) GetCurrentVersion(ctx context.Context) (int, err
 		if err == sql.ErrNoRows {
 			return 0, nil
 		}
-		return 0, fmt.Errorf("failed to get current version: %w", err)
+		return 0, errors.New(RegistryBunMigrationFailed, "failed to get current version").WithCause(err)
 	}
 
 	return version, nil
@@ -204,7 +211,7 @@ func (bmm *BunMigrationManager) GetMigrationStatus(ctx context.Context) ([]Migra
 	// Check if migrations table exists
 	exists, err := bmm.tableExists(ctx, "bun_migrations")
 	if err != nil {
-		return nil, fmt.Errorf("failed to check migrations table: %w", err)
+		return nil, errors.New(RegistryBunMigrationFailed, "failed to check migrations table").WithCause(err)
 	}
 
 	if !exists {
@@ -225,7 +232,7 @@ func (bmm *BunMigrationManager) GetMigrationStatus(ctx context.Context) ([]Migra
 		Scan(ctx)
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to query migrations: %w", err)
+		return nil, errors.New(RegistryBunMigrationFailed, "failed to query migrations").WithCause(err)
 	}
 
 	status := make([]MigrationStatus, len(migrations))
@@ -233,7 +240,7 @@ func (bmm *BunMigrationManager) GetMigrationStatus(ctx context.Context) ([]Migra
 		status[i] = MigrationStatus{
 			Version:     m.Version,
 			Name:        m.Name,
-			Description: fmt.Sprintf("Migration %d: %s", m.Version, m.Name),
+			Description: "Migration " + strconv.Itoa(m.Version) + ": " + m.Name,
 			Status:      "applied",
 			AppliedAt:   m.AppliedAt,
 		}
@@ -254,10 +261,10 @@ func (bmm *BunMigrationManager) VerifySchema(ctx context.Context) error {
 	for _, tableName := range expectedTables {
 		exists, err := bmm.tableExists(ctx, tableName)
 		if err != nil {
-			return fmt.Errorf("failed to verify table %s: %w", tableName, err)
+			return errors.New(RegistryBunSchemaVerificationFailed, "failed to verify table").AddContext("table", tableName).WithCause(err)
 		}
 		if !exists {
-			return fmt.Errorf("expected table %s does not exist", tableName)
+			return errors.New(RegistryBunSchemaVerificationFailed, "expected table does not exist").AddContext("table", tableName)
 		}
 	}
 
