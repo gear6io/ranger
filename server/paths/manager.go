@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	
-	"github.com/TFMV/icebox/pkg/errors"
+
+	"github.com/gear6io/ranger/pkg/errors"
 )
 
 // ComponentType defines the path manager component type identifier
@@ -41,7 +41,7 @@ func (pm *Manager) GetDataPath() string {
 
 // GetInternalMetadataPath returns the internal metadata directory path
 func (pm *Manager) GetInternalMetadataPath() string {
-	return filepath.Join(pm.basePath, ".icebox")
+	return filepath.Join(pm.basePath, ".ranger")
 }
 
 // GetInternalMetadataDBPath returns the internal metadata database path
@@ -54,7 +54,7 @@ func (pm *Manager) GetMigrationsPath() string {
 	if pm.basePath == "" {
 		return ""
 	}
-	return filepath.Join(pm.basePath, ".icebox", "migrations")
+	return filepath.Join(pm.basePath, ".ranger", "migrations")
 }
 
 // GetCatalogURI returns the catalog URI based on catalog type

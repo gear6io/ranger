@@ -30,7 +30,7 @@ const (
 	DefaultPort                = 9000
 	DefaultAddress             = "localhost"
 	DefaultRegion              = "us-east-1"
-	DefaultBucket              = "icebox"
+	DefaultBucket              = "ranger"
 	DefaultAccessKey           = "minioadmin"
 	DefaultSecretKey           = "minioadmin"
 	DefaultMaxIdleConns        = 100
@@ -96,7 +96,7 @@ type EmbeddedMinIOConfig struct {
 	SecretKey string `yaml:"secret_key" json:"secret_key"` // MinIO secret key (default: minioadmin)
 
 	// Behavior
-	AutoStart bool `yaml:"auto_start" json:"auto_start"` // Auto-start server with Icebox (default: true)
+	AutoStart bool `yaml:"auto_start" json:"auto_start"` // Auto-start server with Ranger (default: true)
 	Console   bool `yaml:"console" json:"console"`       // Enable MinIO console (default: false)
 	Quiet     bool `yaml:"quiet" json:"quiet"`           // Suppress MinIO logs (default: true)
 
@@ -108,7 +108,7 @@ type EmbeddedMinIOConfig struct {
 
 	// Advanced configuration
 	Region        string            `yaml:"region" json:"region"`                 // Default region (default: us-east-1)
-	DefaultBucket string            `yaml:"default_bucket" json:"default_bucket"` // Default bucket name (default: icebox)
+	DefaultBucket string            `yaml:"default_bucket" json:"default_bucket"` // Default bucket name (default: ranger)
 	Properties    map[string]string `yaml:"properties" json:"properties"`         // Additional MinIO properties
 
 	// Connection settings
@@ -1148,12 +1148,6 @@ func (fs *S3FileSystem) MkdirAll(path string) error {
 	return nil
 }
 
-
-
-
-
-
-
 // OpenForRead opens a file for streaming read
 func (fs *S3FileSystem) OpenForRead(path string) (io.ReadCloser, error) {
 	start := time.Now()
@@ -1326,7 +1320,7 @@ func DefaultMinIOConfig() *EmbeddedMinIOConfig {
 		// Server settings
 		Port:    DefaultPort,
 		Address: DefaultAddress,
-		DataDir: ".icebox/minio",
+		DataDir: ".ranger/minio",
 
 		// Authentication
 		AccessKey: DefaultAccessKey,
@@ -1427,7 +1421,7 @@ func validateAndNormalizeConfig(config *EmbeddedMinIOConfig) error {
 	}
 
 	if config.DataDir == "" {
-		config.DataDir = ".icebox/minio"
+		config.DataDir = ".ranger/minio"
 	}
 
 	// Validate and set connection defaults
@@ -2247,8 +2241,6 @@ func (s3fs *S3FileSystem) SetupTable(database, tableName string) error {
 	return nil
 }
 
-
-
 // RemoveTableEnvironment removes the storage environment for a table
 func (s3fs *S3FileSystem) RemoveTableEnvironment(database, tableName string) error {
 	// TODO: Implement table environment removal from S3 with database namespace
@@ -2407,5 +2399,3 @@ func (str *s3TableReader) Close() error {
 	str.closed = true
 	return nil
 }
-
-

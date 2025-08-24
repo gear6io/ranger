@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/TFMV/icebox/pkg/errors"
+	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/rs/zerolog"
 )
 
@@ -275,7 +275,7 @@ func SetupLogger(cfg *Config) (zerolog.Logger, error) {
 	// Create logger
 	logger := zerolog.New(multiWriter).With().
 		Timestamp().
-		Str("component", "icebox-server").
+		Str("component", "ranger-server").
 		Logger()
 
 	return logger, nil

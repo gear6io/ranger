@@ -6,13 +6,13 @@ import (
 	"net"
 	"sync"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/query"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/query"
 	"github.com/rs/zerolog"
 )
 
-// Server represents a JDBC server for icebox
+// Server represents a JDBC server for ranger
 type Server struct {
 	logger      zerolog.Logger
 	server      net.Listener

@@ -3,7 +3,7 @@ package signals
 import (
 	"fmt"
 
-	"github.com/TFMV/icebox/server/protocols/native/protocol"
+	"github.com/gear6io/ranger/server/protocols/native/protocol"
 )
 
 // ServerEndOfStream represents a server end-of-stream message

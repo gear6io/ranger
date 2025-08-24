@@ -1,8 +1,8 @@
-# Icebox CLI Display System Explanation
+# Data Lakehouse CLI Display System Explanation
 
 ## Overview
 
-The older Icebox CLI had a sophisticated, multi-layered display system designed to provide rich, interactive terminal output while maintaining compatibility across different environments. This system was built with the philosophy of "graceful degradation" - providing the best possible experience based on the terminal's capabilities.
+The older Data Lakehouse CLI had a sophisticated, multi-layered display system designed to provide rich, interactive terminal output while maintaining compatibility across different environments. This system was built with the philosophy of "graceful degradation" - providing the best possible experience based on the terminal's capabilities.
 
 ## Architecture
 
@@ -298,7 +298,7 @@ func runSQL(cmd *cobra.Command, args []string) error {
     // Error handling with display
     if err != nil {
         d.Error("Query failed: %v", err)
-        d.Info("Try running 'icebox sql \"SHOW TABLES\"' to see available tables")
+        d.Info("Try running 'ranger sql \"SHOW TABLES\"' to see available tables")
         return err
     }
     
@@ -373,7 +373,7 @@ func runSQL(cmd *cobra.Command, args []string) error {
 
 The display system was moved to `deprecated/display/` during the restructuring. In the new client-server architecture, this functionality would need to be:
 
-1. **Migrated to Client**: The display system should be moved to the new `icebox-client`
+1. **Migrated to Client**: The display system should be moved to the new `ranger-client`
 2. **Server Integration**: The server should provide structured data that the client can format
 3. **Protocol Adaptation**: Display commands need to work over HTTP/gRPC protocols
 4. **Remote Rendering**: Consider how to handle interactive prompts over remote connections

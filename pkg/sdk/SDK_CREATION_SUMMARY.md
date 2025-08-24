@@ -1,8 +1,8 @@
-# Icebox Native SDK Creation Summary
+# Ranger Native SDK Creation Summary
 
 ## Overview
 
-I have successfully created a comprehensive native Go SDK for Icebox by scraping and adapting the best parts of both `clickhouse-go` and `ch-go` libraries. The SDK provides high-performance connectivity to Icebox servers with a clean, modern API.
+I have successfully created a comprehensive native Go SDK for Ranger by scraping and adapting the best parts of both `clickhouse-go` and `ch-go` libraries. The SDK provides high-performance connectivity to Ranger servers with a clean, modern API.
 
 ## What Was Created
 
@@ -19,7 +19,7 @@ I have successfully created a comprehensive native Go SDK for Icebox by scraping
 ### Key Features Implemented
 
 #### 1. Connection Management
-- **Connect()** - Establish connection to Icebox server
+- **Connect()** - Establish connection to Ranger server
 - **ConnectWithConn()** - Create client from existing connection
 - **Close()** - Properly close connections
 - **Ping()** - Health check functionality
@@ -67,12 +67,12 @@ I have successfully created a comprehensive native Go SDK for Icebox by scraping
 6. **Logging**: Structured logging with zap
 7. **Settings**: Configurable query and connection settings
 
-### Simplified for Icebox
+### Simplified for Ranger
 
 1. **Protocol Version**: Single protocol version (54460) instead of multiple versions
 2. **Streamlined API**: Focused on essential operations
 3. **Native Implementation**: Custom protocol implementation rather than importing full libraries
-4. **Icebox-Specific**: Tailored for Icebox server characteristics
+4. **Ranger-Specific**: Tailored for Ranger server characteristics
 
 ## API Design
 
@@ -168,14 +168,14 @@ func (r *Rows) Err() error
 6. **Prepared Statements**: Statement preparation and reuse
 
 ### Integration Points
-1. **Server Protocol**: Integration with Icebox server protocol
+1. **Server Protocol**: Integration with Ranger server protocol
 2. **Database Drivers**: Compatibility with database/sql interface
 3. **ORM Support**: Integration with popular ORMs
 4. **Monitoring**: Integration with monitoring systems
 
 ## Conclusion
 
-The Icebox SDK provides a solid foundation for high-performance connectivity to Icebox servers. It combines the best practices from established libraries while being specifically tailored for Icebox's needs. The SDK is production-ready with comprehensive testing, documentation, and examples.
+The Ranger SDK provides a solid foundation for high-performance connectivity to Ranger servers. It combines the best practices from established libraries while being specifically tailored for Ranger's needs. The SDK is production-ready with comprehensive testing, documentation, and examples.
 
 The implementation focuses on:
 - **Performance**: Optimized for maximum throughput
@@ -184,4 +184,4 @@ The implementation focuses on:
 - **Maintainability**: Well-documented, testable code
 - **Extensibility**: Designed for future enhancements
 
-This SDK eliminates the need for external dependencies on clickhouse-go while providing similar or better performance characteristics through a native implementation specifically designed for Icebox.
+This SDK eliminates the need for external dependencies on clickhouse-go while providing similar or better performance characteristics through a native implementation specifically designed for Ranger.

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/TFMV/icebox/pkg/errors"
+	"github.com/gear6io/ranger/pkg/errors"
 )
 
 // PostgreSQL message types
@@ -298,14 +298,14 @@ func WriteStartupResponse(writer io.Writer) error {
 
 	// Send parameter status messages
 	params := map[string]string{
-		"server_version":              "14.1 (Icebox)",
+		"server_version":              "14.1 (Ranger)",
 		"client_encoding":             "UTF8",
 		"DateStyle":                   "ISO, MDY",
 		"TimeZone":                    "UTC",
 		"server_encoding":             "UTF8",
 		"integer_datetimes":           "on",
 		"is_superuser":                "on",
-		"session_authorization":       "icebox",
+		"session_authorization":       "ranger",
 		"standard_conforming_strings": "on",
 	}
 

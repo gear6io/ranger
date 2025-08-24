@@ -1,15 +1,15 @@
-# Fixed Network Server Configuration
+# Port Configuration
 
 ## Overview
 
-Icebox now uses a **completely fixed and non-configurable** network server configuration. All network servers have predetermined ports, addresses, and enabled states that cannot be modified through configuration files or environment variables.
+Ranger now uses a **completely fixed and non-configurable** network server configuration. All network servers have predetermined ports, addresses, and enabled states that cannot be modified through configuration files.
 
 ## What's Fixed
 
 ### 1. Network Server Ports
 - **HTTP Server**: Port 2847 (REST API and web interface)
 - **JDBC Server**: Port 2848 (PostgreSQL wire protocol compatible)
-- **Native Server**: Port 2849 (Icebox-specific binary protocol)
+- **Native Server**: Port 2849 (Ranger-specific binary protocol)
 - **MinIO Server**: Port 2850 (Object storage service)
 - **Health Check**: Port 2851 (Health monitoring endpoint)
 
@@ -169,4 +169,4 @@ If you see warnings about missing configuration fields:
 
 ## Summary
 
-Icebox now provides a **zero-configuration** network server setup with carefully selected, non-conflicting ports. This approach eliminates configuration complexity while ensuring consistent behavior across all deployments.
+Ranger now provides a **zero-configuration** network server setup with carefully selected, non-conflicting ports. This approach eliminates configuration complexity while ensuring consistent behavior across all deployments.

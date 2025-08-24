@@ -8,10 +8,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/TFMV/icebox/client"
-	"github.com/TFMV/icebox/client/config"
-	"github.com/TFMV/icebox/server/query/parser"
 	"github.com/c-bata/go-prompt"
+	"github.com/gear6io/ranger/client"
+	"github.com/gear6io/ranger/client/config"
+	"github.com/gear6io/ranger/server/query/parser"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 )
@@ -33,16 +33,16 @@ func main() {
 
 	// Create root command
 	rootCmd := &cobra.Command{
-		Use:   "icebox-client",
-		Short: "Icebox client for connecting to icebox server",
-		Long: `Icebox client provides command-line interface for connecting to icebox server
-and executing SQL queries, managing tables, and importing data.
+		Use:   "ranger-client",
+		Short: "Data lakehouse client for connecting to data lakehouse server",
+		Long: `Data lakehouse client provides command-line interface for connecting to data lakehouse server
+and executing queries, importing data, and managing tables.
 
 Examples:
-  icebox-client query "SELECT * FROM my_table"
-  icebox-client import data.parquet --table sales
-  icebox-client shell
-  icebox-client --server localhost:2849 query "SHOW TABLES"`,
+ranger-client query "SELECT * FROM my_table"
+ranger-client import data.parquet --table sales
+ranger-client shell
+ranger-client --server localhost:2849 query "SHOW TABLES"`,
 	}
 
 	// Add global flags
@@ -94,7 +94,7 @@ func setupLogger() zerolog.Logger {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 	logger := zerolog.New(os.Stdout).With().
 		Timestamp().
-		Str("component", "icebox-client").
+		Str("component", "ranger-client").
 		Logger()
 
 	return logger
@@ -287,7 +287,7 @@ func displayQueryResults(result *client.QueryResult) error {
 
 // startInteractiveShell starts an interactive SQL shell with proper arrow key support and command history
 func startInteractiveShell(client *client.Client) error {
-	fmt.Println("🧊 Icebox Interactive Shell")
+	fmt.Println("🧊 Data Lakehouse Interactive Shell")
 	fmt.Println("==========================")
 	fmt.Println("Type 'exit' or 'quit' to exit")
 	fmt.Println("Type 'help' for available commands")
@@ -328,8 +328,8 @@ func startInteractiveShell(client *client.Client) error {
 	p := prompt.New(
 		executor(client, &history, sigChan),
 		completer,
-		prompt.OptionTitle("Icebox SQL Shell"),
-		prompt.OptionPrefix("icebox> "),
+		prompt.OptionTitle("Data Lakehouse SQL Shell"),
+		prompt.OptionPrefix("ranger> "),
 		prompt.OptionInputTextColor(prompt.Yellow),
 		prompt.OptionPrefixTextColor(prompt.Blue),
 		prompt.OptionSuggestionTextColor(prompt.Green),

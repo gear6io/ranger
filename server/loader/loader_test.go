@@ -3,7 +3,7 @@ package loader
 import (
 	"testing"
 
-	"github.com/TFMV/icebox/server/config"
+	"github.com/gear6io/ranger/server/config"
 	"github.com/rs/zerolog"
 )
 
@@ -12,7 +12,7 @@ func TestNewLoader(t *testing.T) {
 	cfg := &config.Config{
 		Log: config.LogConfig{Level: "info"},
 		Storage: config.StorageConfig{
-			DataPath: ".icebox/warehouse",
+			DataPath: ".ranger/warehouse",
 			Catalog: config.CatalogConfig{
 				Type: "json",
 			},

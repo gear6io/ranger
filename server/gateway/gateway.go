@@ -4,12 +4,12 @@ import (
 	"context"
 	"sync"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/protocols/http"
-	"github.com/TFMV/icebox/server/protocols/jdbc"
-	"github.com/TFMV/icebox/server/protocols/native"
-	"github.com/TFMV/icebox/server/query"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/protocols/http"
+	"github.com/gear6io/ranger/server/protocols/jdbc"
+	"github.com/gear6io/ranger/server/protocols/native"
+	"github.com/gear6io/ranger/server/query"
 	"github.com/rs/zerolog"
 )
 

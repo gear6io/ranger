@@ -1,6 +1,6 @@
 package paths
 
-import "github.com/TFMV/icebox/pkg/errors"
+import "github.com/gear6io/ranger/pkg/errors"
 
 // Path-specific error codes
 var (

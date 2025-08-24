@@ -3,7 +3,7 @@ package signals
 import (
 	"testing"
 
-	"github.com/TFMV/icebox/server/protocols/native/protocol"
+	"github.com/gear6io/ranger/server/protocols/native/protocol"
 )
 
 func TestServerPong(t *testing.T) {

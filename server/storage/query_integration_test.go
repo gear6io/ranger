@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/storage/filesystem"
-	"github.com/TFMV/icebox/server/storage/memory"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/storage/filesystem"
+	"github.com/gear6io/ranger/server/storage/memory"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,7 +17,7 @@ import (
 func TestStorageEnginesDirectly(t *testing.T) {
 	// Create test configuration
 	cfg := config.LoadDefaultConfig()
-	cfg.Storage.DataPath = "/tmp/icebox_test"
+	cfg.Storage.DataPath = "/tmp/ranger_test"
 	cfg.Storage.Catalog.Type = "json"
 
 	// Create logger

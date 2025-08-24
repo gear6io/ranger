@@ -1,6 +1,6 @@
-# 🎯 Icebox Development Milestones
+# 🎯 Data Lakehouse Development Milestones
 
-This folder contains detailed milestone plans for major Icebox development initiatives.
+This folder contains detailed milestone plans for major data lakehouse development initiatives.
 
 ## 📋 Available Milestones
 

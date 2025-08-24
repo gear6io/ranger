@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
+	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
 )
 
 // TableReference represents a simple table reference

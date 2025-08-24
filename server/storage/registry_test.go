@@ -3,8 +3,8 @@ package storage
 import (
 	"testing"
 
-	"github.com/TFMV/icebox/server/storage/filesystem"
-	"github.com/TFMV/icebox/server/storage/memory"
+	"github.com/gear6io/ranger/server/storage/filesystem"
+	"github.com/gear6io/ranger/server/storage/memory"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -3,7 +3,7 @@ package signals
 import (
 	"fmt"
 
-	"github.com/TFMV/icebox/server/protocols/native/protocol"
+	"github.com/gear6io/ranger/server/protocols/native/protocol"
 )
 
 // ServerProfileInfo represents a server profile info message for query profiling

@@ -16,7 +16,7 @@
 package parser
 
 import (
-	// External parser packages commented out - Icebox compatibility
+	// External parser packages commented out - Ranger compatibility
 	"encoding/json"
 )
 

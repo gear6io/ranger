@@ -6,8 +6,8 @@ import (
 	"io"
 	"sync"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/storage/parquet"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/storage/parquet"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/iceberg-go"
 )

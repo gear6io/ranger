@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
 
-echo "Building icebox-server..."
-go build -o bin/icebox-server cmd/icebox-server/main.go
-echo "✅ icebox-server built successfully"
+echo "Building ranger-server..."
+go build -o bin/ranger-server cmd/ranger-server/main.go
+echo "✅ ranger-server built successfully"

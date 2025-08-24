@@ -4,13 +4,13 @@ WORKDIR /app
 COPY . .
 
 # Build client
-RUN go build -o icebox-client cmd/icebox-client/main.go
+RUN go build -o ranger-client cmd/ranger-client/main.go
 
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates
 
 WORKDIR /root/
-COPY --from=builder /app/icebox-client .
-COPY --from=builder /app/icebox-client.yml .
+COPY --from=builder /app/ranger-client .
+COPY --from=builder /app/ranger-client.yml .
 
-CMD ["./icebox-client", "--help"]
+CMD ["./ranger-client", "--help"]

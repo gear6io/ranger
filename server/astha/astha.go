@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/metadata/registry"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/metadata/registry"
 	"github.com/rs/zerolog"
 )
 

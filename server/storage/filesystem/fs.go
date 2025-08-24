@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/paths"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/paths"
 )
 
 // Package-specific error codes for filesystem storage

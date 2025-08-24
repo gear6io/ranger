@@ -1,6 +1,6 @@
 # Production-Ready Registry Schema
 
-This directory contains a production-ready, normalized database schema for the Icebox metadata registry system.
+This directory contains a production-ready, normalized database schema for the Ranger metadata registry system.
 
 ## Overview
 
@@ -41,7 +41,7 @@ The new production schema replaces the old "menace" tables with a properly norma
 ### Basic Setup
 
 ```go
-import "github.com/TFMV/icebox/server/metadata/registry"
+import "github.com/gear6io/ranger/server/metadata/registry"
 
 // Create a new production store
 store, err := registry.NewProductionStore(dbPath, basePath)

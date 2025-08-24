@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TFMV/icebox/server/storage/parquet"
 	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/gear6io/ranger/server/storage/parquet"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,9 +22,9 @@ type MockPathManager struct {
 func (m *MockPathManager) GetBasePath() string             { return m.basePath }
 func (m *MockPathManager) GetCatalogPath() string          { return m.basePath + "/catalog" }
 func (m *MockPathManager) GetDataPath() string             { return m.basePath + "/data" }
-func (m *MockPathManager) GetInternalMetadataPath() string { return m.basePath + "/.icebox" }
+func (m *MockPathManager) GetInternalMetadataPath() string { return m.basePath + "/.ranger" }
 func (m *MockPathManager) GetInternalMetadataDBPath() string {
-	return m.basePath + "/.icebox/metadata.db"
+	return m.basePath + "/.ranger/metadata.db"
 }
 func (m *MockPathManager) GetMigrationsPath() string { return m.basePath + "/migrations" }
 func (m *MockPathManager) GetCatalogURI(catalogType string) string {
@@ -41,24 +41,24 @@ func (m *MockPathManager) GetTableDataPath(namespace []string, tableName string)
 }
 func (m *MockPathManager) GetTableMetadataPath(namespace []string, tableName string) string {
 	if len(namespace) > 0 {
-		return m.basePath + "/.icebox/metadata/" + namespace[0] + "/" + tableName
+		return m.basePath + "/.ranger/metadata/" + namespace[0] + "/" + tableName
 	}
-	return m.basePath + "/.icebox/metadata/" + tableName
+	return m.basePath + "/.ranger/metadata/" + tableName
 }
 func (m *MockPathManager) GetTableMetadataFile(database, tableName string, version int) string {
-	return m.basePath + "/.icebox/metadata/" + database + "/" + tableName + "/v" + strconv.Itoa(version) + ".metadata.json"
+	return m.basePath + "/.ranger/metadata/" + database + "/" + tableName + "/v" + strconv.Itoa(version) + ".metadata.json"
 }
 func (m *MockPathManager) GetTableManifestPath(namespace []string, tableName string) string {
 	if len(namespace) > 0 {
-		return m.basePath + "/.icebox/metadata/" + namespace[0] + "/" + tableName + "/manifest.json"
+		return m.basePath + "/.ranger/metadata/" + namespace[0] + "/" + tableName + "/manifest.json"
 	}
-	return m.basePath + "/.icebox/metadata/" + tableName + "/manifest.json"
+	return m.basePath + "/.ranger/metadata/" + tableName + "/manifest.json"
 }
 func (m *MockPathManager) GetViewMetadataPath(namespace []string, viewName string) string {
 	if len(namespace) > 0 {
-		return m.basePath + "/.icebox/metadata/" + namespace[0] + "/views/" + viewName
+		return m.basePath + "/.ranger/metadata/" + namespace[0] + "/views/" + viewName
 	}
-	return m.basePath + "/.icebox/metadata/views/" + viewName
+	return m.basePath + "/.ranger/metadata/views/" + viewName
 }
 func (m *MockPathManager) GetParquetDataPath(database, tableName string) string {
 	return m.basePath + "/data/" + database + "/" + tableName
@@ -78,7 +78,7 @@ func (m *MockPathManager) GetNamespacePath(namespace []string) string {
 	}
 	return m.basePath + "/data"
 }
-func (m *MockPathManager) GetMetadataDir() string { return m.basePath + "/.icebox/metadata" }
+func (m *MockPathManager) GetMetadataDir() string { return m.basePath + "/.ranger/metadata" }
 func (m *MockPathManager) GetDataDir() string     { return m.basePath + "/data" }
 func (m *MockPathManager) EnsureDirectoryStructure() error {
 	dirs := []string{m.GetDataPath(), m.GetInternalMetadataPath(), m.GetCatalogPath()}

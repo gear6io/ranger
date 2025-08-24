@@ -22,7 +22,7 @@ func TestNativeServerConnection(t *testing.T) {
 			t.Fatalf("Ping failed: %v", err)
 		}
 
-		t.Log("✅ Successfully connected to Icebox native server! Ping/Pong functionality is working correctly!")
+		t.Log("✅ Successfully connected to Ranger native server! Ping/Pong functionality is working correctly!")
 	})
 }
 
@@ -344,7 +344,7 @@ func TestNativeServerTLS(t *testing.T) {
 // TestNativeServerDSNParsing tests DSN string parsing
 func TestNativeServerDSNParsing(t *testing.T) {
 	// Test valid DSN parsing
-	validDSN := "icebox://user:pass@localhost:2849/testdb?max_execution_time=60&debug=true"
+	validDSN := "ranger://user:pass@localhost:2849/testdb?max_execution_time=60&debug=true"
 	options, err := ParseDSN(validDSN)
 	require.NoError(t, err)
 	require.NotNil(t, options)
@@ -362,7 +362,7 @@ func TestNativeServerDSNParsing(t *testing.T) {
 	assert.Error(t, err, "Invalid DSN should cause an error")
 
 	// Test DSN without auth
-	noAuthDSN := "icebox://localhost:2849/testdb"
+	noAuthDSN := "ranger://localhost:2849/testdb"
 	options, err = ParseDSN(noAuthDSN)
 	require.NoError(t, err)
 	assert.Equal(t, "", options.Auth.Username, "Username should be empty for no-auth DSN")

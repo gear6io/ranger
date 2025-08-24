@@ -19,8 +19,8 @@ import (
 	"go.uber.org/zap"
 
 	// Unified protocol package
-	"github.com/TFMV/icebox/server/protocols/native/protocol"
-	"github.com/TFMV/icebox/server/protocols/native/protocol/signals"
+	"github.com/gear6io/ranger/server/protocols/native/protocol"
+	"github.com/gear6io/ranger/server/protocols/native/protocol/signals"
 )
 
 // CompressionMethod represents compression methods
@@ -213,7 +213,7 @@ type Options struct {
 	scheme string
 }
 
-// Client represents an Icebox client with connection pooling
+// Client represents a Ranger client with connection pooling
 type Client struct {
 	opt    *Options
 	idle   chan *connection
@@ -241,7 +241,7 @@ type connection struct {
 	factory  *protocol.SignalFactory
 }
 
-// NewClient creates a new Icebox client
+// NewClient creates a new Ranger client
 func NewClient(opt *Options) (*Client, error) {
 	if opt == nil {
 		opt = &Options{}
@@ -358,20 +358,20 @@ func ParseDSN(dsn string) (*Options, error) {
 
 // fromDSN parses DSN string
 func (o *Options) fromDSN(dsn string) error {
-	// Parse DSN format: icebox://[username:password@]host:port/database?param=value
-	if !strings.HasPrefix(dsn, "icebox://") {
-		return errors.New("invalid DSN format, must start with icebox://")
+	// Parse DSN format: ranger://[username:password@]host:port/database?param=value
+	if !strings.HasPrefix(dsn, "ranger://") {
+		return errors.New("invalid DSN format, must start with ranger://")
 	}
 
 	// Mark that this Options was created from DSN parsing
-	o.scheme = "icebox"
+	o.scheme = "ranger"
 
 	// Initialize Settings map if it's nil
 	if o.Settings == nil {
 		o.Settings = make(Settings)
 	}
 
-	dsn = strings.TrimPrefix(dsn, "icebox://")
+	dsn = strings.TrimPrefix(dsn, "ranger://")
 
 	// Check if DSN has auth part (contains @)
 	if strings.Contains(dsn, "@") {
@@ -705,7 +705,7 @@ func (c *connection) handshake(ctx context.Context) error {
 
 	// Send ClientHello
 	clientHello := signals.NewClientHello(
-		"Icebox SDK",
+		"Ranger SDK",
 		c.client.opt.Auth.Database,
 		c.client.opt.Auth.Username,
 		c.client.opt.Auth.Password,
@@ -836,13 +836,13 @@ type Stats struct {
 
 // Errors
 var (
-	ErrBatchInvalid              = errors.New("icebox: batch is invalid. check appended data is correct")
-	ErrBatchAlreadySent          = errors.New("icebox: batch has already been sent")
-	ErrBatchNotSent              = errors.New("icebox: invalid retry, batch not sent yet")
-	ErrAcquireConnTimeout        = errors.New("icebox: acquire conn timeout. you can increase the number of max open conn or the dial timeout")
-	ErrUnsupportedServerRevision = errors.New("icebox: unsupported server revision")
-	ErrBindMixedParamsFormats    = errors.New("icebox [bind]: mixed named, numeric or positional parameters")
-	ErrAcquireConnNoAddress      = errors.New("icebox: no valid address supplied")
+	ErrBatchInvalid              = errors.New("ranger: batch is invalid. check appended data is correct")
+	ErrBatchAlreadySent          = errors.New("ranger: batch has already been sent")
+	ErrBatchNotSent              = errors.New("ranger: batch not sent yet")
+	ErrAcquireConnTimeout        = errors.New("ranger: acquire conn timeout. you can increase the number of max open conn or the dial timeout")
+	ErrUnsupportedServerRevision = errors.New("ranger: unsupported server revision")
+	ErrBindMixedParamsFormats    = errors.New("ranger [bind]: mixed named, numeric or positional parameters")
+	ErrAcquireConnNoAddress      = errors.New("ranger: no valid address supplied")
 	ErrServerUnexpectedData      = errors.New("code: 101, message: Unexpected packet Data received from client")
 )
 
@@ -1090,7 +1090,7 @@ func (c *connection) serverVersion() (*ServerVersion, error) {
 	// For now, return a default server version
 	// TODO: Implement proper server version retrieval using unified protocol
 	return &ServerVersion{
-		Name:        "Icebox",
+		Name:        "Ranger",
 		Major:       1,
 		Minor:       0,
 		Patch:       0,
@@ -1098,7 +1098,7 @@ func (c *connection) serverVersion() (*ServerVersion, error) {
 		Interface:   "Native",
 		DefaultDB:   "default",
 		Timezone:    "UTC",
-		DisplayName: "Icebox Server",
+		DisplayName: "Ranger Server",
 		Version:     "1.0.0",
 		Protocol:    1,
 	}, nil

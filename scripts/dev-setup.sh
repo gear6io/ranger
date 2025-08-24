@@ -9,8 +9,8 @@ mkdir -p logs
 mkdir -p bin
 
 # Set up development configuration
-if [ ! -f "icebox-server-dev.yml" ]; then
-    cat > icebox-server-dev.yml << 'DEVEOF'
+if [ ! -f "ranger-server-dev.yml" ]; then
+    cat > ranger-server-dev.yml << 'DEVEOF'
 version: "0.1.0"
 
 # HTTP Server Configuration
@@ -36,8 +36,8 @@ logging:
 DEVEOF
 fi
 
-if [ ! -f "icebox-client-dev.yml" ]; then
-    cat > icebox-client-dev.yml << 'DEVEOF'
+if [ ! -f "ranger-client-dev.yml" ]; then
+    cat > ranger-client-dev.yml << 'DEVEOF'
 server:
   address: "localhost:2847"
   timeout: 30s
@@ -53,13 +53,13 @@ fi
 
 echo "✅ Development environment setup complete"
 echo "📝 Configuration files created:"
-echo "   - icebox-server-dev.yml"
-echo "   - icebox-client-dev.yml"
+echo "   - ranger-server-dev.yml"
+echo "   - ranger-client-dev.yml"
 echo ""
 echo "🚀 To start development:"
 echo "   1. ./scripts/build.sh"
-echo "   2. ./bin/icebox-server --config icebox-server-dev.yml"
-echo "   3. ./bin/icebox-client --config icebox-client-dev.yml shell"
+echo "   2. ./bin/ranger-server --config ranger-server-dev.yml"
+echo "   3. ./bin/ranger-client --config ranger-client-dev.yml shell"
 echo ""
 echo "📡 Fixed Network Ports:"
 echo "   - HTTP Server: 2847"

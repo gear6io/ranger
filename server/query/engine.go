@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/query/duckdb"
-	"github.com/TFMV/icebox/server/query/parser"
-	"github.com/TFMV/icebox/server/storage"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/query/duckdb"
+	"github.com/gear6io/ranger/server/query/parser"
+	"github.com/gear6io/ranger/server/storage"
 	"github.com/rs/zerolog"
 )
 
@@ -50,7 +50,7 @@ func NewEngine(cfg *config.Config, storageMgr *storage.Manager, logger zerolog.L
 		EnableQueryLog:     false,
 		EnableOptimization: true,
 		CacheSize:          100,
-		IcebergCatalogName: "icebox_catalog",
+		IcebergCatalogName: "ranger_catalog",
 		// Allow DDL and DML statements for table operations
 		EnableQueryValidation: false, // Disable for testing to allow dynamic SQL
 		AllowedStatements: []string{

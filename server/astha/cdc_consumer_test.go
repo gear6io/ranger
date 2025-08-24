@@ -3,8 +3,8 @@ package astha
 import (
 	"testing"
 
-	"github.com/TFMV/icebox/server/metadata/registry"
-	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
+	"github.com/gear6io/ranger/server/metadata/registry"
+	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
 	"github.com/stretchr/testify/assert"
 )
 

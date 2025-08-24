@@ -3,9 +3,9 @@ package gateway
 import (
 	"testing"
 
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/query"
-	"github.com/TFMV/icebox/server/storage"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/query"
+	"github.com/gear6io/ranger/server/storage"
 	"github.com/rs/zerolog"
 )
 
@@ -14,7 +14,7 @@ func TestNewGateway(t *testing.T) {
 	cfg := &config.Config{
 		Log: config.LogConfig{Level: "info"},
 		Storage: config.StorageConfig{
-			DataPath: ".icebox/warehouse",
+			DataPath: ".ranger/warehouse",
 			Catalog: config.CatalogConfig{
 				Type: "json",
 			},

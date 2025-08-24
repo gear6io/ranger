@@ -3,12 +3,12 @@ package signals
 import (
 	"testing"
 
-	"github.com/TFMV/icebox/server/protocols/native/protocol"
+	"github.com/gear6io/ranger/server/protocols/native/protocol"
 )
 
 func TestServerHello(t *testing.T) {
 	// Test creating a new server hello
-	hello := NewServerHello("Icebox Server", "UTC", "Icebox Database Server")
+	hello := NewServerHello("Ranger Server", "UTC", "Ranger Database Server")
 
 	// Test Type method
 	if hello.Type() != protocol.ServerHello {
@@ -16,7 +16,7 @@ func TestServerHello(t *testing.T) {
 	}
 
 	// Test Size method
-	expectedSize := 4 + len("Icebox Server") + 1 + 1 + 8 + 4 + len("UTC") + 4 + len("Icebox Database Server") + 8
+	expectedSize := 4 + len("Ranger Server") + 1 + 1 + 8 + 4 + len("UTC") + 4 + len("Ranger Database Server") + 8
 	if hello.Size() != expectedSize {
 		t.Errorf("Expected Size() to return %d, got %d", expectedSize, hello.Size())
 	}

@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/paths"
-	"github.com/TFMV/icebox/server/storage/parquet"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/paths"
+	"github.com/gear6io/ranger/server/storage/parquet"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"

@@ -1,6 +1,6 @@
 package config
 
-import "github.com/TFMV/icebox/pkg/errors"
+import "github.com/gear6io/ranger/pkg/errors"
 
 // Config-specific error codes
 var (

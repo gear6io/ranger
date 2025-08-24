@@ -20,7 +20,7 @@ storage:
   metadata:
     type: "sqlite"
     path: "data/metadata.db"
-    # Internal metadata will be automatically stored at {data_path}/.ranger/metadata.db
+    # Internal metadata will be automatically stored at {data_path}/.metadata/metadata.db
 
 query:
   engine: "duckdb"

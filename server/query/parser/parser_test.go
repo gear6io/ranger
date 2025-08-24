@@ -1,5 +1,5 @@
 // Package parser tests
-// Icebox SQL parser tests
+// Ranger SQL parser tests
 // Copyright (C) Alex Gaetano Padula
 //
 // This program is free software: you can redistribute it and/or modify

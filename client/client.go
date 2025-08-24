@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/TFMV/icebox/client/config"
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/pkg/sdk"
+	"github.com/gear6io/ranger/client/config"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/pkg/sdk"
 	"github.com/rs/zerolog"
 )
 
-// Client represents the main icebox client
+// Client represents the main data lakehouse client
 type Client struct {
 	config    *config.Config
 	sdkClient *sdk.Client
@@ -38,7 +38,7 @@ type Column struct {
 	Type string `json:"type"`
 }
 
-// New creates a new icebox client
+// New creates a new data lakehouse client
 func New(cfg *config.Config, logger zerolog.Logger) (*Client, error) {
 	// Create SDK client options
 	options := &sdk.Options{
@@ -75,7 +75,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Client, error) {
 
 // Connect establishes a connection to the server
 func (c *Client) Connect(ctx context.Context) error {
-	c.logger.Debug().Msg("Connecting to icebox server")
+	c.logger.Debug().Msg("Connecting to data lakehouse server")
 
 	// Test connection using ping
 	if err := c.sdkClient.Ping(ctx); err != nil {
@@ -83,7 +83,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 
 	c.connected = true
-	c.logger.Info().Msg("Connected to icebox server")
+	c.logger.Info().Msg("Connected to data lakehouse server")
 	return nil
 }
 

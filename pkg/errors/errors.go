@@ -94,8 +94,8 @@ func Newf(code Code, format string, args ...interface{}) *Error {
 //	)
 func AddContext(err error, key string, value interface{}) *Error {
 	// If it's already our Error type, add context to it
-	if iceboxErr, ok := err.(*Error); ok {
-		return iceboxErr.AddContext(key, fmt.Sprintf("%v", value))
+	if rangerErr, ok := err.(*Error); ok {
+		return rangerErr.AddContext(key, fmt.Sprintf("%v", value))
 	}
 
 	// For standard errors, create a new error with the context

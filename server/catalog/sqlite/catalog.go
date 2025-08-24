@@ -12,14 +12,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	catalogshared "github.com/TFMV/icebox/server/catalog/shared"
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/paths"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/catalog"
 	icebergio "github.com/apache/iceberg-go/io"
 	"github.com/apache/iceberg-go/table"
+	"github.com/gear6io/ranger/pkg/errors"
+	catalogshared "github.com/gear6io/ranger/server/catalog/shared"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/paths"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -63,7 +63,7 @@ func NewCatalog(cfg *config.Config, pathManager paths.PathManager) (*Catalog, er
 	// Create a local FileIO implementation for iceberg-go compatibility
 	fileIO := icebergio.LocalFS{}
 
-	return NewCatalogWithIO("icebox-sqlite-catalog", catalogURI, db, fileIO, pathManager, cfg)
+	return NewCatalogWithIO("ranger-sqlite-catalog", catalogURI, db, fileIO, pathManager, cfg)
 }
 
 // NewCatalogWithIO creates a new SQLite-based catalog with custom file IO
@@ -190,7 +190,7 @@ func (c *Catalog) CreateTable(ctx context.Context, identifier table.Identifier, 
 
 	// Set default properties
 	properties["format-version"] = "2"
-	properties["created-by"] = "icebox-catalog"
+	properties["created-by"] = "ranger-catalog"
 
 	// Apply create table options
 	// Note: The current iceberg-go API doesn't expose option application directly

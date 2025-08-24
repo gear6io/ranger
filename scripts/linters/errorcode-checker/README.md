@@ -1,6 +1,6 @@
-# ErrorCode Checker Tool
+# Error Code Checker
 
-A custom Go tool that checks for unused ErrorCode variables and forbidden error patterns in the Icebox project.
+A custom Go tool that checks for unused ErrorCode variables and forbidden error patterns in the Data Lakehouse Platform.
 
 ## Features
 

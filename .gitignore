@@ -7,9 +7,9 @@
 *.dll
 *.so
 *.dylib
-icebox
-icebox-client
-icebox-server
+ranger
+ranger-client
+ranger-server
 native_client
 clickhouse_example
 

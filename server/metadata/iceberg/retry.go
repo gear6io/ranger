@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
 	"github.com/rs/zerolog"
 )
 

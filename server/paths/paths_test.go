@@ -16,9 +16,9 @@ func TestPathManager(t *testing.T) {
 		assert.Equal(t, "/tmp/test", pm.GetBasePath())
 		assert.Equal(t, "/tmp/test/catalog", pm.GetCatalogPath())
 		assert.Equal(t, "/tmp/test/data", pm.GetDataPath())
-		assert.Equal(t, "/tmp/test/.icebox", pm.GetInternalMetadataPath())
-		assert.Equal(t, "/tmp/test/.icebox/metadata.db", pm.GetInternalMetadataDBPath())
-		assert.Equal(t, "/tmp/test/.icebox/migrations", pm.GetMigrationsPath())
+		assert.Equal(t, "/tmp/test/.ranger", pm.GetInternalMetadataPath())
+		assert.Equal(t, "/tmp/test/.ranger/metadata.db", pm.GetInternalMetadataDBPath())
+		assert.Equal(t, "/tmp/test/.ranger/migrations", pm.GetMigrationsPath())
 	})
 
 	t.Run("TablePaths", func(t *testing.T) {

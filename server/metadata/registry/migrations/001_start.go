@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
 	"github.com/uptrace/bun"
 )
 
@@ -235,7 +235,7 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	if _, err := tx.ExecContext(ctx, `
 			INSERT OR IGNORE INTO users (username, email, display_name, is_active, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?)
-		`, "system", "system@icebox.local", "System User", true, now, now); err != nil {
+		`, "system", "system@ranger.local", "System User", true, now, now); err != nil {
 		return errors.New(MigrationDataInsertionFailed, "failed to insert default user", err)
 	}
 

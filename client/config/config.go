@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/TFMV/icebox/pkg/errors"
+	"github.com/gear6io/ranger/pkg/errors"
 	"gopkg.in/yaml.v3"
 )
 
@@ -120,22 +120,22 @@ func (c *Config) Save(path string) error {
 // findConfigFile searches for configuration file
 func findConfigFile() string {
 	// Check current directory
-	if _, err := os.Stat("icebox-client.yml"); err == nil {
-		return "icebox-client.yml"
+	if _, err := os.Stat("ranger-client.yml"); err == nil {
+		return "ranger-client.yml"
 	}
 
 	// Check home directory
 	homeDir, err := os.UserHomeDir()
 	if err == nil {
-		configPath := filepath.Join(homeDir, ".icebox", "icebox-client.yml")
+		configPath := filepath.Join(homeDir, ".ranger", "ranger-client.yml")
 		if _, err := os.Stat(configPath); err == nil {
 			return configPath
 		}
 	}
 
-	// Check /etc/icebox
-	if _, err := os.Stat("/etc/icebox/icebox-client.yml"); err == nil {
-		return "/etc/icebox/icebox-client.yml"
+	// Check /etc/ranger
+	if _, err := os.Stat("/etc/ranger/ranger-client.yml"); err == nil {
+		return "/etc/ranger/ranger-client.yml"
 	}
 
 	return ""
