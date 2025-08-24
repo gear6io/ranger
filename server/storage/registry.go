@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/storage/filesystem"
-	"github.com/TFMV/icebox/server/storage/memory"
-	"github.com/TFMV/icebox/server/storage/s3"
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/rs/zerolog"
+)
+
+// Package-specific error codes for storage registry
+var (
+	StorageRegistryEngineNotFound = errors.MustNewCode("storage.engine_not_found")
 )
 
 // StorageEngineRegistry manages multiple storage engines
@@ -20,57 +22,12 @@ type StorageEngineRegistry struct {
 }
 
 // NewStorageEngineRegistry creates a new storage engine registry
-func NewStorageEngineRegistry(cfg *config.Config, logger zerolog.Logger) (*StorageEngineRegistry, error) {
-	registry := &StorageEngineRegistry{
+func NewStorageEngineRegistry(logger zerolog.Logger) *StorageEngineRegistry {
+	return &StorageEngineRegistry{
 		engines:       make(map[string]FileSystem),
-		defaultEngine: filesystem.Type, // Default fallback
+		defaultEngine: "",
 		logger:        logger,
 	}
-
-	// Initialize all available storage engines
-	if err := registry.initializeEngines(cfg); err != nil {
-		return nil, fmt.Errorf("failed to initialize storage engines: %w", err)
-	}
-
-	logger.Info().
-		Str("default_engine", registry.defaultEngine).
-		Int("total_engines", len(registry.engines)).
-		Msg("Storage engine registry initialized")
-
-	return registry, nil
-}
-
-// initializeEngines initializes all available storage engines
-func (r *StorageEngineRegistry) initializeEngines(cfg *config.Config) error {
-	// Initialize filesystem engine
-	fsEngine := filesystem.NewFileStorage()
-	r.RegisterEngine(filesystem.Type, fsEngine)
-
-	// Initialize memory engine
-	memEngine, err := memory.NewMemoryStorage()
-	if err != nil {
-		return fmt.Errorf("failed to initialize memory engine: %w", err)
-	}
-	r.RegisterEngine(memory.Type, memEngine)
-
-	// Initialize S3 engine (if credentials are available)
-	if s3Engine, err := s3.NewS3FileSystem(cfg); err == nil {
-		r.RegisterEngine(s3.Type, s3Engine)
-		r.logger.Info().Msg("S3 storage engine initialized successfully")
-	} else {
-		r.logger.Warn().Err(err).Msg("S3 storage engine not available (credentials missing or invalid)")
-	}
-
-	// Set default engine based on available engines
-	if _, exists := r.engines[filesystem.Type]; exists {
-		r.defaultEngine = filesystem.Type
-	} else if _, exists := r.engines[memory.Type]; exists {
-		r.defaultEngine = memory.Type
-	} else {
-		return fmt.Errorf("no storage engines available")
-	}
-
-	return nil
 }
 
 // RegisterEngine registers a storage engine with the registry
@@ -89,7 +46,7 @@ func (r *StorageEngineRegistry) GetEngine(engineName string) (FileSystem, error)
 		return engine, nil
 	}
 
-	return nil, fmt.Errorf("storage engine '%s' not found", engineName)
+	return nil, errors.New(StorageRegistryEngineNotFound, "storage engine not found", nil).AddContext("engine_name", engineName)
 }
 
 // GetDefaultEngine returns the default storage engine

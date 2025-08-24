@@ -6,6 +6,7 @@ import (
 	"net"
 	"sync"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/query"
 	"github.com/rs/zerolog"
@@ -47,7 +48,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", addr, err)
+		return errors.New(ErrServerListenFailed, "failed to listen on address", err).AddContext("address", addr)
 	}
 	s.server = listener
 

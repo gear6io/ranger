@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/TFMV/icebox/server/catalog/shared"
 	"github.com/TFMV/icebox/server/config"
+	"github.com/TFMV/icebox/server/paths"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
 	"github.com/stretchr/testify/assert"
@@ -25,7 +25,7 @@ func TestNewCatalog(t *testing.T) {
 	cfg.Storage.Catalog.Type = "rest"
 
 	// Create path manager
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/icebox_test"}
+	pathManager := &paths.MockPathManager{BasePath: "/tmp/icebox_test"}
 
 	// Create catalog
 	catalog, err := NewCatalog(cfg, pathManager)
@@ -49,7 +49,7 @@ func TestNewCatalogWithInvalidConfig(t *testing.T) {
 		},
 	}
 
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := &paths.MockPathManager{BasePath: "/tmp/test"}
 
 	_, err := NewCatalog(cfg, pathManager)
 	if err == nil {
@@ -69,7 +69,7 @@ func TestNewCatalogWithInvalidURI(t *testing.T) {
 	}
 
 	// Create path manager that returns invalid URI
-	pathManager := &shared.MockPathManager{BasePath: ""}
+	pathManager := &paths.MockPathManager{BasePath: ""}
 
 	_, err := NewCatalog(cfg, pathManager)
 	if err == nil {
@@ -83,7 +83,7 @@ func TestNewCatalogWithStoragePath(t *testing.T) {
 	cfg := createTestConfig(t)
 	cfg.Storage.DataPath = "/tmp/test-warehouse"
 
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test-warehouse"}
+	pathManager := &paths.MockPathManager{BasePath: "/tmp/test-warehouse"}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
@@ -101,7 +101,7 @@ func TestNewCatalogWithOAuthConfig(t *testing.T) {
 
 	cfg := createTestConfig(t)
 
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := &paths.MockPathManager{BasePath: "/tmp/test"}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
@@ -118,7 +118,7 @@ func TestNewCatalogWithSigV4Config(t *testing.T) {
 	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
 
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := &paths.MockPathManager{BasePath: "/tmp/test"}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
@@ -135,7 +135,7 @@ func TestNewCatalogWithTLSConfig(t *testing.T) {
 	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
 
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := &paths.MockPathManager{BasePath: "/tmp/test"}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
@@ -152,7 +152,7 @@ func TestNewCatalogWithAllConfigs(t *testing.T) {
 	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
 
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := &paths.MockPathManager{BasePath: "/tmp/test"}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
@@ -169,7 +169,7 @@ func TestNewCatalogWithInvalidAuthURL(t *testing.T) {
 	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
 
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := &paths.MockPathManager{BasePath: "/tmp/test"}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
@@ -186,7 +186,7 @@ func TestCatalogType(t *testing.T) {
 	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
 
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := &paths.MockPathManager{BasePath: "/tmp/test"}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
@@ -205,7 +205,7 @@ func TestCatalogName(t *testing.T) {
 	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
 
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := &paths.MockPathManager{BasePath: "/tmp/test"}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {
@@ -226,7 +226,7 @@ func TestCatalogInterfaceCompliance(t *testing.T) {
 	t.Skip("Skipping REST catalog tests - requires running REST catalog server")
 
 	cfg := createTestConfig(t)
-	pathManager := &shared.MockPathManager{BasePath: "/tmp/test"}
+	pathManager := &paths.MockPathManager{BasePath: "/tmp/test"}
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	if err != nil {

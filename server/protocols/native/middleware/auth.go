@@ -4,11 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/rs/zerolog"
 )
 
@@ -41,6 +41,10 @@ type AuthMiddleware struct {
 	tokenCache    map[string]*AuthResult
 	tokenCacheMu  sync.RWMutex
 	tokenCacheTTL time.Duration
+
+	// Cleanup control
+	stopCleanup chan struct{}
+	wg          sync.WaitGroup
 }
 
 // NewAuthMiddleware creates a new authentication middleware
@@ -53,10 +57,12 @@ func NewAuthMiddleware(provider AuthProvider, enabled, requireAuth bool, tokenTi
 		tokenTimeout:  tokenTimeout,
 		tokenCache:    make(map[string]*AuthResult),
 		tokenCacheTTL: cacheTTL,
+		stopCleanup:   make(chan struct{}),
 	}
 
 	// Start token cache cleanup
 	if enabled {
+		auth.wg.Add(1)
 		go auth.tokenCacheCleanup()
 	}
 
@@ -99,7 +105,7 @@ func (a *AuthMiddleware) OnRead(ctx context.Context, connCtx *ConnectionContext)
 
 	// Require authentication for other states
 	if a.requireAuth && connCtx.State != StateAuthenticated {
-		return fmt.Errorf("authentication required")
+		return errors.New(ErrAuthenticationRequired, "authentication required", nil)
 	}
 
 	return nil
@@ -118,7 +124,7 @@ func (a *AuthMiddleware) OnWrite(ctx context.Context, connCtx *ConnectionContext
 
 	// Require authentication for other states
 	if a.requireAuth && connCtx.State != StateAuthenticated {
-		return fmt.Errorf("authentication required")
+		return errors.New(ErrAuthenticationRequired, "authentication required", nil)
 	}
 
 	return nil
@@ -151,13 +157,13 @@ func (a *AuthMiddleware) OnQuery(ctx context.Context, connCtx *ConnectionContext
 
 	// Require authentication for queries
 	if a.requireAuth && connCtx.State != StateAuthenticated {
-		return fmt.Errorf("authentication required for query execution")
+		return errors.New(ErrAuthenticationRequired, "authentication required for query execution", nil)
 	}
 
 	// Check if query requires special permissions
 	if a.requiresSpecialPermissions(query) {
 		if !a.hasPermission(connCtx, "admin") {
-			return fmt.Errorf("insufficient permissions for this query")
+			return errors.New(ErrInsufficientPermissions, "insufficient permissions for this query", nil)
 		}
 	}
 
@@ -180,12 +186,12 @@ func (a *AuthMiddleware) Authenticate(ctx context.Context, connCtx *ConnectionCo
 	result, err := a.provider.Authenticate(ctx, username, password, database)
 	if err != nil {
 		connCtx.State = StateHandshaking
-		return fmt.Errorf("authentication failed: %w", err)
+		return errors.New(ErrAuthenticationFailed, "authentication failed", err)
 	}
 
 	if !result.Authenticated {
 		connCtx.State = StateHandshaking
-		return fmt.Errorf("invalid credentials")
+		return errors.New(ErrInvalidCredentials, "invalid credentials", nil)
 	}
 
 	// Set connection context
@@ -229,11 +235,11 @@ func (a *AuthMiddleware) ValidateToken(ctx context.Context, connCtx *ConnectionC
 	// Validate with provider
 	result, err := a.provider.ValidateToken(ctx, token)
 	if err != nil {
-		return fmt.Errorf("token validation failed: %w", err)
+		return errors.New(ErrTokenValidationFailed, "token validation failed", err)
 	}
 
 	if !result.Authenticated {
-		return fmt.Errorf("invalid token")
+		return errors.New(ErrInvalidToken, "invalid token", nil)
 	}
 
 	// Set connection context
@@ -299,20 +305,36 @@ func (a *AuthMiddleware) removeCachedAuthResult(token string) {
 
 // tokenCacheCleanup periodically cleans up expired tokens
 func (a *AuthMiddleware) tokenCacheCleanup() {
+	defer a.wg.Done()
+
 	ticker := time.NewTicker(a.tokenCacheTTL / 2)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		a.tokenCacheMu.Lock()
-		now := time.Now()
+	for {
+		select {
+		case <-ticker.C:
+			a.tokenCacheMu.Lock()
+			now := time.Now()
 
-		for token, result := range a.tokenCache {
-			if now.After(result.ExpiresAt) {
-				delete(a.tokenCache, token)
+			for token, result := range a.tokenCache {
+				if now.After(result.ExpiresAt) {
+					delete(a.tokenCache, token)
+				}
 			}
+			a.tokenCacheMu.Unlock()
+		case <-a.stopCleanup:
+			return
 		}
-		a.tokenCacheMu.Unlock()
 	}
+}
+
+// Close stops the auth middleware and cleans up resources
+func (a *AuthMiddleware) Close() error {
+	if a.enabled {
+		close(a.stopCleanup)
+		a.wg.Wait()
+	}
+	return nil
 }
 
 // generateConnectionID generates a unique connection ID

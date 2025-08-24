@@ -20,45 +20,45 @@ var (
 
 // Helper functions for common catalog errors
 func NewCatalogNotFound(message string) *errors.Error {
-	return errors.New(CatalogNotFound, message)
+	return errors.New(CatalogNotFound, message, nil)
 }
 
 func NewCatalogConcurrentModification(message string) *errors.Error {
-	return errors.New(CatalogConcurrentMod, message)
+	return errors.New(CatalogConcurrentMod, message, nil)
 }
 
 func NewCatalogAlreadyExists(message string) *errors.Error {
-	return errors.New(CatalogAlreadyExists, message)
+	return errors.New(CatalogAlreadyExists, message, nil)
 }
 
 func NewCatalogValidation(field, message string) *errors.Error {
-	err := errors.New(CatalogValidation, message)
+	err := errors.New(CatalogValidation, message, nil)
 	err.AddContext("field", field)
 	return err
 }
 
 func NewCatalogUnsupported(message string) *errors.Error {
-	return errors.New(CatalogUnsupported, message)
+	return errors.New(CatalogUnsupported, message, nil)
 }
 
 func NewCatalogInvalidInput(field, message string) *errors.Error {
-	err := errors.New(CatalogInvalidInput, message)
+	err := errors.New(CatalogInvalidInput, message, nil)
 	err.AddContext("field", field)
 	return err
 }
 
 func NewCatalogInternal(message string) *errors.Error {
-	return errors.New(CatalogInternal, message)
+	return errors.New(CatalogInternal, message, nil)
 }
 
 func NewCatalogNamespaceEmpty(message string) *errors.Error {
-	return errors.New(CatalogNamespaceEmpty, message)
+	return errors.New(CatalogNamespaceEmpty, message, nil)
 }
 
 func NewCatalogTableNotFound(message string) *errors.Error {
-	return errors.New(CatalogTableNotFound, message)
+	return errors.New(CatalogTableNotFound, message, nil)
 }
 
 func NewCatalogViewNotFound(message string) *errors.Error {
-	return errors.New(CatalogViewNotFound, message)
+	return errors.New(CatalogViewNotFound, message, nil)
 }

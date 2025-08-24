@@ -3,7 +3,6 @@ package storage
 import (
 	"testing"
 
-	"github.com/TFMV/icebox/server/config"
 	"github.com/TFMV/icebox/server/storage/filesystem"
 	"github.com/TFMV/icebox/server/storage/memory"
 	"github.com/rs/zerolog"
@@ -13,27 +12,36 @@ import (
 
 func TestStorageEngineRegistry(t *testing.T) {
 	// Create test configuration
-	cfg := config.LoadDefaultConfig()
 	logger := zerolog.New(zerolog.NewConsoleWriter()).With().Timestamp().Logger()
 
 	// Create registry
-	registry, err := NewStorageEngineRegistry(cfg, logger)
-	require.NoError(t, err)
+	registry := NewStorageEngineRegistry(logger)
 	require.NotNil(t, registry)
+
+	// Manually register engines for testing
+	fsEngine := &filesystem.FileStorage{} // Mock engine for testing
+	memEngine, err := memory.NewMemoryStorage()
+	require.NoError(t, err)
+
+	registry.RegisterEngine(filesystem.Type, fsEngine)
+	registry.RegisterEngine(memory.Type, memEngine)
+
+	// Set default engine
+	registry.defaultEngine = filesystem.Type
 
 	// Test that engines are available
 	engines := registry.ListEngines()
 	assert.GreaterOrEqual(t, len(engines), 2, "Should have at least filesystem and memory engines")
 
 	// Test filesystem engine
-	fsEngine, err := registry.GetEngine(filesystem.Type)
+	fsEngineInterface, err := registry.GetEngine(filesystem.Type)
 	require.NoError(t, err)
-	assert.NotNil(t, fsEngine)
+	assert.NotNil(t, fsEngineInterface)
 
 	// Test memory engine
-	memEngine, err := registry.GetEngine(memory.Type)
+	memEngineInterface, err := registry.GetEngine(memory.Type)
 	require.NoError(t, err)
-	assert.NotNil(t, memEngine)
+	assert.NotNil(t, memEngineInterface)
 
 	// Test default engine
 	defaultEngine, err := registry.GetDefaultEngine()
@@ -55,16 +63,14 @@ func TestStorageEngineRegistry(t *testing.T) {
 
 func TestStorageEngineRegistryWithInvalidEngine(t *testing.T) {
 	// Create test configuration
-	cfg := config.LoadDefaultConfig()
 	logger := zerolog.New(zerolog.NewConsoleWriter()).With().Timestamp().Logger()
 
 	// Create registry
-	registry, err := NewStorageEngineRegistry(cfg, logger)
-	require.NoError(t, err)
+	registry := NewStorageEngineRegistry(logger)
 
 	// Test getting non-existent engine
 	engine, err := registry.GetEngine("nonexistent")
 	assert.Error(t, err)
 	assert.Nil(t, engine)
-	assert.Contains(t, err.Error(), "storage engine 'nonexistent' not found")
+	assert.Contains(t, err.Error(), "storage engine not found")
 }

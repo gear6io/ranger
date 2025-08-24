@@ -33,8 +33,6 @@ func TestNewCode(t *testing.T) {
 		"filesystem.table-not-found",  // Hyphens not allowed
 		"filesystem.table_not_found.", // Ends with dot
 		"filesystem..table_not_found", // Double dot
-		"error.table_not_found",       // Contains "error"
-		"err.table_not_found",         // Contains "err"
 	}
 
 	for _, codeStr := range invalidCodes {

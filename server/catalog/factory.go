@@ -1,25 +1,26 @@
 package catalog
 
 import (
-	"fmt"
-
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/catalog/json"
 	"github.com/TFMV/icebox/server/catalog/rest"
-	"github.com/TFMV/icebox/server/catalog/shared"
 	"github.com/TFMV/icebox/server/catalog/sqlite"
 	"github.com/TFMV/icebox/server/config"
+	"github.com/TFMV/icebox/server/paths"
+	"github.com/TFMV/icebox/server/shared"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 )
 
 // CatalogInterface defines the common interface for all catalog implementations
 type CatalogInterface interface {
 	icebergcatalog.Catalog
+	shared.Component
 	Name() string
 	Close() error
 }
 
 // NewCatalog creates a new catalog based on the configuration and path manager
-func NewCatalog(cfg *config.Config, pathManager shared.PathManager) (CatalogInterface, error) {
+func NewCatalog(cfg *config.Config, pathManager paths.PathManager) (CatalogInterface, error) {
 	catalogType := cfg.GetCatalogType()
 
 	switch catalogType {
@@ -30,6 +31,6 @@ func NewCatalog(cfg *config.Config, pathManager shared.PathManager) (CatalogInte
 	case "json":
 		return json.NewCatalog(cfg, pathManager)
 	default:
-		return nil, fmt.Errorf("unsupported catalog type: %s", catalogType)
+		return nil, errors.New(ErrUnsupportedCatalogType, "unsupported catalog type", nil).AddContext("catalog_type", catalogType)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"gopkg.in/yaml.v3"
 )
 
@@ -73,17 +74,17 @@ func LoadDefaultConfig() *Config {
 func LoadConfig(filename string) (*Config, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+		return nil, errors.New(ErrConfigFileReadFailed, "failed to read config file", err)
 	}
 
 	var config Config
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+		return nil, errors.New(ErrConfigFileParseFailed, "failed to parse config file", err)
 	}
 
 	// Validate the loaded configuration
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("configuration validation failed: %w", err)
+		return nil, errors.New(ErrConfigValidationFailed, "configuration validation failed", err)
 	}
 
 	// Log the data path being used
@@ -98,11 +99,11 @@ func LoadConfig(filename string) (*Config, error) {
 func SaveConfig(config *Config, filename string) error {
 	data, err := yaml.Marshal(config)
 	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
+		return errors.New(ErrConfigFileMarshalFailed, "failed to marshal config", err)
 	}
 
 	if err := os.WriteFile(filename, data, 0644); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
+		return errors.New(ErrConfigFileWriteFailed, "failed to write config file", err)
 	}
 
 	return nil
@@ -112,7 +113,7 @@ func SaveConfig(config *Config, filename string) error {
 func (c *Config) Validate() error {
 	// Validate storage configuration
 	if err := c.Storage.Validate(); err != nil {
-		return fmt.Errorf("storage validation failed: %w", err)
+		return errors.New(ErrStorageValidationFailed, "storage validation failed", err)
 	}
 
 	// Port validation is no longer needed since ports are fixed
@@ -124,17 +125,17 @@ func (c *Config) Validate() error {
 func (s *StorageConfig) Validate() error {
 	// Validate catalog configuration
 	if err := s.Catalog.Validate(); err != nil {
-		return fmt.Errorf("catalog validation failed: %w", err)
+		return errors.New(ErrCatalogValidationFailed, "catalog validation failed", err)
 	}
 
 	// Validate data storage configuration
 	if err := s.Data.Validate(); err != nil {
-		return fmt.Errorf("data storage validation failed: %w", err)
+		return errors.New(ErrDataStorageValidationFailed, "data storage validation failed", err)
 	}
 
 	// Validate data_path
 	if s.DataPath == "" {
-		return fmt.Errorf("data_path is required in storage configuration")
+		return errors.New(ErrDataPathRequired, "data_path is required in storage configuration", nil)
 	}
 
 	return nil
@@ -143,7 +144,7 @@ func (s *StorageConfig) Validate() error {
 // Validate validates the catalog configuration
 func (c *CatalogConfig) Validate() error {
 	if c.Type == "" {
-		return fmt.Errorf("catalog type is required")
+		return errors.New(ErrCatalogTypeRequired, "catalog type is required", nil)
 	}
 
 	return nil

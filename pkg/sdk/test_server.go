@@ -55,13 +55,18 @@ func NewTestServer(t *testing.T) *TestServer {
 // Start starts the test server
 func (s *TestServer) Start() error {
 	ctx := context.Background()
-	return s.server.Start(ctx)
+	if err := s.server.Start(ctx); err != nil {
+		return err
+	}
+
+	// Wait for native server to be ready
+	return s.WaitForReady()
 }
 
 // Stop stops the test server
 func (s *TestServer) Stop() error {
 	if s.server != nil {
-		return s.server.Shutdown()
+		return s.server.Shutdown(context.Background())
 	}
 	return nil
 }

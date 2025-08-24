@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/TFMV/icebox/client"
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/query/parser"
 	"github.com/rs/zerolog"
 )
@@ -27,7 +28,7 @@ func NewQueryCommand(client *client.Client, logger zerolog.Logger) *QueryCommand
 // Execute runs a SQL query
 func (q *QueryCommand) Execute(ctx context.Context, query string) error {
 	if strings.TrimSpace(query) == "" {
-		return fmt.Errorf("query cannot be empty")
+		return errors.New(ErrQueryEmpty, "query cannot be empty", nil)
 	}
 
 	// Auto-append semicolon if missing (internal only)
@@ -54,7 +55,7 @@ func (q *QueryCommand) Execute(ctx context.Context, query string) error {
 	// Execute query via client
 	result, err := q.client.ExecuteQuery(ctx, query)
 	if err != nil {
-		return fmt.Errorf("failed to execute query: %w", err)
+		return errors.New(ErrQueryExecutionFailed, "failed to execute query", err)
 	}
 
 	// Display results
@@ -169,13 +170,13 @@ func (q *QueryCommand) parseAndFormatQuery(query string) (string, error) {
 	// Parse the query
 	ast, err := parser.Parse(query)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse query: %w", err)
+		return "", errors.New(ErrQueryParseFailed, "failed to parse query", err)
 	}
 
 	// Format the query
 	formatted := parser.FormatQuery(ast)
 	if formatted == "" {
-		return "", fmt.Errorf("formatter returned empty string")
+		return "", errors.New(ErrQueryFormatFailed, "formatter returned empty string", nil)
 	}
 
 	return formatted, nil
@@ -184,16 +185,16 @@ func (q *QueryCommand) parseAndFormatQuery(query string) (string, error) {
 // Explain shows query execution plan
 func (q *QueryCommand) Explain(ctx context.Context, query string) error {
 	if strings.TrimSpace(query) == "" {
-		return fmt.Errorf("query cannot be empty")
+		return errors.New(ErrQueryEmpty, "query cannot be empty", nil)
 	}
 
 	q.logger.Debug().Str("query", query).Msg("Explaining SQL query")
 
 	// Execute explain query
-	explainQuery := fmt.Sprintf("EXPLAIN %s", query)
+	explainQuery := "EXPLAIN " + query
 	result, err := q.client.ExecuteQuery(ctx, explainQuery)
 	if err != nil {
-		return fmt.Errorf("failed to explain query: %w", err)
+		return errors.New(ErrQueryExplainFailed, "failed to explain query", err)
 	}
 
 	// Display explain results

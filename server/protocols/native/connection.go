@@ -44,10 +44,13 @@ type ConnectionHandler struct {
 	// Middleware system
 	connCtx    *middleware.ConnectionContext
 	middleware *middleware.Chain
+
+	// Server context for graceful shutdown
+	serverCtx context.Context
 }
 
 // NewConnectionHandler creates a new connection handler
-func NewConnectionHandler(conn net.Conn, queryEngine *query.Engine, logger zerolog.Logger, middlewareChain *middleware.Chain) *ConnectionHandler {
+func NewConnectionHandler(conn net.Conn, queryEngine *query.Engine, logger zerolog.Logger, middlewareChain *middleware.Chain, serverCtx context.Context) *ConnectionHandler {
 	// Create registry and factory
 	registry := protocol.NewRegistry()
 	factory := protocol.NewSignalFactory()
@@ -94,6 +97,7 @@ func NewConnectionHandler(conn net.Conn, queryEngine *query.Engine, logger zerol
 		tables:      make(map[string][][]interface{}),
 		connCtx:     connCtx,
 		middleware:  middlewareChain,
+		serverCtx:   serverCtx,
 	}
 }
 
@@ -120,6 +124,21 @@ func (h *ConnectionHandler) Handle() error {
 	h.logger.Debug().Str("client", h.conn.RemoteAddr().String()).Msg("New client connected")
 
 	for {
+		// Check if server is shutting down
+		select {
+		case <-h.serverCtx.Done():
+			h.logger.Debug().Str("client", h.conn.RemoteAddr().String()).Msg("Server shutting down, closing connection")
+			return nil
+		default:
+			// Continue with normal operation
+		}
+
+		// Set a read timeout to allow graceful shutdown
+		if err := h.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+			h.logger.Error().Err(err).Msg("Failed to set read deadline")
+			return err
+		}
+
 		// Notify middleware before read
 		if err := h.middleware.ExecuteRead(context.Background(), h.connCtx); err != nil {
 			h.logger.Error().Err(err).Msg("Middleware rejected read operation")
@@ -132,6 +151,19 @@ func (h *ConnectionHandler) Handle() error {
 			if err == io.EOF {
 				h.logger.Debug().Str("client", h.conn.RemoteAddr().String()).Msg("Client disconnected")
 				return nil
+			}
+
+			// Check for timeout errors (these are expected during shutdown)
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				// This is a timeout, check if server is shutting down
+				select {
+				case <-h.serverCtx.Done():
+					h.logger.Debug().Str("client", h.conn.RemoteAddr().String()).Msg("Server shutting down, closing connection")
+					return nil
+				default:
+					// Not shutting down, continue with next iteration
+					continue
+				}
 			}
 
 			// Notify middleware of read error

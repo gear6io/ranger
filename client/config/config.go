@@ -1,11 +1,12 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"gopkg.in/yaml.v3"
 )
 
@@ -91,12 +92,12 @@ func Load() (*Config, error) {
 func LoadFromFile(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+		return nil, errors.New(ErrConfigFileReadFailed, "failed to read config file", err)
 	}
 
 	cfg := DefaultConfig()
 	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+		return nil, errors.New(ErrConfigFileParseFailed, "failed to parse config file", err)
 	}
 
 	return cfg, nil
@@ -106,11 +107,11 @@ func LoadFromFile(path string) (*Config, error) {
 func (c *Config) Save(path string) error {
 	data, err := yaml.Marshal(c)
 	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
+		return errors.New(ErrConfigFileMarshalFailed, "failed to marshal config", err)
 	}
 
 	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
+		return errors.New(ErrConfigFileWriteFailed, "failed to write config file", err)
 	}
 
 	return nil
@@ -143,11 +144,11 @@ func findConfigFile() string {
 // Validate validates the configuration
 func (c *Config) Validate() error {
 	if c.Server.Address == "" {
-		return fmt.Errorf("server address cannot be empty")
+		return errors.New(ErrServerAddressEmpty, "server address cannot be empty", nil)
 	}
 
 	if c.Server.Port <= 0 || c.Server.Port > 65535 {
-		return fmt.Errorf("invalid server port: %d", c.Server.Port)
+		return errors.New(ErrServerPortInvalid, "invalid server port", nil).AddContext("port", c.Server.Port)
 	}
 
 	return nil
@@ -159,5 +160,5 @@ func (c *Config) GetServerURL() string {
 	if c.SSL.Mode != "disable" {
 		protocol = "https"
 	}
-	return fmt.Sprintf("%s://%s:%d", protocol, c.Server.Address, c.Server.Port)
+	return protocol + "://" + c.Server.Address + ":" + strconv.Itoa(c.Server.Port)
 }

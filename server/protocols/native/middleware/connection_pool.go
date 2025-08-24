@@ -2,11 +2,11 @@ package middleware
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/rs/zerolog"
 )
 
@@ -26,6 +26,7 @@ type ConnectionPool struct {
 
 	// Cleanup
 	stopCleanup chan struct{}
+	wg          sync.WaitGroup
 }
 
 // NewConnectionPool creates a new connection pool
@@ -40,6 +41,7 @@ func NewConnectionPool(maxConnections int, idleTimeout, cleanupInterval time.Dur
 	}
 
 	// Start cleanup goroutine
+	pool.wg.Add(1)
 	go pool.cleanupRoutine()
 
 	return pool
@@ -105,7 +107,7 @@ func (p *ConnectionPool) handleConnection(connCtx *ConnectionContext) error {
 			Int("active_connections", len(p.activeConnections)).
 			Msg("Connection rejected - pool at capacity")
 
-		return fmt.Errorf("connection pool at capacity (%d)", p.maxConnections)
+		return errors.New(ErrConnectionPoolAtCapacity, "connection pool at capacity", nil).AddContext("max_connections", p.maxConnections)
 	}
 
 	// Add connection to pool
@@ -146,6 +148,8 @@ func (p *ConnectionPool) handleDisconnection(connCtx *ConnectionContext) error {
 
 // cleanupRoutine periodically removes idle connections
 func (p *ConnectionPool) cleanupRoutine() {
+	defer p.wg.Done()
+
 	ticker := time.NewTicker(p.cleanupInterval)
 	defer ticker.Stop()
 
@@ -207,13 +211,19 @@ func (p *ConnectionPool) GetStats() map[string]interface{} {
 func (p *ConnectionPool) Close() error {
 	close(p.stopCleanup)
 
+	// Get stats before acquiring the write lock to avoid deadlock
+	stats := p.GetStats()
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	// Log final stats
 	p.logger.Info().
-		Interface("final_stats", p.GetStats()).
+		Interface("final_stats", stats).
 		Msg("Connection pool closed")
+
+	// Wait for cleanup goroutine to finish
+	p.wg.Wait()
 
 	return nil
 }

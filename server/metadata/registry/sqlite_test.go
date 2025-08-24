@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -198,7 +199,12 @@ func TestTableMetadataOperations(t *testing.T) {
 		assert.Equal(t, "metatable", metadata.Name)
 		assert.Equal(t, schema, metadata.Schema)
 		assert.Equal(t, "parquet", metadata.StorageEngine)
-		assert.Equal(t, engineConfig, metadata.EngineConfig)
+
+		// EngineConfig is stored as JSON string, so we need to unmarshal it for comparison
+		var storedConfig map[string]interface{}
+		err = json.Unmarshal([]byte(metadata.EngineConfig), &storedConfig)
+		require.NoError(t, err)
+		assert.Equal(t, engineConfig, storedConfig)
 	})
 
 	t.Run("LoadTableMetadata", func(t *testing.T) {

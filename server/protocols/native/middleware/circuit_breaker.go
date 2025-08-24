@@ -2,11 +2,11 @@ package middleware
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/rs/zerolog"
 )
 
@@ -54,6 +54,10 @@ type CircuitBreaker struct {
 	// Query tracking per connection
 	connectionQueries map[string]int64
 	connectionMu      sync.RWMutex
+
+	// Cleanup control
+	stopMonitor chan struct{}
+	wg          sync.WaitGroup
 }
 
 // NewCircuitBreaker creates a new circuit breaker
@@ -65,9 +69,11 @@ func NewCircuitBreaker(thresholds ResourceThresholds, failureThreshold int, reco
 		recoveryTimeout:   recoveryTimeout,
 		logger:            logger,
 		connectionQueries: make(map[string]int64),
+		stopMonitor:       make(chan struct{}),
 	}
 
 	// Start monitoring goroutine
+	cb.wg.Add(1)
 	go cb.monitor()
 
 	return cb
@@ -91,7 +97,7 @@ func (cb *CircuitBreaker) OnEvent(ctx context.Context, connCtx *ConnectionContex
 // OnRead allows reads if circuit is not open
 func (cb *CircuitBreaker) OnRead(ctx context.Context, connCtx *ConnectionContext) error {
 	if cb.isCircuitOpen() {
-		return fmt.Errorf("circuit breaker is open - service temporarily unavailable")
+		return errors.New(ErrCircuitBreakerOpen, "circuit breaker is open - service temporarily unavailable", nil)
 	}
 	return nil
 }
@@ -99,7 +105,7 @@ func (cb *CircuitBreaker) OnRead(ctx context.Context, connCtx *ConnectionContext
 // OnWrite allows writes if circuit is not open
 func (cb *CircuitBreaker) OnWrite(ctx context.Context, connCtx *ConnectionContext) error {
 	if cb.isCircuitOpen() {
-		return fmt.Errorf("circuit breaker is open - service temporarily unavailable")
+		return errors.New(ErrCircuitBreakerOpen, "circuit breaker is open - service temporarily unavailable", nil)
 	}
 	return nil
 }
@@ -120,7 +126,7 @@ func (cb *CircuitBreaker) OnError(ctx context.Context, connCtx *ConnectionContex
 func (cb *CircuitBreaker) OnQuery(ctx context.Context, connCtx *ConnectionContext, query string) error {
 	// Check circuit state
 	if cb.isCircuitOpen() {
-		return fmt.Errorf("circuit breaker is open - service temporarily unavailable")
+		return errors.New(ErrCircuitBreakerOpen, "circuit breaker is open - service temporarily unavailable", nil)
 	}
 
 	// Check concurrent query limit per connection
@@ -200,7 +206,7 @@ func (cb *CircuitBreaker) onResourceExceeded(connCtx *ConnectionContext, err err
 	// Open circuit immediately for resource violations
 	cb.openCircuit()
 
-	return fmt.Errorf("resource limits exceeded: %w", err)
+	return errors.New(ErrResourceLimitsExceeded, "resource limits exceeded", err)
 }
 
 // checkConcurrentQueries checks if connection has exceeded query limit
@@ -210,7 +216,7 @@ func (cb *CircuitBreaker) checkConcurrentQueries(connectionID string) error {
 	cb.connectionMu.RUnlock()
 
 	if currentQueries >= int64(cb.thresholds.MaxConcurrentQueries) {
-		return fmt.Errorf("concurrent query limit exceeded (%d)", cb.thresholds.MaxConcurrentQueries)
+		return errors.Newf(ErrConcurrentQueryLimit, "concurrent query limit exceeded (%d)", cb.thresholds.MaxConcurrentQueries)
 	}
 
 	return nil
@@ -220,17 +226,17 @@ func (cb *CircuitBreaker) checkConcurrentQueries(connectionID string) error {
 func (cb *CircuitBreaker) checkResourceThresholds(connCtx *ConnectionContext) error {
 	// Check memory usage
 	if atomic.LoadInt64(&cb.currentMemory) > cb.thresholds.MaxMemoryBytes {
-		return fmt.Errorf("memory usage exceeds threshold (%d bytes)", cb.thresholds.MaxMemoryBytes)
+		return errors.Newf(ErrMemoryUsageExceeded, "memory usage exceeds threshold (%d bytes)", cb.thresholds.MaxMemoryBytes)
 	}
 
 	// Check CPU usage
 	if atomic.LoadInt64(&cb.currentCPU) > int64(cb.thresholds.MaxCPUTime) {
-		return fmt.Errorf("CPU usage exceeds threshold (%v)", cb.thresholds.MaxCPUTime)
+		return errors.Newf(ErrCPUUsageExceeded, "CPU usage exceeds threshold (%v)", cb.thresholds.MaxCPUTime)
 	}
 
 	// Check active queries
 	if atomic.LoadInt64(&cb.activeQueries) > int64(cb.thresholds.MaxConcurrentQueries) {
-		return fmt.Errorf("concurrent query limit exceeded (%d)", cb.thresholds.MaxConcurrentQueries)
+		return errors.Newf(ErrConcurrentQueryLimit, "concurrent query limit exceeded (%d)", cb.thresholds.MaxConcurrentQueries)
 	}
 
 	return nil
@@ -294,23 +300,30 @@ func (cb *CircuitBreaker) scheduleRecovery() {
 
 // monitor periodically checks circuit breaker state
 func (cb *CircuitBreaker) monitor() {
+	defer cb.wg.Done()
+
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		cb.mu.RLock()
-		state := cb.state
-		lastFailure := cb.lastFailureTime
-		cb.mu.RUnlock()
+	for {
+		select {
+		case <-ticker.C:
+			cb.mu.RLock()
+			state := cb.state
+			lastFailure := cb.lastFailureTime
+			cb.mu.RUnlock()
 
-		// Log current state
-		cb.logger.Debug().
-			Str("state", cb.stateToString(state)).
-			Int64("failure_count", atomic.LoadInt64(&cb.failureCount)).
-			Int64("success_count", atomic.LoadInt64(&cb.successCount)).
-			Int64("active_queries", atomic.LoadInt64(&cb.activeQueries)).
-			Time("last_failure", lastFailure).
-			Msg("Circuit breaker status")
+			// Log current state
+			cb.logger.Debug().
+				Str("state", cb.stateToString(state)).
+				Int64("failure_count", atomic.LoadInt64(&cb.failureCount)).
+				Int64("success_count", atomic.LoadInt64(&cb.successCount)).
+				Int64("active_queries", atomic.LoadInt64(&cb.activeQueries)).
+				Time("last_failure", lastFailure).
+				Msg("Circuit breaker status")
+		case <-cb.stopMonitor:
+			return
+		}
 	}
 }
 
@@ -355,4 +368,11 @@ func (cb *CircuitBreaker) Reset() {
 	atomic.StoreInt64(&cb.successCount, 0)
 
 	cb.logger.Info().Msg("Circuit breaker reset")
+}
+
+// Close stops the circuit breaker and cleans up resources
+func (cb *CircuitBreaker) Close() error {
+	close(cb.stopMonitor)
+	cb.wg.Wait()
+	return nil
 }

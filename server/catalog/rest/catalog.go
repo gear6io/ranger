@@ -6,8 +6,10 @@ import (
 	"iter"
 	"net/url"
 
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/server/catalog/shared"
 	"github.com/TFMV/icebox/server/config"
+	"github.com/TFMV/icebox/server/paths"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 	icebergrest "github.com/apache/iceberg-go/catalog/rest"
@@ -15,33 +17,36 @@ import (
 	"github.com/apache/iceberg-go/table"
 )
 
+// ComponentType defines the REST catalog component type identifier
+const ComponentType = "catalog"
+
 // Catalog implements the iceberg-go catalog.Catalog interface using a REST catalog
 type Catalog struct {
 	name        string
 	restCatalog *icebergrest.Catalog
 	fileIO      icebergio.IO
-	pathManager shared.PathManager
+	pathManager paths.PathManager
 	config      *config.Config
 }
 
 // NewCatalog creates a new REST catalog wrapper
-func NewCatalog(cfg *config.Config, pathManager shared.PathManager) (*Catalog, error) {
+func NewCatalog(cfg *config.Config, pathManager paths.PathManager) (*Catalog, error) {
 	// Validate catalog type
 	catalogType := cfg.GetCatalogType()
 	if catalogType != "rest" {
-		return nil, fmt.Errorf("expected catalog type 'rest', got '%s'", catalogType)
+		return nil, shared.NewCatalogValidation("catalog_type", fmt.Sprintf("expected catalog type 'rest', got '%s'", catalogType))
 	}
 
 	// Get catalog URI from path manager
 	catalogURI := pathManager.GetCatalogURI("rest")
 	if catalogURI == "" {
-		return nil, fmt.Errorf("catalog URI is required for REST catalog")
+		return nil, shared.NewCatalogValidation("catalog_uri", "catalog URI is required for REST catalog")
 	}
 
 	// Parse the URI to get base URL
 	baseURL, err := url.Parse(catalogURI)
 	if err != nil {
-		return nil, fmt.Errorf("invalid catalog URI: %w", err)
+		return nil, errors.New(shared.CatalogValidation, "invalid catalog URI", err)
 	}
 
 	// Build options for the iceberg-go REST catalog
@@ -53,7 +58,7 @@ func NewCatalog(cfg *config.Config, pathManager shared.PathManager) (*Catalog, e
 	// Create the REST catalog with required parameters
 	restCatalog, err := icebergrest.NewCatalog(context.Background(), "icebox-rest-catalog", baseURL.String(), opts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create REST catalog: %w", err)
+		return nil, errors.New(shared.CatalogInternal, "failed to create REST catalog", err)
 	}
 
 	return &Catalog{
@@ -142,6 +147,17 @@ func (c *Catalog) ListNamespaces(ctx context.Context, parent table.Identifier) (
 
 // Close cleans up any resources used by the catalog
 func (c *Catalog) Close() error {
+	// The iceberg-go REST catalog doesn't have a Close method, so this is a no-op
+	return nil
+}
+
+// GetType returns the component type identifier
+func (c *Catalog) GetType() string {
+	return ComponentType
+}
+
+// Shutdown gracefully shuts down the REST catalog
+func (c *Catalog) Shutdown(ctx context.Context) error {
 	// The iceberg-go REST catalog doesn't have a Close method, so this is a no-op
 	return nil
 }

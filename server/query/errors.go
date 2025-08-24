@@ -1,0 +1,35 @@
+package query
+
+import "github.com/TFMV/icebox/pkg/errors"
+
+// Query-specific error codes
+var (
+	ErrDuckDBEngineCreationFailed  = errors.MustNewCode("query.duckdb_engine_creation_failed")
+	ErrQueryParseValidationFailed  = errors.MustNewCode("query.parse_validation_failed")
+	ErrUnsupportedStatementType    = errors.MustNewCode("query.unsupported_statement_type")
+	ErrDuckDBExecutionFailed       = errors.MustNewCode("query.duckdb_execution_failed")
+	ErrInsertExecutionFailed       = errors.MustNewCode("query.insert_execution_failed")
+	ErrUnsupportedShowType         = errors.MustNewCode("query.unsupported_show_type")
+	ErrDatabaseListFailed          = errors.MustNewCode("query.database_list_failed")
+	ErrTableListFailed             = errors.MustNewCode("query.table_list_failed")
+	ErrDatabaseAlreadyExists       = errors.MustNewCode("query.database_already_exists")
+	ErrDatabaseCreationFailed      = errors.MustNewCode("query.database_creation_failed")
+	ErrDDLParseFailed              = errors.MustNewCode("query.ddl_parse_failed")
+	ErrTableAlreadyExists          = errors.MustNewCode("query.table_already_exists")
+	ErrDDLExecutionFailed          = errors.MustNewCode("query.ddl_execution_failed")
+	ErrDataStorageFailed           = errors.MustNewCode("query.data_storage_failed")
+	ErrJSONDecodeFailed            = errors.MustNewCode("query.json_decode_failed")
+	ErrStreamingInsertFailed       = errors.MustNewCode("query.streaming_insert_failed")
+	ErrDataRetrievalFailed         = errors.MustNewCode("query.data_retrieval_failed")
+	ErrStorageEngineFailed         = errors.MustNewCode("query.storage_engine_failed")
+	ErrTableOpenFailed             = errors.MustNewCode("query.table_open_failed")
+	ErrSchemaRetrievalFailed       = errors.MustNewCode("query.schema_retrieval_failed")
+	ErrSchemaDeserializationFailed = errors.MustNewCode("query.schema_deserialization_failed")
+	ErrQueryEngineCloseFailed      = errors.MustNewCode("query.engine_close_failed")
+	ErrDuckDBCloseFailed           = errors.MustNewCode("query.duckdb_close_failed")
+	ErrStorageManagerCloseFailed   = errors.MustNewCode("query.storage_manager_close_failed")
+	ErrMultipleCloseErrors         = errors.MustNewCode("query.multiple_close_errors")
+	ErrQueryPanic                  = errors.MustNewCode("query.panic")
+	ErrQueryNotFound               = errors.MustNewCode("query.not_found")
+	ErrQueryNotRunning             = errors.MustNewCode("query.not_running")
+)

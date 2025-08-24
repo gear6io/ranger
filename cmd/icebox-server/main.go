@@ -60,7 +60,7 @@ func main() {
 	<-ctx.Done()
 
 	// Graceful shutdown
-	if err := srv.Shutdown(); err != nil {
+	if err := srv.Shutdown(ctx); err != nil {
 		logger.Error().Err(err).Msg("Error during shutdown")
 	}
 

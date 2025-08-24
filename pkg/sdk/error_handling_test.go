@@ -209,7 +209,7 @@ func TestClientErrorHandling(t *testing.T) {
 	t.Run("ClientCreationWithValidOptions", func(t *testing.T) {
 		// Test client creation with valid options
 		client, err := sdk.NewClient(&sdk.Options{
-			Addr: []string{"localhost:9000"},
+			Addr: []string{"localhost:2849"},
 			Auth: sdk.Auth{
 				Username: "test",
 				Password: "test",
@@ -226,7 +226,7 @@ func TestClientErrorHandling(t *testing.T) {
 	t.Run("ClientCloseMultipleTimes", func(t *testing.T) {
 		// Test that closing a client multiple times doesn't cause errors
 		client, err := sdk.NewClient(&sdk.Options{
-			Addr: []string{"localhost:9000"},
+			Addr: []string{"localhost:2849"},
 			Auth: sdk.Auth{
 				Username: "test",
 				Password: "test",
@@ -252,7 +252,7 @@ func TestQueryErrorHandling(t *testing.T) {
 	t.Run("QueryWithContextCancellation", func(t *testing.T) {
 		// Test query cancellation through context
 		client, err := sdk.NewClient(&sdk.Options{
-			Addr: []string{"localhost:9000"},
+			Addr: []string{"localhost:2849"},
 			Auth: sdk.Auth{
 				Username: "test",
 				Password: "test",
@@ -279,52 +279,36 @@ func TestQueryErrorHandling(t *testing.T) {
 // TestBatchErrorHandling tests error handling in batch operations
 func TestBatchErrorHandling(t *testing.T) {
 	t.Run("BatchAppendAfterSend", func(t *testing.T) {
-		client, err := sdk.NewClient(&sdk.Options{
-			Addr: []string{"localhost:9000"},
-			Auth: sdk.Auth{
-				Username: "test",
-				Password: "test",
-				Database: "test",
-			},
+		sdk.TestWithServer(t, func(t *testing.T, server *sdk.TestServer) {
+			client := server.GetClient(t)
+			defer client.Close()
+
+			batch, err := client.PrepareBatch(context.Background(), "INSERT INTO test_table VALUES")
+			require.NoError(t, err)
+
+			// Mark batch as sent
+			batch.Sent = true
+
+			// Try to append after sending
+			err = batch.Append(1, "test")
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "already sent")
 		})
-		if err != nil {
-			t.Skip("Cannot create client, skipping test")
-		}
-		defer client.Close()
-
-		batch, err := client.PrepareBatch(context.Background(), "INSERT INTO test_table VALUES")
-		require.NoError(t, err)
-
-		// Mark batch as sent
-		batch.Sent = true
-
-		// Try to append after sending
-		err = batch.Append(1, "test")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "already sent")
 	})
 
 	t.Run("BatchAppendWithWrongColumnCount", func(t *testing.T) {
-		client, err := sdk.NewClient(&sdk.Options{
-			Addr: []string{"localhost:9000"},
-			Auth: sdk.Auth{
-				Username: "test",
-				Password: "test",
-				Database: "test",
-			},
+		sdk.TestWithServer(t, func(t *testing.T, server *sdk.TestServer) {
+			client := server.GetClient(t)
+			defer client.Close()
+
+			batch, err := client.PrepareBatch(context.Background(), "INSERT INTO test_table (id, name) VALUES")
+			require.NoError(t, err)
+
+			// Try to append wrong number of values
+			err = batch.Append(1) // Only 1 value, but batch expects 2 columns
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "value count does not match column count")
 		})
-		if err != nil {
-			t.Skip("Cannot create client, skipping test")
-		}
-		defer client.Close()
-
-		batch, err := client.PrepareBatch(context.Background(), "INSERT INTO test_table (id, name) VALUES")
-		require.NoError(t, err)
-
-		// Try to append wrong number of values
-		err = batch.Append(1) // Only 1 value, but batch expects 2 columns
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "value count does not match column count")
 	})
 }
 
@@ -400,7 +384,7 @@ func TestErrorRecovery(t *testing.T) {
 	t.Run("RecoverFromConnectionError", func(t *testing.T) {
 		// Test that client can recover from connection errors
 		client, err := sdk.NewClient(&sdk.Options{
-			Addr: []string{"localhost:9000"},
+			Addr: []string{"localhost:2849"},
 			Auth: sdk.Auth{
 				Username: "test",
 				Password: "test",
@@ -419,7 +403,7 @@ func TestErrorRecovery(t *testing.T) {
 	t.Run("RecoverFromQueryError", func(t *testing.T) {
 		// Test that client can recover from query errors
 		client, err := sdk.NewClient(&sdk.Options{
-			Addr: []string{"localhost:9000"},
+			Addr: []string{"localhost:2849"},
 			Auth: sdk.Auth{
 				Username: "test",
 				Password: "test",

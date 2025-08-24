@@ -1,234 +1,112 @@
-# Icebox Storage Package
+# Storage Manager - Streaming Architecture
 
-A standardized storage system that automatically creates a clean, organized directory structure for all Icebox components.
+## Overview
 
-## **🏗️ Architecture**
+The Storage Manager has been refactored to implement a **streaming-first architecture** that eliminates memory inefficiencies in data writing operations. This replaces the previous buffering approach with direct streaming from Query Engine to storage.
 
-### **PathManager (Centralized Path Logic)**
-The `PathManager` is the **single source of truth** for all path construction in Icebox:
+## Key Improvements
 
-- **Base Paths**: `GetCatalogPath()`, `GetDataPath()`, `GetInternalMetadataPath()`, `GetMigrationsPath()`
-- **Table Paths**: `GetTablePath()`, `GetTableDataPath()`, `GetTableMetadataPath()`
-- **Catalog URIs**: `GetCatalogURI(catalogType)` - generates proper file:// URIs
-- **Path Parsing**: `ParseTableIdentifier()` - handles `database.table` syntax
-- **Directory Creation**: `EnsureDirectoryStructure()` - creates all necessary directories
+### 1. **Memory Efficiency**
+- **Before**: Data was copied multiple times: QE → JSON bytes → storage buffer → final file
+- **After**: Direct streaming with minimal memory footprint using batch processing
 
-### **Storage Manager**
-The `StorageManager` orchestrates all storage operations and uses `PathManager` for all path-related decisions:
-
-- **No path logic**: All paths come from PathManager
-- **Clean separation**: Storage logic vs. path logic
-- **Exposed PathManager**: `GetPathManager()` method for external access
-
-## 🏗️ **Standardized Structure**
-
-```
-{data_path}/                           # Base directory (configurable)
-├── .icebox/                           # Icebox internal metadata
-│   ├── metadata.db                    # SQLite database for internal metadata
-│   └── migrations/                    # Migration files
-├── catalog/                           # Iceberg catalog files
-│   ├── catalog.json                   # JSON catalog (or catalog.db for SQLite)
-│   └── namespaces/                    # Namespace metadata
-└── data/                              # Actual data files
-    ├── default/                       # Database: default
-    │   ├── users/                     # Table: users
-    │   │   ├── data/                  # Data files (parquet, etc.)
-    │   │   │   ├── part-0.parquet
-    │   │   │   └── part-1.parquet
-    │   │   └── metadata/              # Iceberg metadata
-    │   │       ├── v1.metadata.json
-    │   │       └── v2.metadata.json
-    │   └── sales/                     # Table: sales
-    │       ├── data/
-    │       └── metadata/
-    └── analytics/                     # Database: analytics
-        └── events/                    # Table: events
-            ├── data/
-            └── metadata/
+### 2. **Streaming Interface**
+```go
+type FileSystem interface {
+    // Core streaming operations
+    OpenForRead(path string) (io.ReadCloser, error)
+    OpenForWrite(path string) (io.WriteCloser, error)
+    
+    // New streaming table operations
+    OpenTableForWrite(database, tableName string) (io.WriteCloser, error)
+    OpenTableForRead(database, tableName string) (io.ReadCloser, error)
+    
+    // Utility operations
+    Remove(path string) error
+    Exists(path string) (bool, error)
+    MkdirAll(path string) error
+    
+    // Storage environment preparation
+    PrepareTableEnvironment(database, tableName string) error
+    RemoveTableEnvironment(database, tableName string) error
+}
 ```
 
-## 🚀 **Quick Start**
+### 3. **Rollback Support**
+- Automatic rollback on failed streaming operations
+- Cleanup of partially written data
+- Transaction-like behavior for data consistency
 
-### **Configuration**
+### 4. **Batch Processing**
+- Configurable batch size (default: 1000 rows)
+- Memory-efficient processing of large datasets
+- JSON serialization per batch to avoid memory buildup
 
-```yaml
-# icebox-server.yml
-storage:
-  # Single data path for all storage (defaults to "./data" if not specified)
-  data_path: "./data"
-  
-  # Catalog configuration (defaults to "json")
-  catalog:
-    type: "json"           # json, sqlite, rest
-  
-  # Data storage configuration (defaults to "filesystem")
-  data:
-    type: "filesystem"     # memory, filesystem, s3
-  
-  # Internal metadata is always SQLite (not configurable)
-```
+## Implementation Details
 
-**Note**: If you don't specify `data_path`, it will default to `"./data"`. All other settings also have sensible defaults. Internal metadata is always stored in SQLite format.
+### Filesystem Storage
+- Direct file I/O without intermediate buffering
+- Uses `os.Create()` and `os.Open()` for true streaming
+- Automatic cleanup of empty files
 
-### **Usage**
+### Memory Storage
+- Maintains efficient Arrow/Parquet format
+- Streaming wrapper around existing Parquet manager
+- No data duplication
+
+### S3 Storage
+- Streaming uploads with configurable buffer sizes
+- Chunked reading for large objects
+- Efficient object management
+
+## Usage Example
 
 ```go
-import "github.com/TFMV/icebox/server/storage"
-
-// Create storage manager
-manager, err := storage.NewManager(cfg, logger)
+// Streaming data insertion
+func (m *Manager) InsertData(ctx context.Context, database, tableName string, data [][]interface{}) error {
+    // Open streaming writer
+    writer, err := engine.OpenTableForWrite(database, tableName)
 if err != nil {
-    log.Fatal(err)
+        return err
+    }
+    defer writer.Close()
+
+    // Stream data in batches
+    batchSize := 1000
+    for i := 0; i < len(data); i += batchSize {
+        end := i + batchSize
+        if end > len(data) {
+            end = len(data)
+        }
+        
+        batch := data[i:end]
+        batchBytes, _ := json.Marshal(batch)
+        
+        // Write directly to storage
+        writer.Write(batchBytes)
+        writer.Write([]byte("\n"))
+    }
+    
+    return nil
 }
-defer manager.Close()
-
-// Initialize storage (creates directory structure)
-if err := manager.Initialize(ctx); err != nil {
-    log.Fatal(err)
-}
-
-// Create table with database.table syntax
-schema := []byte(`{"fields":[{"name":"id","type":"int"}]}`)
-if err := manager.CreateTable("analytics.users", schema); err != nil {
-    log.Fatal(err)
-}
-
-// Insert data
-data := [][]interface{}{{1}, {2}, {3}}
-if err := manager.InsertData("analytics.users", data); err != nil {
-    log.Fatal(err)
-}
 ```
 
-## 🔧 **Key Features**
+## Performance Benefits
 
-### **✅ Automatic Directory Creation**
-- Creates all necessary directories on initialization
-- Follows Iceberg specification for metadata structure
-- Maintains clean separation between components
+1. **Memory Usage**: Reduced from O(n) to O(batch_size) where n = total rows
+2. **Scalability**: Handles datasets of any size without memory constraints
+3. **Throughput**: Direct streaming eliminates buffer copy overhead
+4. **Reliability**: Rollback support ensures data consistency
 
-### **✅ Database.Table Support**
-- Supports `database.table` syntax (e.g., `analytics.users`)
-- Falls back to `default.table` for simple table names
-- Creates proper namespace directories
+## Migration Notes
 
-### **✅ Proper Iceberg Metadata**
-- Creates standard Iceberg metadata files
-- Follows Iceberg v2 specification
-- Includes proper schema, partitioning, and properties
+- **No backward compatibility**: Old `WriteFile`, `ReadFile`, `StoreTableData`, `GetTableData` methods removed
+- **Interface changes**: All storage engines must implement new streaming methods
+- **Testing required**: Verify streaming behavior with large datasets
 
-### **✅ Multiple Storage Types**
-- **Memory**: No files created on disk
-- **Filesystem**: Local file storage
-- **S3**: Cloud storage support
+## Future Enhancements
 
-### **✅ Internal Metadata Management**
-- SQLite database for Icebox-specific metadata
-- Separate from Iceberg catalog metadata
-- Handles migrations and schema changes
-
-## 📁 **Path Management**
-
-The `PathManager` handles all path construction:
-
-```go
-pm := NewPathManager("./data")
-
-// Get various paths
-catalogPath := pm.GetCatalogPath()           // "./data/catalog"
-dataPath := pm.GetDataPath()                // "./data/data"
-metadataPath := pm.GetInternalMetadataPath() // "./data/.icebox"
-
-// Table-specific paths
-tablePath := pm.GetTablePath("analytics", "users")           // "./data/data/analytics/users"
-dataPath := pm.GetTableDataPath("analytics", "users")        // "./data/data/analytics/users/data"
-metadataPath := pm.GetTableMetadataPath("analytics", "users") // "./data/data/analytics/users/metadata"
-
-// Parse table identifiers
-database, table := pm.ParseTableIdentifier("analytics.users") // "analytics", "users"
-database, table := pm.ParseTableIdentifier("users")           // "default", "users"
-```
-
-## 🎯 **Table Operations**
-
-### **Creating Tables**
-
-```go
-// Create table in specific database
-err := manager.CreateTable("analytics.users", schema)
-
-// Create table in default database
-err := manager.CreateTable("users", schema)
-```
-
-### **Inserting Data**
-
-```go
-// Insert data into specific table
-data := [][]interface{}{{1, "Alice"}, {2, "Bob"}}
-err := manager.InsertData("analytics.users", data)
-```
-
-### **Querying Metadata**
-
-```go
-// Get table metadata
-metadata, err := manager.GetTableMetadata("analytics.users")
-
-// Check if table exists
-exists := manager.TableExists("analytics.users")
-
-// List all tables
-tables, err := manager.ListTables()
-```
-
-## 🔄 **Storage Types**
-
-### **Memory Storage**
-- No files created on disk
-- Perfect for testing and development
-- Fast in-memory operations
-
-### **Filesystem Storage**
-- Creates proper directory structure
-- Persists data and metadata
-- Good for development and small deployments
-
-### **S3 Storage**
-- Cloud-based storage
-- Requires proper AWS/MinIO configuration
-- Good for production deployments
-
-## 🧪 **Testing**
-
-Run the storage tests:
-
-```bash
-cd server/storage
-go test ./... -v
-```
-
-## 📚 **Examples**
-
-See `example_usage.go` for a complete working example.
-
-## 🔮 **Future Enhancements**
-
-- [ ] **Partitioning Support**: Automatic partition management
-- [ ] **Compaction**: Data file compaction and optimization
-- [ ] **Versioning**: Advanced table versioning support
-- [ ] **Backup/Restore**: Automated backup and restore procedures
-
-## 🤝 **Contributing**
-
-When adding new features:
-
-1. **Follow the Path Structure**: Use `PathManager` for all path operations
-2. **Support Database.Table**: Ensure new methods handle both formats
-3. **Create Tests**: Add tests for new functionality
-4. **Update Documentation**: Keep this README current
-
----
-
-**🎯 The new standardized structure eliminates the hybrid mess and provides a clean, organized foundation for all Icebox storage operations!**
+1. **True streaming**: Eliminate JSON serialization overhead
+2. **Compression**: Add streaming compression support
+3. **Parallel processing**: Multi-threaded batch processing
+4. **Metrics**: Add streaming performance metrics

@@ -2,7 +2,6 @@ package registry
 
 import (
 	"context"
-	"fmt"
 	"log"
 
 	"github.com/uptrace/bun"
@@ -41,21 +40,21 @@ func (hdm *HybridDeploymentManager) EnsureDeploymentReady(ctx context.Context) e
 	// Step 1: Run bun migrations
 	log.Println("🔄 Running bun migrations...")
 	if err := hdm.bunMigrator.MigrateToLatest(ctx); err != nil {
-		return fmt.Errorf("deployment failed - bun migrations failed: %w", err)
+		return err
 	}
 	log.Println("✅ Bun migrations completed successfully")
 
 	// Step 2: Verify bun schema
 	log.Println("🔍 Verifying bun schema...")
 	if err := hdm.bunMigrator.VerifySchema(ctx); err != nil {
-		return fmt.Errorf("deployment failed - bun schema verification failed: %w", err)
+		return err
 	}
 	log.Println("✅ Bun schema verification passed")
 
 	// Step 3: Your existing deployment logic (if needed)
 	// This gives you the flexibility to add custom deployment checks
 	if err := hdm.runCustomDeploymentChecks(ctx); err != nil {
-		return fmt.Errorf("deployment failed - custom checks failed: %w", err)
+		return err
 	}
 
 	log.Println("🚀 Database is ready for deployment")
@@ -80,13 +79,13 @@ func (hdm *HybridDeploymentManager) GetDeploymentStatus(ctx context.Context) (*D
 	// Get bun migration status
 	bunStatus, err := hdm.bunMigrator.GetMigrationStatus(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get bun migration status: %w", err)
+		return nil, err
 	}
 
 	// Get current version
 	currentVersion, err := hdm.bunMigrator.GetCurrentVersion(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get current version: %w", err)
+		return nil, err
 	}
 
 	// Count pending and applied migrations

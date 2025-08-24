@@ -1,0 +1,42 @@
+# ErrorCode Checker Configuration
+# This file configures the ErrorCode checking behavior
+
+# Paths to exclude from checking
+exclude_paths:
+  - "pkg/sdk/"
+  - "integration_tests/"
+  - "testdata/"
+  - "milestones/"
+  - "scripts/"
+  - "demo/"
+  - "data/"
+  - "logs/"
+  - "workspace/"
+  - "my-lakehouse/"
+  - "vendor/"
+  - "node_modules/"
+  - ".git/"
+  - "server/protocols/native/protocol/"
+  - "server/protocols/native/protocol/signals/"
+  - "server/storage/s3/"
+
+# Forbidden error patterns to check for
+forbidden_patterns:
+  - "fmt\\.Errorf"
+  - "errors\\.Wrap\\("
+  - "errors\\.Wrapf\\("
+
+# Whether to check for forbidden patterns
+check_forbidden: true
+
+# Output format: human, json, or golangci-lint
+output_format: "human"
+
+# Exit with error code if unused ErrorCodes found
+exit_on_unused: true
+
+# Exit with error code if forbidden patterns found
+exit_on_forbidden: true
+
+# Verbose output for debugging
+verbose: false

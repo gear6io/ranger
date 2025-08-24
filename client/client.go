@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/TFMV/icebox/client/config"
+	"github.com/TFMV/icebox/pkg/errors"
 	"github.com/TFMV/icebox/pkg/sdk"
 	"github.com/rs/zerolog"
 )
@@ -61,7 +62,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Client, error) {
 	// Create SDK client
 	sdkClient, err := sdk.NewClient(options)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create SDK client: %w", err)
+		return nil, errors.New(ErrSDKClientCreationFailed, "failed to create SDK client", err)
 	}
 
 	return &Client{
@@ -78,7 +79,7 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	// Test connection using ping
 	if err := c.sdkClient.Ping(ctx); err != nil {
-		return fmt.Errorf("failed to connect to server: %w", err)
+		return errors.New(ErrConnectionFailed, "failed to connect to server", err)
 	}
 
 	c.connected = true
@@ -97,7 +98,7 @@ func (c *Client) Close() error {
 func (c *Client) ExecuteQuery(ctx context.Context, query string) (*QueryResult, error) {
 	// Don't try to connect if already connected
 	if !c.connected {
-		return nil, fmt.Errorf("client not connected to server")
+		return nil, errors.New(ErrClientNotConnected, "client not connected to server", nil)
 	}
 
 	c.logger.Debug().Str("query", query).Msg("Executing query")
@@ -107,7 +108,7 @@ func (c *Client) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 	// Execute query using SDK
 	rows, err := c.sdkClient.Query(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute query: %w", err)
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -135,7 +136,7 @@ func (c *Client) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 
 	// Check for any errors that occurred during row iteration
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error during query execution: %w", err)
+		return nil, err
 	}
 
 	duration := time.Since(start)
@@ -173,7 +174,7 @@ func (c *Client) ImportFile(ctx context.Context, filePath, tableName, namespace 
 
 	// Execute the import query
 	if err := c.sdkClient.Exec(ctx, query); err != nil {
-		return fmt.Errorf("failed to import file: %w", err)
+		return errors.New(ErrFileImportFailed, "failed to import file", err)
 	}
 
 	return nil
@@ -192,7 +193,7 @@ func (c *Client) ListTables(ctx context.Context) ([]string, error) {
 	// Execute SHOW TABLES query
 	result, err := c.ExecuteQuery(ctx, "SHOW TABLES")
 	if err != nil {
-		return nil, fmt.Errorf("failed to list tables: %w", err)
+		return nil, errors.New(ErrTableListFailed, "failed to list tables", err)
 	}
 
 	// Extract table names from the result
@@ -221,7 +222,7 @@ func (c *Client) DescribeTable(ctx context.Context, tableName string) (*TableSch
 	// Execute DESCRIBE query
 	result, err := c.ExecuteQuery(ctx, fmt.Sprintf("DESCRIBE %s", tableName))
 	if err != nil {
-		return nil, fmt.Errorf("failed to describe table: %w", err)
+		return nil, errors.New(ErrTableDescribeFailed, "failed to describe table", err)
 	}
 
 	// Extract schema information from the result
@@ -258,7 +259,7 @@ func (c *Client) DropTable(ctx context.Context, tableName string) error {
 
 	// Execute DROP TABLE query
 	if err := c.sdkClient.Exec(ctx, fmt.Sprintf("DROP TABLE %s", tableName)); err != nil {
-		return fmt.Errorf("failed to drop table: %w", err)
+		return errors.New(ErrTableDropFailed, "failed to drop table", err)
 	}
 
 	return nil
@@ -312,7 +313,7 @@ func (c *Client) CreateNamespace(ctx context.Context, namespace string) error {
 
 	// Execute CREATE NAMESPACE query
 	if err := c.sdkClient.Exec(ctx, fmt.Sprintf("CREATE NAMESPACE %s", namespace)); err != nil {
-		return fmt.Errorf("failed to create namespace: %w", err)
+		return errors.New(ErrNamespaceCreationFailed, "failed to create namespace", err)
 	}
 
 	return nil
@@ -330,7 +331,7 @@ func (c *Client) DropNamespace(ctx context.Context, namespace string) error {
 
 	// Execute DROP NAMESPACE query
 	if err := c.sdkClient.Exec(ctx, fmt.Sprintf("DROP NAMESPACE %s", namespace)); err != nil {
-		return fmt.Errorf("failed to drop namespace: %w", err)
+		return errors.New(ErrNamespaceDropFailed, "failed to drop namespace", err)
 	}
 
 	return nil

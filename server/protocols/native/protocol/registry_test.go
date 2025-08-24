@@ -27,6 +27,10 @@ func (m *MockSignal) Size() int {
 	return len(m.data)
 }
 
+func (m *MockSignal) Register(registry *Registry, info *SignalFactory) error {
+	return nil
+}
+
 func TestRegistry(t *testing.T) {
 	registry := NewRegistry()
 

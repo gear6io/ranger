@@ -1148,125 +1148,11 @@ func (fs *S3FileSystem) MkdirAll(path string) error {
 	return nil
 }
 
-// WriteFile writes data to S3
-func (fs *S3FileSystem) WriteFile(path string, data []byte) error {
-	start := time.Now()
 
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
 
-	objectName := fs.getObjectName(path)
 
-	ctx, cancel := context.WithTimeout(context.Background(), fs.config.OperationTimeout)
-	defer cancel()
 
-	// Simple PutObject for all files
-	reader := bytes.NewReader(data)
-	_, err := fs.client.PutObject(ctx, fs.bucket, objectName, reader, int64(len(data)), minio.PutObjectOptions{})
-	if err != nil {
-		fs.incrementErrorMetric("write")
-		return &MinIOError{
-			Op:  "write_file",
-			Err: err,
-			Context: map[string]interface{}{
-				"path":        path,
-				"object_name": objectName,
-				"bucket":      fs.bucket,
-				"size":        len(data),
-			},
-		}
-	}
 
-	fs.updateMetrics("write", time.Since(start), int64(len(data)), false)
-	return nil
-}
-
-// ReadFile reads data from S3 with streaming for large files
-func (fs *S3FileSystem) ReadFile(path string) ([]byte, error) {
-	start := time.Now()
-
-	fs.mu.RLock()
-	defer fs.mu.RUnlock()
-
-	objectName := fs.getObjectName(path)
-
-	ctx, cancel := context.WithTimeout(context.Background(), fs.config.OperationTimeout)
-	defer cancel()
-
-	// Get object info to check size
-	objInfo, err := fs.client.StatObject(ctx, fs.bucket, objectName, minio.StatObjectOptions{})
-	if err != nil {
-		fs.incrementErrorMetric("read")
-		return nil, &MinIOError{
-			Op:  "read_file",
-			Err: err,
-			Context: map[string]interface{}{
-				"path":        path,
-				"object_name": objectName,
-				"bucket":      fs.bucket,
-			},
-		}
-	}
-
-	// For very large files (>100MB), use streaming approach
-	const streamingThreshold = 100 * 1024 * 1024 // 100MB
-	if objInfo.Size > streamingThreshold {
-		return fs.readFileStreaming(ctx, objectName, objInfo.Size)
-	}
-
-	// Download entire object for smaller files
-	obj, err := fs.client.GetObject(ctx, fs.bucket, objectName, minio.GetObjectOptions{})
-	if err != nil {
-		fs.incrementErrorMetric("read")
-		return nil, &MinIOError{
-			Op:  "read_file",
-			Err: err,
-			Context: map[string]interface{}{
-				"path":        path,
-				"object_name": objectName,
-				"bucket":      fs.bucket,
-			},
-		}
-	}
-	defer obj.Close()
-
-	data, err := io.ReadAll(obj)
-	if err != nil {
-		fs.incrementErrorMetric("read")
-		return nil, &MinIOError{
-			Op:  "read_file",
-			Err: err,
-			Context: map[string]interface{}{
-				"path":        path,
-				"object_name": objectName,
-				"bucket":      fs.bucket,
-			},
-		}
-	}
-
-	fs.updateMetrics("read", time.Since(start), int64(len(data)), false)
-	return data, nil
-}
-
-// readFileStreaming handles streaming read for large files
-func (fs *S3FileSystem) readFileStreaming(ctx context.Context, objectName string, size int64) ([]byte, error) {
-	// For files larger than 100MB, we should implement true streaming
-	// For now, we'll download in chunks to avoid memory issues
-	const chunkSize = 10 * 1024 * 1024 // 10MB chunks
-
-	if size > 100*1024*1024 { // 100MB
-		return nil, fmt.Errorf("file too large for memory download: %d bytes (max: 100MB)", size)
-	}
-
-	// Download in chunks to be more memory efficient
-	obj, err := fs.client.GetObject(ctx, fs.bucket, objectName, minio.GetObjectOptions{})
-	if err != nil {
-		return nil, err
-	}
-	defer obj.Close()
-
-	return io.ReadAll(obj)
-}
 
 // OpenForRead opens a file for streaming read
 func (fs *S3FileSystem) OpenForRead(path string) (io.ReadCloser, error) {
@@ -2354,26 +2240,14 @@ func (fi *minioWriteFileInfo) Sys() interface{}   { return nil }
 // STORAGE ENVIRONMENT PREPARATION METHODS - Placeholder implementations for now
 // ============================================================================
 
-// PrepareTableEnvironment creates the storage environment for a table
-func (s3fs *S3FileSystem) PrepareTableEnvironment(database, tableName string) error {
+// SetupTable creates the storage environment for a table
+func (s3fs *S3FileSystem) SetupTable(database, tableName string) error {
 	// TODO: Implement table environment preparation in S3 with database namespace
 	// For now, just return success
 	return nil
 }
 
-// StoreTableData stores data for a table
-func (s3fs *S3FileSystem) StoreTableData(database, tableName string, data []byte) error {
-	// TODO: Implement data storage to S3 with database namespace
-	// For now, just return success
-	return nil
-}
 
-// GetTableData retrieves data for a table
-func (s3fs *S3FileSystem) GetTableData(database, tableName string) ([]byte, error) {
-	// TODO: Implement data retrieval from S3 with database namespace
-	// For now, return empty data
-	return []byte{}, nil
-}
 
 // RemoveTableEnvironment removes the storage environment for a table
 func (s3fs *S3FileSystem) RemoveTableEnvironment(database, tableName string) error {
@@ -2381,3 +2255,157 @@ func (s3fs *S3FileSystem) RemoveTableEnvironment(database, tableName string) err
 	// For now, just return success
 	return nil
 }
+
+// OpenTableForWrite opens a table for streaming write operations
+func (s3fs *S3FileSystem) OpenTableForWrite(database, tableName string) (io.WriteCloser, error) {
+	// Ensure table environment exists
+	if err := s3fs.SetupTable(database, tableName); err != nil {
+		return nil, fmt.Errorf("failed to setup table environment: %w", err)
+	}
+
+	// Create data file path
+	dataPath := filepath.Join("tables", database, tableName, "data", "data.json")
+	objectName := s3fs.getObjectName(dataPath)
+
+	return &s3TableWriter{
+		fs:         s3fs,
+		bucket:     s3fs.bucket,
+		objectName: objectName,
+		buffer:     make([]byte, 0),
+	}, nil
+}
+
+// OpenTableForRead opens a table for streaming read operations
+func (s3fs *S3FileSystem) OpenTableForRead(database, tableName string) (io.ReadCloser, error) {
+	dataPath := filepath.Join("tables", database, tableName, "data", "data.json")
+	objectName := s3fs.getObjectName(dataPath)
+
+	// Check if object exists
+	ctx, cancel := context.WithTimeout(context.Background(), s3fs.config.OperationTimeout)
+	defer cancel()
+
+	_, err := s3fs.client.StatObject(ctx, s3fs.bucket, objectName, minio.StatObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("table data file does not exist: %w", err)
+	}
+
+	// Get object info for size
+	objInfo, err := s3fs.client.StatObject(ctx, s3fs.bucket, objectName, minio.StatObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get object info: %w", err)
+	}
+
+	// Return streaming reader
+	return &s3TableReader{
+		fs:         s3fs,
+		bucket:     s3fs.bucket,
+		objectName: objectName,
+		size:       objInfo.Size,
+	}, nil
+}
+
+// s3TableWriter implements io.WriteCloser for S3 table operations
+type s3TableWriter struct {
+	fs         *S3FileSystem
+	bucket     string
+	objectName string
+	buffer     []byte
+	closed     bool
+}
+
+func (stw *s3TableWriter) Write(p []byte) (n int, err error) {
+	if stw.closed {
+		return 0, fmt.Errorf("write on closed writer")
+	}
+	stw.buffer = append(stw.buffer, p...)
+	return len(p), nil
+}
+
+func (stw *s3TableWriter) Close() error {
+	if stw.closed {
+		return nil
+	}
+	stw.closed = true
+
+	if len(stw.buffer) == 0 {
+		return nil
+	}
+
+	// Upload the buffered data
+	ctx, cancel := context.WithTimeout(context.Background(), stw.fs.config.OperationTimeout)
+	defer cancel()
+
+	reader := bytes.NewReader(stw.buffer)
+	_, err := stw.fs.client.PutObject(ctx, stw.bucket, stw.objectName, reader, int64(len(stw.buffer)), minio.PutObjectOptions{})
+	if err != nil {
+		return &MinIOError{
+			Op:  "put_object",
+			Err: err,
+			Context: map[string]interface{}{
+				"object_name": stw.objectName,
+				"bucket":      stw.bucket,
+				"size":        len(stw.buffer),
+			},
+		}
+	}
+
+	return nil
+}
+
+// s3TableReader implements io.ReadCloser for S3 table operations
+type s3TableReader struct {
+	fs         *S3FileSystem
+	bucket     string
+	objectName string
+	size       int64
+	position   int64
+	closed     bool
+}
+
+func (str *s3TableReader) Read(p []byte) (n int, err error) {
+	if str.closed {
+		return 0, io.EOF
+	}
+
+	if str.position >= str.size {
+		return 0, io.EOF
+	}
+
+	// Calculate how much to read
+	remaining := str.size - str.position
+	toRead := int64(len(p))
+	if toRead > remaining {
+		toRead = remaining
+	}
+
+	// Read chunk from S3
+	ctx, cancel := context.WithTimeout(context.Background(), str.fs.config.OperationTimeout)
+	defer cancel()
+
+	obj, err := str.fs.client.GetObject(ctx, str.bucket, str.objectName, minio.GetObjectOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("failed to get object: %w", err)
+	}
+	defer obj.Close()
+
+	// Seek to current position
+	if _, err := obj.Seek(str.position, 0); err != nil {
+		return 0, fmt.Errorf("failed to seek in object: %w", err)
+	}
+
+	// Read the chunk
+	n, err = obj.Read(p[:toRead])
+	if err != nil && err != io.EOF {
+		return n, fmt.Errorf("failed to read object chunk: %w", err)
+	}
+
+	str.position += int64(n)
+	return n, err
+}
+
+func (str *s3TableReader) Close() error {
+	str.closed = true
+	return nil
+}
+
+

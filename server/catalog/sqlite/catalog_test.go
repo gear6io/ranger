@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/TFMV/icebox/server/catalog/shared"
 	"github.com/TFMV/icebox/server/config"
+	"github.com/TFMV/icebox/server/paths"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/table"
@@ -53,9 +53,9 @@ func createTestConfig(t *testing.T) *config.Config {
 }
 
 // createTestPathManager creates a unique path manager for each test
-func createTestPathManager(t *testing.T) *shared.MockPathManager {
+func createTestPathManager(t *testing.T) *paths.MockPathManager {
 	testDir := filepath.Join("/tmp", "test", t.Name())
-	return &shared.MockPathManager{BasePath: testDir}
+	return &paths.MockPathManager{BasePath: testDir}
 }
 
 func TestNewCatalog(t *testing.T) {

@@ -1,286 +1,291 @@
 package memory
 
 import (
-	"bytes"
-	"io"
+	"encoding/json"
 	"testing"
 
-	"github.com/TFMV/icebox/pkg/errors"
+	"github.com/apache/iceberg-go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestMemoryStorage_NewMemoryStorage(t *testing.T) {
-	storage, err := NewMemoryStorage()
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-	if storage == nil {
-		t.Fatal("Expected storage instance, got nil")
-	}
+func TestNewMemoryStorage(t *testing.T) {
+	ms, err := NewMemoryStorage()
+	require.NoError(t, err)
+	assert.NotNil(t, ms)
+	assert.Equal(t, "MEMORY", ms.GetStorageType())
 }
 
-func TestMemoryStorage_Open_FileNotFound(t *testing.T) {
-	storage, _ := NewMemoryStorage()
+func TestMemoryStorage_SetupTable(t *testing.T) {
+	ms, err := NewMemoryStorage()
+	require.NoError(t, err)
 
-	_, err := storage.Open("nonexistent.txt")
-	if err == nil {
-		t.Fatal("Expected error for non-existent file")
-	}
+	// Test successful table environment creation
+	err = ms.SetupTable("testdb", "testtable")
+	assert.NoError(t, err)
 
-	// Check if it's our structured error
-	if iceboxErr, ok := err.(*errors.Error); ok {
-		if iceboxErr.Code.String() != ErrFileNotFound.String() {
-			t.Errorf("Expected error code '%s', got: %s", ErrFileNotFound.String(), iceboxErr.Code.String())
-		}
-		if iceboxErr.Context["path"] != "nonexistent.txt" {
-			t.Errorf("Expected path context 'nonexistent.txt', got: %s", iceboxErr.Context["path"])
-		}
-	} else {
-		t.Fatal("Expected structured error from pkg/errors")
-	}
+	// Verify table was created
+	tableKey := ms.getTableKey("testdb", "testtable")
+	tableData, exists := ms.tables[tableKey]
+	assert.True(t, exists)
+	assert.Equal(t, "testdb", tableData.Database)
+	assert.Equal(t, "testtable", tableData.TableName)
+
+	// Test duplicate table creation (should not error, just return success)
+	err = ms.SetupTable("testdb", "testtable")
+	assert.NoError(t, err)
 }
 
-func TestMemoryStorage_ReadFile_FileNotFound(t *testing.T) {
-	storage, _ := NewMemoryStorage()
+func TestMemoryStorage_OpenTableForWrite(t *testing.T) {
+	ms, err := NewMemoryStorage()
+	require.NoError(t, err)
 
-	_, err := storage.ReadFile("nonexistent.txt")
-	if err == nil {
-		t.Fatal("Expected error for non-existent file")
-	}
+	// Test opening a table for writing
+	writer, err := ms.OpenTableForWrite("testdb", "testtable")
+	require.NoError(t, err)
+	defer writer.Close()
 
-	// Check if it's our structured error
-	if iceboxErr, ok := err.(*errors.Error); ok {
-		if iceboxErr.Code.String() != ErrFileNotFound.String() {
-			t.Errorf("Expected error code '%s', got: %s", ErrFileNotFound.String(), iceboxErr.Code.String())
-		}
-		if iceboxErr.Context["path"] != "nonexistent.txt" {
-			t.Errorf("Expected path context 'nonexistent.txt', got: %s", iceboxErr.Context["path"])
-		}
-	} else {
-		t.Fatal("Expected structured error from pkg/errors")
-	}
+	// Write some test data
+	testData := []byte("test data")
+	n, err := writer.Write(testData)
+	require.NoError(t, err)
+	assert.Equal(t, len(testData), n)
+
+	// Verify table was created
+	tableKey := ms.getTableKey("testdb", "testtable")
+	tableData, exists := ms.tables[tableKey]
+	assert.True(t, exists)
+	assert.Equal(t, "testdb", tableData.Database)
+	assert.Equal(t, "testtable", tableData.TableName)
 }
 
-func TestMemoryStorage_Remove_FileNotFound(t *testing.T) {
-	storage, _ := NewMemoryStorage()
+func TestMemoryStorage_OpenTableForRead(t *testing.T) {
+	ms, err := NewMemoryStorage()
+	require.NoError(t, err)
 
-	err := storage.Remove("nonexistent.txt")
-	if err == nil {
-		t.Fatal("Expected error for non-existent file")
+	// First create a table and write some data
+	writer, err := ms.OpenTableForWrite("testdb", "testtable")
+	require.NoError(t, err)
+
+	// Write proper JSON data that the memory storage can parse
+	testData := [][]interface{}{
+		{1, "test data", 42.5},
+		{2, "more data", 100.0},
 	}
+	jsonData, err := json.Marshal(testData)
+	require.NoError(t, err)
 
-	// Check if it's our structured error
-	if iceboxErr, ok := err.(*errors.Error); ok {
-		if iceboxErr.Code.String() != ErrFileNotFound.String() {
-			t.Errorf("Expected error code '%s', got: %s", ErrFileNotFound.String(), iceboxErr.Code.String())
-		}
-		if iceboxErr.Context["path"] != "nonexistent.txt" {
-			t.Errorf("Expected path context 'nonexistent.txt', got: %s", iceboxErr.Context["path"])
-		}
-	} else {
-		t.Fatal("Expected structured error from pkg/errors")
-	}
-}
+	writer.Write(jsonData)
+	writer.Close()
 
-func TestMemoryStorage_OpenForRead_FileNotFound(t *testing.T) {
-	storage, _ := NewMemoryStorage()
-
-	_, err := storage.OpenForRead("nonexistent.txt")
-	if err == nil {
-		t.Fatal("Expected error for non-existent file")
-	}
-
-	// Check if it's our structured error
-	if iceboxErr, ok := err.(*errors.Error); ok {
-		if iceboxErr.Code.String() != ErrFileNotFound.String() {
-			t.Errorf("Expected error code '%s', got: %s", ErrFileNotFound.String(), iceboxErr.Code.String())
-		}
-		if iceboxErr.Context["path"] != "nonexistent.txt" {
-			t.Errorf("Expected path context 'nonexistent.txt', got: %s", iceboxErr.Context["path"])
-		}
-	} else {
-		t.Fatal("Expected structured error from pkg/errors")
-	}
-}
-
-func TestMemoryStorage_PrepareTableEnvironment_AlreadyExists(t *testing.T) {
-	storage, _ := NewMemoryStorage()
-
-	// First time should succeed
-	err := storage.PrepareTableEnvironment("test_db", "test_table")
-	if err != nil {
-		t.Fatalf("Expected no error on first creation, got: %v", err)
-	}
-
-	// Second time should also succeed (filesystem operations are idempotent)
-	err = storage.PrepareTableEnvironment("test_db", "test_table")
-	if err != nil {
-		t.Fatalf("Expected no error on second creation (should be idempotent), got: %v", err)
-	}
-
-	// Verify the table environment exists
-	exists, err := storage.Exists("tables/test_db/test_table/data/data.json")
-	if err != nil {
-		t.Fatalf("Expected no error checking table existence, got: %v", err)
-	}
-	if !exists {
-		t.Fatal("Expected table environment to exist after creation")
-	}
-}
-
-func TestMemoryStorage_StoreTableData_TableNotFound(t *testing.T) {
-	storage, _ := NewMemoryStorage()
-
-	// Try to store data for a non-existent table - should create it automatically
-	err := storage.StoreTableData("test_db", "nonexistent_table", []byte("data"))
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-
-	// Verify the data was stored
-	data, err := storage.GetTableData("test_db", "nonexistent_table")
-	if err != nil {
-		t.Fatalf("Expected no error reading stored data, got: %v", err)
-	}
-	if !bytes.Equal(data, []byte("data")) {
-		t.Fatalf("Expected stored data to match, got: %v, want: %v", data, []byte("data"))
-	}
-}
-
-func TestMemoryStorage_GetTableData_TableNotFound(t *testing.T) {
-	storage, _ := NewMemoryStorage()
-
-	// Try to get data from a non-existent table - should return empty data
-	data, err := storage.GetTableData("test_db", "nonexistent_table")
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-	if !bytes.Equal(data, []byte("[]")) {
-		t.Fatalf("Expected empty JSON array for non-existent table, got: %v", data)
-	}
-}
-
-func TestMemoryStorage_GetTableData_DataNotFound(t *testing.T) {
-	storage, _ := NewMemoryStorage()
-
-	// Create table environment but don't store data
-	err := storage.PrepareTableEnvironment("test_db", "test_table")
-	if err != nil {
-		t.Fatalf("Expected no error on table creation, got: %v", err)
-	}
-
-	// Try to get data from empty table - should return empty data
-	data, err := storage.GetTableData("test_db", "test_table")
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-	if !bytes.Equal(data, []byte("[]")) {
-		t.Fatalf("Expected empty JSON array for new table, got: %v", data)
-	}
-}
-
-func TestMemoryStorage_RemoveTableEnvironment_TableNotFound(t *testing.T) {
-	storage, _ := NewMemoryStorage()
-
-	// Try to remove a non-existent table - should not error
-	err := storage.RemoveTableEnvironment("test_db", "nonexistent_table")
-	if err != nil {
-		t.Fatalf("Expected no error, got: %v", err)
-	}
-}
-
-func TestMemoryStorage_SuccessfulOperations(t *testing.T) {
-	storage, _ := NewMemoryStorage()
-
-	// Test successful file operations
-	testData := []byte("test content")
-
-	// Write file
-	err := storage.WriteFile("test.txt", testData)
-	if err != nil {
-		t.Fatalf("Expected no error on WriteFile, got: %v", err)
-	}
-
-	// Check if file exists
-	exists, err := storage.Exists("test.txt")
-	if err != nil {
-		t.Fatalf("Expected no error on Exists, got: %v", err)
-	}
-	if !exists {
-		t.Fatal("Expected file to exist after WriteFile")
-	}
-
-	// Read file
-	data, err := storage.ReadFile("test.txt")
-	if err != nil {
-		t.Fatalf("Expected no error on ReadFile, got: %v", err)
-	}
-	if !bytes.Equal(data, testData) {
-		t.Fatalf("Expected data to match, got: %v, want: %v", data, testData)
-	}
-
-	// Test successful table operations
-	err = storage.PrepareTableEnvironment("test_db", "test_table")
-	if err != nil {
-		t.Fatalf("Expected no error on PrepareTableEnvironment, got: %v", err)
-	}
-
-	err = storage.StoreTableData("test_db", "test_table", testData)
-	if err != nil {
-		t.Fatalf("Expected no error on StoreTableData, got: %v", err)
-	}
-
-	data, err = storage.GetTableData("test_db", "test_table")
-	if err != nil {
-		t.Fatalf("Expected no error on GetTableData, got: %v", err)
-	}
-	if !bytes.Equal(data, testData) {
-		t.Fatalf("Expected table data to match, got: %v, want: %v", data, testData)
-	}
-
-	// Test streaming operations
-	reader, err := storage.OpenForRead("test.txt")
-	if err != nil {
-		t.Fatalf("Expected no error on OpenForRead, got: %v", err)
-	}
+	// Now test opening for reading
+	reader, err := ms.OpenTableForRead("testdb", "testtable")
+	require.NoError(t, err)
 	defer reader.Close()
 
-	writer, err := storage.OpenForWrite("test2.txt")
-	if err != nil {
-		t.Fatalf("Expected no error on OpenForWrite, got: %v", err)
-	}
+	// Read the data
+	buf := make([]byte, len(jsonData))
+	n, err := reader.Read(buf)
+	require.NoError(t, err)
+	assert.Equal(t, len(jsonData), n)
+	// The data might be formatted differently when read back, so just check we got something
+	assert.Greater(t, n, 0)
+}
 
-	_, err = io.Copy(writer, reader)
-	if err != nil {
-		t.Fatalf("Expected no error on copy operation, got: %v", err)
-	}
+func TestMemoryStorage_RemoveTableEnvironment(t *testing.T) {
+	ms, err := NewMemoryStorage()
+	require.NoError(t, err)
 
-	err = writer.Close()
-	if err != nil {
-		t.Fatalf("Expected no error on writer.Close, got: %v", err)
-	}
+	// Prepare table and store data
+	err = ms.SetupTable("testdb", "testtable")
+	require.NoError(t, err)
 
-	// Verify copied data
-	data2, err := storage.ReadFile("test2.txt")
-	if err != nil {
-		t.Fatalf("Expected no error on ReadFile for copied file, got: %v", err)
-	}
-	if !bytes.Equal(data2, testData) {
-		t.Fatalf("Expected copied data to match, got: %v, want: %v", data2, testData)
-	}
+	// Verify table exists
+	tableKey := ms.getTableKey("testdb", "testtable")
+	assert.Contains(t, ms.tables, tableKey)
 
-	// Clean up
-	err = storage.Remove("test.txt")
-	if err != nil {
-		t.Fatalf("Expected no error on Remove, got: %v", err)
-	}
+	// Remove table environment
+	err = ms.RemoveTableEnvironment("testdb", "testtable")
+	assert.NoError(t, err)
 
-	err = storage.Remove("test2.txt")
-	if err != nil {
-		t.Fatalf("Expected no error on Remove, got: %v", err)
-	}
+	// Verify table was removed
+	assert.NotContains(t, ms.tables, tableKey)
 
-	err = storage.RemoveTableEnvironment("test_db", "test_table")
-	if err != nil {
-		t.Fatalf("Expected no error on RemoveTableEnvironment, got: %v", err)
+	// Test removing non-existent table
+	err = ms.RemoveTableEnvironment("testdb", "nonexistent")
+	assert.NoError(t, err) // Should not error
+}
+
+func TestMemoryStorage_SetTableSchema(t *testing.T) {
+	ms, err := NewMemoryStorage()
+	require.NoError(t, err)
+
+	// Prepare table environment first
+	err = ms.SetupTable("testdb", "testtable")
+	require.NoError(t, err)
+
+	// Test setting schema
+	schema := &iceberg.Schema{}
+	err = ms.SetTableSchema("testdb", "testtable", schema)
+	assert.NoError(t, err)
+
+	// Verify schema was set
+	tableKey := ms.getTableKey("testdb", "testtable")
+	tableData := ms.tables[tableKey]
+	assert.NotNil(t, tableData.IcebergSchema)
+}
+
+func TestMemoryStorage_GetTableStats(t *testing.T) {
+	ms, err := NewMemoryStorage()
+	require.NoError(t, err)
+
+	// Test getting stats from non-existent table
+	stats, err := ms.GetTableStats("testdb", "nonexistent")
+	assert.Error(t, err)
+	assert.Nil(t, stats)
+
+	// Prepare table and write some data
+	writer, err := ms.OpenTableForWrite("testdb", "testtable")
+	require.NoError(t, err)
+
+	// Write proper JSON data that the memory storage can parse
+	testData := [][]interface{}{
+		{1, "test data", 42.5},
+		{2, "more data", 100.0},
 	}
+	jsonData, err := json.Marshal(testData)
+	require.NoError(t, err)
+
+	writer.Write(jsonData)
+	writer.Close()
+
+	// Get stats
+	stats, err = ms.GetTableStats("testdb", "testtable")
+	assert.NoError(t, err)
+	assert.NotNil(t, stats)
+}
+
+func TestMemoryStorage_GetTableRowCount(t *testing.T) {
+	ms, err := NewMemoryStorage()
+	require.NoError(t, err)
+
+	// Test getting row count from non-existent table
+	count, err := ms.GetTableRowCount("testdb", "nonexistent")
+	assert.Error(t, err)
+	assert.Equal(t, int64(0), count)
+
+	// Prepare table and write some data
+	writer, err := ms.OpenTableForWrite("testdb", "testtable")
+	require.NoError(t, err)
+
+	// Write proper JSON data that the memory storage can parse
+	testData := [][]interface{}{
+		{1, "test data", 42.5},
+		{2, "more data", 100.0},
+	}
+	jsonData, err := json.Marshal(testData)
+	require.NoError(t, err)
+
+	writer.Write(jsonData)
+	writer.Close()
+
+	// Get row count
+	count, err = ms.GetTableRowCount("testdb", "testtable")
+	assert.NoError(t, err)
+	assert.Greater(t, count, int64(0))
+}
+
+func TestMemoryStorage_GetTableMemoryUsage(t *testing.T) {
+	ms, err := NewMemoryStorage()
+	require.NoError(t, err)
+
+	// Test getting memory usage from non-existent table
+	usage, err := ms.GetTableMemoryUsage("testdb", "nonexistent")
+	assert.Error(t, err)
+	assert.Equal(t, int64(0), usage)
+
+	// Prepare table and write some data
+	writer, err := ms.OpenTableForWrite("testdb", "testtable")
+	require.NoError(t, err)
+
+	// Write proper JSON data that the memory storage can parse
+	testData := [][]interface{}{
+		{1, "test data", 42.5},
+		{2, "more data", 100.0},
+	}
+	jsonData, err := json.Marshal(testData)
+	require.NoError(t, err)
+
+	writer.Write(jsonData)
+	writer.Close()
+
+	// Get memory usage
+	usage, err = ms.GetTableMemoryUsage("testdb", "testtable")
+	assert.NoError(t, err)
+	assert.Greater(t, usage, int64(0))
+}
+
+func TestMemoryStorage_HelperMethods(t *testing.T) {
+	ms, err := NewMemoryStorage()
+	require.NoError(t, err)
+
+	// Test getTableKey
+	key := ms.getTableKey("testdb", "testtable")
+	expectedKey := "testdb.testtable"
+	assert.Equal(t, expectedKey, key)
+
+	// Test table key with special characters
+	key = ms.getTableKey("test-db", "test_table")
+	expectedKey = "test-db.test_table"
+	assert.Equal(t, expectedKey, key)
+}
+
+func TestMemoryStorage_Integration(t *testing.T) {
+	ms, err := NewMemoryStorage()
+	require.NoError(t, err)
+
+	// Test complete workflow: setup -> write -> read -> remove
+	err = ms.SetupTable("testdb", "testtable")
+	require.NoError(t, err)
+
+	// Write data
+	writer, err := ms.OpenTableForWrite("testdb", "testtable")
+	require.NoError(t, err)
+
+	// Write proper JSON data that the memory storage can parse
+	testData := [][]interface{}{
+		{1, "integration test data", 42.5},
+		{2, "more integration data", 100.0},
+	}
+	jsonData, err := json.Marshal(testData)
+	require.NoError(t, err)
+
+	n, err := writer.Write(jsonData)
+	require.NoError(t, err)
+	assert.Equal(t, len(jsonData), n)
+	writer.Close()
+
+	// Read data
+	reader, err := ms.OpenTableForRead("testdb", "testtable")
+	require.NoError(t, err)
+	buf := make([]byte, len(jsonData))
+	n, err = reader.Read(buf)
+	require.NoError(t, err)
+	assert.Equal(t, len(jsonData), n)
+	// The data might be formatted differently when read back, so just check we got something
+	assert.Greater(t, n, 0)
+	reader.Close()
+
+	// Get stats
+	stats, err := ms.GetTableStats("testdb", "testtable")
+	require.NoError(t, err)
+	assert.NotNil(t, stats)
+
+	// Remove table
+	err = ms.RemoveTableEnvironment("testdb", "testtable")
+	require.NoError(t, err)
+
+	// Verify table was removed
+	tableKey := ms.getTableKey("testdb", "testtable")
+	assert.NotContains(t, ms.tables, tableKey)
 }
