@@ -11,7 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gear6io/ranger/server/catalog"
 	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/metadata"
+	"github.com/gear6io/ranger/server/paths"
 	"github.com/gear6io/ranger/server/query/parser"
 	"github.com/gear6io/ranger/server/storage"
 	"github.com/rs/zerolog"
@@ -33,8 +36,19 @@ func TestEngineBasicFunctionality(t *testing.T) {
 
 	logger := zerolog.New(zerolog.NewConsoleWriter())
 
+	// Create path manager
+	pathManager := paths.NewManager(cfg.GetStoragePath())
+
+	// Create catalog
+	catalogInstance, err := catalog.NewCatalog(cfg, pathManager)
+	require.NoError(t, err)
+
+	// Create metadata manager
+	metadataMgr, err := metadata.NewMetadataManager(catalogInstance, pathManager.GetInternalMetadataDBPath(), cfg.GetStoragePath(), logger)
+	require.NoError(t, err)
+
 	// Create minimal storage manager for testing
-	storageMgr, err := storage.NewManager(cfg, logger)
+	storageMgr, err := storage.NewManager(cfg, logger, metadataMgr)
 	require.NoError(t, err)
 	defer storageMgr.Close()
 
@@ -78,8 +92,19 @@ func TestEngineQueryParsing(t *testing.T) {
 
 	logger := zerolog.New(zerolog.NewConsoleWriter())
 
+	// Create path manager
+	pathManager := paths.NewManager(cfg.GetStoragePath())
+
+	// Create catalog
+	catalogInstance, err := catalog.NewCatalog(cfg, pathManager)
+	require.NoError(t, err)
+
+	// Create metadata manager
+	metadataMgr, err := metadata.NewMetadataManager(catalogInstance, pathManager.GetInternalMetadataDBPath(), cfg.GetStoragePath(), logger)
+	require.NoError(t, err)
+
 	// Create minimal storage manager for testing
-	storageMgr, err := storage.NewManager(cfg, logger)
+	storageMgr, err := storage.NewManager(cfg, logger, metadataMgr)
 	require.NoError(t, err)
 	defer storageMgr.Close()
 
@@ -128,8 +153,19 @@ func TestEngineConfiguration(t *testing.T) {
 
 	logger := zerolog.New(zerolog.NewConsoleWriter())
 
+	// Create path manager
+	pathManager := paths.NewManager(cfg.GetStoragePath())
+
+	// Create catalog
+	catalogInstance, err := catalog.NewCatalog(cfg, pathManager)
+	require.NoError(t, err)
+
+	// Create metadata manager
+	metadataMgr, err := metadata.NewMetadataManager(catalogInstance, pathManager.GetInternalMetadataDBPath(), cfg.GetStoragePath(), logger)
+	require.NoError(t, err)
+
 	// Create minimal storage manager for testing
-	storageMgr, err := storage.NewManager(cfg, logger)
+	storageMgr, err := storage.NewManager(cfg, logger, metadataMgr)
 	require.NoError(t, err)
 	defer storageMgr.Close()
 
@@ -165,8 +201,19 @@ func TestQueryEngineStreaming(t *testing.T) {
 	// Create logger
 	logger := zerolog.New(zerolog.NewConsoleWriter())
 
-	// Create storage manager
-	storageMgr, err := storage.NewManager(cfg, logger)
+	// Create path manager
+	pathManager := paths.NewManager(cfg.GetStoragePath())
+
+	// Create catalog
+	catalogInstance, err := catalog.NewCatalog(cfg, pathManager)
+	require.NoError(t, err)
+
+	// Create metadata manager
+	metadataMgr, err := metadata.NewMetadataManager(catalogInstance, pathManager.GetInternalMetadataDBPath(), cfg.GetStoragePath(), logger)
+	require.NoError(t, err)
+
+	// Create minimal storage manager for testing
+	storageMgr, err := storage.NewManager(cfg, logger, metadataMgr)
 	require.NoError(t, err)
 	defer storageMgr.Close()
 
@@ -301,8 +348,19 @@ func TestQueryEngineStreamingPerformance(t *testing.T) {
 	// Create logger
 	logger := zerolog.New(zerolog.NewConsoleWriter())
 
-	// Create storage manager
-	storageMgr, err := storage.NewManager(cfg, logger)
+	// Create path manager
+	pathManager := paths.NewManager(cfg.GetStoragePath())
+
+	// Create catalog
+	catalogInstance, err := catalog.NewCatalog(cfg, pathManager)
+	require.NoError(t, err)
+
+	// Create metadata manager
+	metadataMgr, err := metadata.NewMetadataManager(catalogInstance, pathManager.GetInternalMetadataDBPath(), cfg.GetStoragePath(), logger)
+	require.NoError(t, err)
+
+	// Create minimal storage manager for testing
+	storageMgr, err := storage.NewManager(cfg, logger, metadataMgr)
 	require.NoError(t, err)
 	defer storageMgr.Close()
 

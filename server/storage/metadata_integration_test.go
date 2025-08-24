@@ -5,7 +5,10 @@ import (
 	"os"
 	"testing"
 
+	"github.com/gear6io/ranger/server/catalog"
 	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/metadata"
+	"github.com/gear6io/ranger/server/paths"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 )
@@ -30,14 +33,23 @@ func TestMetadataUpdateAfterInsertion(t *testing.T) {
 		},
 	}
 
-	// Create a logger
-	logger := zerolog.New(zerolog.NewConsoleWriter()).With().Timestamp().Logger()
+	// Create logger
+	logger := zerolog.New(zerolog.NewConsoleWriter())
+
+	// Create path manager
+	pathManager := paths.NewManager(cfg.GetStoragePath())
+
+	// Create catalog
+	catalogInstance, err := catalog.NewCatalog(cfg, pathManager)
+	require.NoError(t, err)
+
+	// Create metadata manager
+	metadataMgr, err := metadata.NewMetadataManager(catalogInstance, pathManager.GetInternalMetadataDBPath(), cfg.GetStoragePath(), logger)
+	require.NoError(t, err)
 
 	// Create storage manager
-	manager, err := NewManager(cfg, logger)
-	if err != nil {
-		t.Fatalf("Failed to create storage manager: %v", err)
-	}
+	manager, err := NewManager(cfg, logger, metadataMgr)
+	require.NoError(t, err)
 	defer manager.Close()
 
 	// Test context
@@ -74,7 +86,19 @@ func TestMetadataUpdateMethodSignatures(t *testing.T) {
 	}
 
 	logger := zerolog.New(zerolog.NewConsoleWriter()).With().Timestamp().Logger()
-	manager, err := NewManager(cfg, logger)
+
+	// Create path manager
+	pathManager := paths.NewManager(cfg.GetStoragePath())
+
+	// Create catalog
+	catalogInstance, err := catalog.NewCatalog(cfg, pathManager)
+	require.NoError(t, err)
+
+	// Create metadata manager
+	metadataMgr, err := metadata.NewMetadataManager(catalogInstance, pathManager.GetInternalMetadataDBPath(), cfg.GetStoragePath(), logger)
+	require.NoError(t, err)
+
+	manager, err := NewManager(cfg, logger, metadataMgr)
 	if err != nil {
 		t.Fatalf("Failed to create storage manager: %v", err)
 	}

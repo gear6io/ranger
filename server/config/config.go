@@ -30,7 +30,6 @@ type LogConfig struct {
 type StorageConfig struct {
 	DataPath string        `yaml:"data_path"`
 	Catalog  CatalogConfig `yaml:"catalog"`
-	Data     DataConfig    `yaml:"data"`
 }
 
 // CatalogConfig represents catalog configuration
@@ -62,9 +61,6 @@ func LoadDefaultConfig() *Config {
 			DataPath: "./data", // Default data path
 			Catalog: CatalogConfig{
 				Type: "json",
-			},
-			Data: DataConfig{
-				// All storage engines are now available at runtime
 			},
 		},
 	}
@@ -126,11 +122,6 @@ func (s *StorageConfig) Validate() error {
 	// Validate catalog configuration
 	if err := s.Catalog.Validate(); err != nil {
 		return errors.New(ErrCatalogValidationFailed, "catalog validation failed", err)
-	}
-
-	// Validate data storage configuration
-	if err := s.Data.Validate(); err != nil {
-		return errors.New(ErrDataStorageValidationFailed, "data storage validation failed", err)
 	}
 
 	// Validate data_path

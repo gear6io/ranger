@@ -59,13 +59,8 @@ func NewBunMigrationManager(dbPath string) (*BunMigrationManager, error) {
 		dbPath: dbPath,
 	}
 
-	// Run migrations (this will create the initial schema)
-	ctx := context.Background()
-	if err := manager.MigrateToLatest(ctx); err != nil {
-		db.Close()
-		// On migration failure, kill the service
-		log.Fatalf("Migration failed: %v. Service will exit.", err)
-	}
+	// Note: Migrations are now run explicitly by the caller
+	// This prevents multiple migration runs during initialization
 
 	return manager, nil
 }
@@ -81,7 +76,7 @@ func (bmm *BunMigrationManager) MigrateToLatest(ctx context.Context) error {
 	}
 
 	// Get all available migrations
-	availableMigrations := bmm.getAvailableMigrations()
+	availableMigrations := bmm.GetAvailableMigrations()
 
 	// Find pending migrations
 	var pendingMigrations []Migration
@@ -147,14 +142,6 @@ func (bmm *BunMigrationManager) MigrateToLatest(ctx context.Context) error {
 
 	log.Println("✅ All migrations completed successfully")
 	return nil
-}
-
-// getAvailableMigrations returns all available migrations (hardcoded)
-func (bmm *BunMigrationManager) getAvailableMigrations() []Migration {
-	return []Migration{
-		&migrations.Migration001{}, // from migrations/001_start.go
-		// Future migrations will be added here
-	}
 }
 
 // GetCurrentVersion returns the current migration version
@@ -284,7 +271,7 @@ func (bmm *BunMigrationManager) tableExists(ctx context.Context, tableName strin
 	return true, nil
 }
 
-// Close releases resources
+// Close closes the database connection
 func (bmm *BunMigrationManager) Close() error {
 	if bmm.db != nil {
 		return bmm.db.Close()
@@ -292,7 +279,24 @@ func (bmm *BunMigrationManager) Close() error {
 	return nil
 }
 
-// GetDB returns the underlying bun DB for external use
+// GetDB returns the underlying bun database
 func (bmm *BunMigrationManager) GetDB() *bun.DB {
 	return bmm.db
+}
+
+// GetLatestVersion returns the latest available migration version
+func (bmm *BunMigrationManager) GetLatestVersion() int {
+	availableMigrations := bmm.GetAvailableMigrations()
+	if len(availableMigrations) == 0 {
+		return 0
+	}
+	return availableMigrations[len(availableMigrations)-1].Version()
+}
+
+// GetAvailableMigrations returns all available migrations (hardcoded)
+func (bmm *BunMigrationManager) GetAvailableMigrations() []Migration {
+	return []Migration{
+		&migrations.Migration001{}, // from migrations/001_start.go
+		// Future migrations will be added here
+	}
 }

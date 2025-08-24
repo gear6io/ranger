@@ -7,7 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gear6io/ranger/server/catalog"
 	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/metadata"
+	"github.com/gear6io/ranger/server/paths"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,8 +29,19 @@ func TestStorageManagerCreateTableWithEngines(t *testing.T) {
 	// Create logger
 	logger := zerolog.New(zerolog.NewConsoleWriter())
 
+	// Create path manager
+	pathManager := paths.NewManager(cfg.GetStoragePath())
+
+	// Create catalog
+	catalogInstance, err := catalog.NewCatalog(cfg, pathManager)
+	require.NoError(t, err)
+
+	// Create metadata manager
+	metadataMgr, err := metadata.NewMetadataManager(catalogInstance, pathManager.GetInternalMetadataDBPath(), cfg.GetStoragePath(), logger)
+	require.NoError(t, err)
+
 	// Create storage manager
-	storageMgr, err := NewManager(cfg, logger)
+	storageMgr, err := NewManager(cfg, logger, metadataMgr)
 	require.NoError(t, err)
 	defer storageMgr.Close()
 

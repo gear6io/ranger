@@ -16,7 +16,6 @@ func TestNewLoader(t *testing.T) {
 			Catalog: config.CatalogConfig{
 				Type: "json",
 			},
-			Data: config.DataConfig{},
 		},
 	}
 

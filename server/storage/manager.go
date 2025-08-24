@@ -45,7 +45,7 @@ type Manager struct {
 	config         *Config
 	logger         zerolog.Logger
 	engineRegistry *StorageEngineRegistry
-	meta           metadata.MetadataManagerInterface
+	meta           *metadata.MetadataManager
 	pathManager    paths.PathManager
 	catalog        catalog.CatalogInterface
 }
@@ -71,7 +71,7 @@ type FileSystem interface {
 }
 
 // NewManager creates a new data storage manager
-func NewManager(cfg *config.Config, logger zerolog.Logger) (*Manager, error) {
+func NewManager(cfg *config.Config, logger zerolog.Logger, meta *metadata.MetadataManager) (*Manager, error) {
 	// Get the base data path (already validated in config layer)
 	basePath := cfg.GetStoragePath()
 
@@ -88,12 +88,6 @@ func NewManager(cfg *config.Config, logger zerolog.Logger) (*Manager, error) {
 
 	// Initialize catalog
 	catalog, err := catalog.NewCatalog(cfg, pathManager)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create metadata manager with internal metadata path from PathManager
-	meta, err := metadata.NewMetadataManager(catalog, pathManager.GetInternalMetadataDBPath(), basePath, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -746,6 +740,6 @@ func generateUUID() string {
 }
 
 // GetMetadataManager returns the metadata manager instance
-func (m *Manager) GetMetadataManager() metadata.MetadataManagerInterface {
+func (m *Manager) GetMetadataManager() *metadata.MetadataManager {
 	return m.meta
 }

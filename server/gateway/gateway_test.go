@@ -3,7 +3,10 @@ package gateway
 import (
 	"testing"
 
+	"github.com/gear6io/ranger/server/catalog"
 	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/metadata"
+	"github.com/gear6io/ranger/server/paths"
 	"github.com/gear6io/ranger/server/query"
 	"github.com/gear6io/ranger/server/storage"
 	"github.com/rs/zerolog"
@@ -24,8 +27,23 @@ func TestNewGateway(t *testing.T) {
 	// Create logger
 	logger := zerolog.New(zerolog.NewConsoleWriter())
 
+	// Create path manager
+	pathManager := paths.NewManager(cfg.GetStoragePath())
+
+	// Create catalog
+	catalogInstance, err := catalog.NewCatalog(cfg, pathManager)
+	if err != nil {
+		t.Fatalf("Failed to create catalog: %v", err)
+	}
+
+	// Create metadata manager
+	metadataMgr, err := metadata.NewMetadataManager(catalogInstance, pathManager.GetInternalMetadataDBPath(), cfg.GetStoragePath(), logger)
+	if err != nil {
+		t.Fatalf("Failed to create metadata manager: %v", err)
+	}
+
 	// Create storage manager
-	storageMgr, err := storage.NewManager(cfg, logger)
+	storageMgr, err := storage.NewManager(cfg, logger, metadataMgr)
 	if err != nil {
 		t.Fatalf("Failed to create storage manager: %v", err)
 	}

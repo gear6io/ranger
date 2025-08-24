@@ -12,15 +12,10 @@ server:
 
 storage:
   type: "filesystem"
-  data_path: "data"
+  data_path: "workspace"
   temp_path: "temp"
   catalog:
-    type: "sqlite"
-    path: "data/catalog.db"
-  metadata:
-    type: "sqlite"
-    path: "data/metadata.db"
-    # Internal metadata will be automatically stored at {data_path}/.metadata/metadata.db
+    type: "json"
 
 query:
   engine: "duckdb"
@@ -31,8 +26,3 @@ catalog:
   type: "sqlite"
   path: "data/catalog.db"
   auto_create: true
-
-paths:
-  data: "data"
-  temp: "temp"
-  logs: "logs" 

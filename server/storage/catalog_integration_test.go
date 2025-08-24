@@ -4,7 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/gear6io/ranger/server/catalog"
 	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/metadata"
+	"github.com/gear6io/ranger/server/paths"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,8 +23,19 @@ func TestStorageManagerWithCatalog(t *testing.T) {
 	// Create logger
 	logger := zerolog.New(zerolog.NewConsoleWriter())
 
+	// Create path manager
+	pathManager := paths.NewManager(cfg.GetStoragePath())
+
+	// Create catalog
+	catalogInstance, err := catalog.NewCatalog(cfg, pathManager)
+	require.NoError(t, err)
+
+	// Create metadata manager
+	metadataMgr, err := metadata.NewMetadataManager(catalogInstance, pathManager.GetInternalMetadataDBPath(), cfg.GetStoragePath(), logger)
+	require.NoError(t, err)
+
 	// Create storage manager (this will initialize the catalog)
-	manager, err := NewManager(cfg, logger)
+	manager, err := NewManager(cfg, logger, metadataMgr)
 	require.NoError(t, err)
 	defer manager.Close()
 
@@ -31,11 +45,11 @@ func TestStorageManagerWithCatalog(t *testing.T) {
 	assert.Equal(t, "ranger-json-catalog", catalog.Name())
 
 	// Verify path manager was initialized
-	pathManager := manager.GetPathManager()
-	assert.NotNil(t, pathManager, "PathManager should be initialized")
+	storagePathManager := manager.GetPathManager()
+	assert.NotNil(t, storagePathManager, "PathManager should be initialized")
 
 	// Test catalog URI generation
-	catalogURI := pathManager.GetCatalogURI(cfg.GetCatalogType())
+	catalogURI := storagePathManager.GetCatalogURI(cfg.GetCatalogType())
 	assert.Contains(t, catalogURI, "/tmp/ranger_test/catalog/catalog.json")
 
 	// Initialize storage

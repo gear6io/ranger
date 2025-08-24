@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/uptrace/bun"
 )
 
@@ -37,22 +38,23 @@ func NewHybridDeploymentManager(store *Store, bunMigrator *BunMigrationManager) 
 func (hdm *HybridDeploymentManager) EnsureDeploymentReady(ctx context.Context) error {
 	log.Println("🔍 Checking database deployment readiness with hybrid system...")
 
-	// Step 1: Run bun migrations
-	log.Println("🔄 Running bun migrations...")
-	if err := hdm.bunMigrator.MigrateToLatest(ctx); err != nil {
+	// Check if migrations are up to date (migrations already run during initialization)
+	log.Println("🔍 Checking migration status...")
+	currentVersion, err := hdm.bunMigrator.GetCurrentVersion(ctx)
+	if err != nil {
 		return err
 	}
-	log.Println("✅ Bun migrations completed successfully")
 
-	// Step 2: Verify bun schema
-	log.Println("🔍 Verifying bun schema...")
-	if err := hdm.bunMigrator.VerifySchema(ctx); err != nil {
-		return err
+	latestVersion := hdm.bunMigrator.GetLatestVersion()
+
+	if currentVersion < latestVersion {
+		return errors.New(RegistryBunMigrationFailed, "database is not at latest migration version", nil).
+			AddContext("current_version", currentVersion).
+			AddContext("latest_version", latestVersion)
 	}
-	log.Println("✅ Bun schema verification passed")
+	log.Println("✅ Migration status verified - database is up to date")
 
-	// Step 3: Your existing deployment logic (if needed)
-	// This gives you the flexibility to add custom deployment checks
+	// Run custom deployment checks (if needed)
 	if err := hdm.runCustomDeploymentChecks(ctx); err != nil {
 		return err
 	}
@@ -104,16 +106,17 @@ func (hdm *HybridDeploymentManager) GetDeploymentStatus(ctx context.Context) (*D
 		status = "pending"
 	}
 
-	// Check if schema verification would pass
+	// Check if migrations are up to date instead of running schema verification
 	schemaValid := true
-	if err := hdm.bunMigrator.VerifySchema(ctx); err != nil {
+	latestVersion := hdm.bunMigrator.GetLatestVersion()
+	if currentVersion < latestVersion {
 		schemaValid = false
 	}
 
 	return &DeploymentStatus{
 		Status:         status,
 		CurrentVersion: currentVersion,
-		LatestVersion:  1, // For now, hardcoded
+		LatestVersion:  latestVersion,
 		PendingCount:   pendingCount,
 		AppliedCount:   appliedCount,
 		SchemaValid:    schemaValid,
