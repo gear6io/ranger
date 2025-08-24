@@ -197,8 +197,8 @@ func (c *CDCSetup) dropTableTriggers(ctx context.Context, tableName string) erro
 
 // getTableColumns retrieves column information for a table
 func (c *CDCSetup) getTableColumns(ctx context.Context, tableName string) ([]string, error) {
-	query := "PRAGMA table_info(?)"
-	rows, err := c.db.QueryContext(ctx, query, tableName)
+	query := fmt.Sprintf("PRAGMA table_info(%s)", tableName)
+	rows, err := c.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

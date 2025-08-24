@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
@@ -76,6 +77,59 @@ func TestAsthaComponentRegistration(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
+	// Create the required tables that CDC setup expects
+	ctx := context.Background()
+
+	// Create tables table
+	_, err = db.ExecContext(ctx, `
+		CREATE TABLE tables (
+			id INTEGER PRIMARY KEY,
+			name TEXT NOT NULL,
+			database_id INTEGER NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)
+	`)
+	require.NoError(t, err)
+
+	// Create table_files table
+	_, err = db.ExecContext(ctx, `
+		CREATE TABLE table_files (
+			id INTEGER PRIMARY KEY,
+			table_id INTEGER NOT NULL,
+			file_path TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)
+	`)
+	require.NoError(t, err)
+
+	// Create table_statistics table
+	_, err = db.ExecContext(ctx, `
+		CREATE TABLE table_statistics (
+			id INTEGER PRIMARY KEY,
+			table_id INTEGER NOT NULL,
+			stat_name TEXT NOT NULL,
+			stat_value TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)
+	`)
+	require.NoError(t, err)
+
+	// Create table_metadata table
+	_, err = db.ExecContext(ctx, `
+		CREATE TABLE table_metadata (
+			id INTEGER PRIMARY KEY,
+			table_id INTEGER NOT NULL,
+			metadata_key TEXT NOT NULL,
+			metadata_value TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)
+	`)
+	require.NoError(t, err)
+
 	// Create astha config
 	cfg := &Config{
 		Database:     db,
@@ -128,12 +182,12 @@ func TestEventStore(t *testing.T) {
 	// Create event store
 	eventStore := NewMemoryEventStore(logger)
 
-	// Create test event
-	event := Event[any]{
+	// Create test event using supported type
+	event := Event[regtypes.Table]{
 		ID:        1,
 		Table:     "tables",
 		Operation: "INSERT",
-		Data:      map[string]interface{}{"id": 1, "name": "test_table"},
+		Data:      regtypes.Table{ID: 1, Name: "test_table"},
 		Timestamp: time.Now(),
 		CreatedAt: time.Now(),
 	}
@@ -153,7 +207,7 @@ func TestEventStore(t *testing.T) {
 	assert.Len(t, events, 1)
 
 	// Type assert to access the ID field
-	if eventData, ok := events[0].(Event[any]); ok {
+	if eventData, ok := events[0].(Event[regtypes.Table]); ok {
 		assert.Equal(t, int64(1), eventData.ID)
 	} else {
 		t.Error("Failed to type assert event")
@@ -196,7 +250,9 @@ func TestCDCConsumer(t *testing.T) {
 	assert.Equal(t, 100*time.Millisecond, consumer.pollInterval)
 
 	// Test CDC consumer start
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	err = consumer.Start(ctx)
 	require.NoError(t, err)
 
