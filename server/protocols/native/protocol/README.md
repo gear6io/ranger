@@ -1,6 +1,6 @@
 # Unified Protocol Package
 
-This package provides a unified protocol system for Icebox that eliminates protocol mismatches between the SDK and server by providing a single source of truth for all protocol definitions.
+This package provides a unified protocol system for Ranger that eliminates protocol mismatches between the SDK and server by providing a single source of truth for all protocol definitions.
 
 ## Architecture
 

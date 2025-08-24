@@ -12,7 +12,7 @@ const (
 	// Selected to avoid PostgreSQL (5432), MySQL (3306), SQL Server (1433), Oracle (1521)
 	JDBC_SERVER_PORT = 2848
 
-	// Native Protocol Server Port - Icebox-specific binary protocol
+	// Native Protocol Server Port - Ranger-specific binary protocol
 	// Selected to avoid ClickHouse (9000), MinIO (9000), Hadoop (50070+), Kafka (9092)
 	NATIVE_SERVER_PORT = 2849
 

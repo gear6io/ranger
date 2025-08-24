@@ -6,15 +6,15 @@ import (
 	"iter"
 	"net/url"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/catalog/shared"
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/paths"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 	icebergrest "github.com/apache/iceberg-go/catalog/rest"
 	icebergio "github.com/apache/iceberg-go/io"
 	"github.com/apache/iceberg-go/table"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/catalog/shared"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/paths"
 )
 
 // ComponentType defines the REST catalog component type identifier
@@ -56,13 +56,13 @@ func NewCatalog(cfg *config.Config, pathManager paths.PathManager) (*Catalog, er
 	// The catalog only manages Iceberg catalog and metadata files
 
 	// Create the REST catalog with required parameters
-	restCatalog, err := icebergrest.NewCatalog(context.Background(), "icebox-rest-catalog", baseURL.String(), opts...)
+	restCatalog, err := icebergrest.NewCatalog(context.Background(), "ranger-rest-catalog", baseURL.String(), opts...)
 	if err != nil {
 		return nil, errors.New(shared.CatalogInternal, "failed to create REST catalog", err)
 	}
 
 	return &Catalog{
-		name:        "icebox-rest-catalog",
+		name:        "ranger-rest-catalog",
 		restCatalog: restCatalog,
 		fileIO:      icebergio.LocalFS{},
 		pathManager: pathManager,

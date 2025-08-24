@@ -1,6 +1,6 @@
-# Icebox Errors Package
+# Data Lakehouse Errors Package
 
-A clean, simple, and powerful error handling package for the Icebox project with **validated error codes** and **package prefixes**.
+A clean, simple, and powerful error handling package for the data lakehouse platform with **validated error codes** and **package prefixes**.
 
 ## Features
 
@@ -16,7 +16,7 @@ A clean, simple, and powerful error handling package for the Icebox project with
 ## Quick Start
 
 ```go
-import "github.com/TFMV/icebox/pkg/errors"
+import "github.com/gear6io/ranger/pkg/errors"
 
 // Simple error - code is compulsory, stack & timestamp automatic
 return errors.New(errors.FilesystemCode("table_not_found"), "table not found")
@@ -163,7 +163,7 @@ errors.AlreadyExists("already exists")
 
 ```go
 // Check if error is our Error type
-func IsIceboxError(err error) bool
+func IsRangerError(err error) bool
 
 // Extract context from error
 func GetContext(err error) map[string]string
@@ -247,7 +247,7 @@ All tests passing with comprehensive coverage:
 - ✅ Context management (`WithAdditional`)
 - ✅ Multiple `WithAdditional` calls
 - ✅ Standard error fallbacks
-- ✅ Helper functions (`IsIceboxError`, `GetContext`, `GetCode`)
+- ✅ Helper functions (`IsRangerError`, `GetContext`, `GetCode`)
 - ✅ Common error constructors
 - ✅ Error formatting and logging
 
@@ -259,7 +259,7 @@ All tests passing with comprehensive coverage:
 // server/query/errors.go
 package query
 
-import "github.com/TFMV/icebox/pkg/errors"
+import "github.com/gear6io/ranger/pkg/errors"
 
 // Define package-specific codes
 var (
@@ -325,7 +325,7 @@ func HandleUserRequest(w http.ResponseWriter, r *http.Request) {
         // Log the error with full context
         log.Printf("Error: %s", errors.FormatForLog(err))
         
-        if errors.IsIceboxError(err) && errors.GetCode(err) == errors.CommonNotFound.String() {
+        if errors.IsRangerError(err) && errors.GetCode(err) == errors.CommonNotFound.String() {
             http.Error(w, "User not found", http.StatusNotFound)
         } else {
             http.Error(w, "Internal server error", http.StatusInternalServerError)

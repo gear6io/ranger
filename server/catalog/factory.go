@@ -1,13 +1,13 @@
 package catalog
 
 import (
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/catalog/json"
-	"github.com/TFMV/icebox/server/catalog/rest"
-	"github.com/TFMV/icebox/server/catalog/sqlite"
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/paths"
-	"github.com/TFMV/icebox/server/shared"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/catalog/json"
+	"github.com/gear6io/ranger/server/catalog/rest"
+	"github.com/gear6io/ranger/server/catalog/sqlite"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/paths"
+	"github.com/gear6io/ranger/server/shared"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 )
 

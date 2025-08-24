@@ -17,8 +17,8 @@ import (
 	"github.com/google/uuid"
 
 	// Unified protocol package
-	"github.com/TFMV/icebox/server/protocols/native/protocol"
-	"github.com/TFMV/icebox/server/protocols/native/protocol/signals"
+	"github.com/gear6io/ranger/server/protocols/native/protocol"
+	"github.com/gear6io/ranger/server/protocols/native/protocol/signals"
 )
 
 // ServerVersion represents server version information
@@ -137,7 +137,7 @@ type Exception struct {
 
 // Error implements the error interface
 func (e *Exception) Error() string {
-	return fmt.Sprintf("icebox exception [%d]: %s - %s", e.Code, e.Name, e.Message)
+	return fmt.Sprintf("ranger exception [%d]: %s - %s", e.Code, e.Name, e.Message)
 }
 
 // GenerateQueryID generates a unique query ID
@@ -570,7 +570,7 @@ func (c *sqlConn) Begin() (driver.Tx, error) {
 }
 
 func (c *sqlConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	// Icebox doesn't support transactions, so we return a no-op transaction
+	// Ranger doesn't support transactions, so we return a no-op transaction
 	return &sqlTx{conn: c}, nil
 }
 
@@ -698,12 +698,12 @@ type sqlTx struct {
 }
 
 func (t *sqlTx) Commit() error {
-	// No-op for Icebox
+	// No-op for Ranger
 	return nil
 }
 
 func (t *sqlTx) Rollback() error {
-	// No-op for Icebox
+	// No-op for Ranger
 	return nil
 }
 

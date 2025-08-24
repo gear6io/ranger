@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TFMV/icebox/server/query/parser"
+	"github.com/gear6io/ranger/server/query/parser"
 	"github.com/rs/zerolog"
 )
 

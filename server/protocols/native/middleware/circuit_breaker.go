@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/TFMV/icebox/pkg/errors"
+	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/rs/zerolog"
 )
 
@@ -28,7 +28,7 @@ type ResourceThresholds struct {
 	MaxConcurrentQueries int           // Maximum concurrent queries per connection
 }
 
-// CircuitBreaker protects Icebox from resource-consuming queries
+// CircuitBreaker protects Ranger from resource-consuming queries
 type CircuitBreaker struct {
 	state  CircuitState
 	mu     sync.RWMutex

@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/paths"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/paths"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,11 +21,11 @@ func TestNewCatalog(t *testing.T) {
 
 	// Create test configuration
 	cfg := config.LoadDefaultConfig()
-	cfg.Storage.DataPath = "/tmp/icebox_test"
+	cfg.Storage.DataPath = "/tmp/ranger_test"
 	cfg.Storage.Catalog.Type = "rest"
 
 	// Create path manager
-	pathManager := &paths.MockPathManager{BasePath: "/tmp/icebox_test"}
+	pathManager := &paths.MockPathManager{BasePath: "/tmp/ranger_test"}
 
 	// Create catalog
 	catalog, err := NewCatalog(cfg, pathManager)
@@ -33,7 +33,7 @@ func TestNewCatalog(t *testing.T) {
 	defer catalog.Close()
 
 	// Verify catalog properties
-	assert.Equal(t, "icebox-rest-catalog", catalog.Name())
+	assert.Equal(t, "ranger-rest-catalog", catalog.Name())
 	assert.Equal(t, "rest", cfg.Storage.Catalog.Type)
 }
 
@@ -213,7 +213,7 @@ func TestCatalogName(t *testing.T) {
 	}
 	defer catalog.Close()
 
-	expectedName := "icebox-rest-catalog"
+	expectedName := "ranger-rest-catalog"
 	if catalog.Name() != expectedName {
 		t.Errorf("Expected catalog name %s, got %s", expectedName, catalog.Name())
 	}
@@ -268,7 +268,7 @@ func TestCatalogInterfaceCompliance(t *testing.T) {
 // Helper functions
 
 func createTestConfig(t *testing.T) *config.Config {
-	tempDir, err := os.MkdirTemp("", "icebox-rest-catalog-test")
+	tempDir, err := os.MkdirTemp("", "ranger-rest-catalog-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}

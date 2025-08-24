@@ -1,30 +1,35 @@
 # Security Policy
 
+## Supported Versions
+
+Use this section to tell people about which versions of your project are currently being supported with security updates.
+
+| Version | Supported          |
+| ------- | ------------------ |
+| 1.0.x   | :white_check_mark: |
+
 ## Reporting a Vulnerability
 
-The Icebox team and community take security bugs in Icebox seriously. We appreciate your efforts to responsibly disclose your findings, and will make every effort to acknowledge your contributions.
+The Data Lakehouse Platform team and community take security bugs in the platform seriously. We appreciate your efforts to responsibly disclose your findings, and will make every effort to acknowledge your contributions.
 
-To report a security vulnerability, please use the GitHub Security Advisory "Report a Vulnerability" feature. This can be found by navigating to the "Security" tab of the Icebox repository on GitHub.
+To report a security vulnerability, please use the [GitHub Security tab](https://github.com/gear6io/ranger/security/advisories) by navigating to the "Security" tab of the repository on GitHub.
 
-**Please do not report security vulnerabilities through public GitHub issues.**
+**Please do not report security vulnerabilities through public GitHub issues, discussions, or pull requests.**
 
-When reporting a security vulnerability, please provide the following information:
+## What to expect
 
-- A clear description of the vulnerability.
-- Steps to reproduce the vulnerability, including any specific configurations or data required.
-- The potential impact of the vulnerability.
-- Any known mitigations or workarounds.
+When the Data Lakehouse Platform team receives a security bug report, they will assign it to a primary handler. This person will coordinate the fix and release process, involving the following steps:
+
+1. Confirm the problem and determine the affected versions.
+2. Audit code to find any similar problems.
+3. Prepare fixes for all supported versions. These fixes will be released as fast as possible to the main branch.
 
 ## Disclosure Policy
 
-When the Icebox team receives a security bug report, they will assign it to a primary handler. This person will coordinate the fix and release process, involving the following steps:
+When the team receives a security bug report, we will:
 
-- **Confirmation**: Confirm the problem and determine the affected versions.
-- **Solution**: Audit code to find any similar problems.
-- **Release**: Prepare fixes for eventual release.
+1. Confirm the problem and determine the affected versions.
+2. Audit code to find any similar problems.
+3. Prepare fixes for all supported versions. These fixes will be released as fast as possible to the main branch.
 
-We aim to acknowledge receipt of all vulnerability reports within 48 hours and to provide an initial assessment of the vulnerability within 72 hours.
-
-We will coordinate with you on the public disclosure of the vulnerability. We prefer to fully address a vulnerability before public disclosure.
-
-Thank you for helping keep Icebox secure.
+Thank you for helping keep the Data Lakehouse Platform secure.

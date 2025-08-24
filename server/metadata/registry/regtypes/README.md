@@ -1,6 +1,6 @@
 # Registry Types (regtypes)
 
-This package contains the core type definitions for the Icebox metadata registry system, organized for clarity and maintainability.
+This package contains the core type definitions for the Ranger metadata registry system, organized for clarity and maintainability.
 
 ## 🏗️ **Package Overview**
 
@@ -83,7 +83,7 @@ Each type includes proper Bun ORM relationship tags:
 
 ### **Basic Table Creation**
 ```go
-import "github.com/TFMV/icebox/server/metadata/registry/regtypes"
+import "github.com/gear6io/ranger/server/metadata/registry/regtypes"
 
 // Create a new table
 table := &regtypes.Table{

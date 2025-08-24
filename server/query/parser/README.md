@@ -1,6 +1,6 @@
-# SQL Parser Integration with Icebox
+# SQL Parser Integration with Ranger
 
-This directory contains the SQL parser that has been integrated with the Icebox project. The parser provides comprehensive SQL parsing capabilities while maintaining compatibility with Icebox's architecture.
+This directory contains the SQL parser that has been integrated with the Ranger project. The parser provides comprehensive SQL parsing capabilities while maintaining compatibility with Ranger's architecture.
 
 ## Overview
 
@@ -15,10 +15,10 @@ The SQL parser is a production-ready SQL parser that supports:
 
 ## Integration Details
 
-### 1. **Replaces SQL parser-specific imports** with Icebox-compatible types
+### 1. **Replaces SQL parser-specific imports** with Ranger-compatible types
 - **Import Paths**: Changed from external parser packages to local type definitions
-- **Type Compatibility**: Maintains full parser functionality while using Icebox types
-- **No External Dependencies**: Self-contained within the Icebox project
+- **Type Compatibility**: Maintains full parser functionality while using Ranger types
+- **No External Dependencies**: Self-contained within the Ranger project
 
 ### 2. **Preserved SQL Parser Features**
 - **Lexer**: Complete tokenization of SQL input
@@ -33,7 +33,7 @@ The SQL parser is a production-ready SQL parser that supports:
 ```go
 package main
 
-import "github.com/TFMV/icebox/server/query/parser"
+import "github.com/gear6io/ranger/server/query/parser"
 
 func main() {
     input := []byte("SELECT * FROM users WHERE id = 1")
@@ -110,7 +110,7 @@ go test ./server/query/parser/
 1. **Preserve SQL Parser Functionality**: Don't remove parsing capabilities unless absolutely necessary
 2. **Performance Optimization**: Enhance parsing speed for large queries
 3. **Extended SQL Support**: Add support for additional SQL dialects
-4. **Integration Testing**: Comprehensive testing with Icebox components
+4. **Integration Testing**: Comprehensive testing with Ranger components
 
 ## Architecture
 

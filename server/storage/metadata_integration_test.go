@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/TFMV/icebox/server/config"
+	"github.com/gear6io/ranger/server/config"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +17,7 @@ func TestMetadataUpdateAfterInsertion(t *testing.T) {
 	// of this unit test.
 
 	// Create test configuration with unique temporary directory
-	tempDir, err := os.MkdirTemp("", "icebox_test_metadata")
+	tempDir, err := os.MkdirTemp("", "ranger_test_metadata")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
@@ -60,7 +60,7 @@ func TestMetadataUpdateMethodSignatures(t *testing.T) {
 	// and that the methods can be called with the right parameters
 
 	// Create test configuration with unique temporary directory
-	tempDir, err := os.MkdirTemp("", "icebox_test_metadata_sig")
+	tempDir, err := os.MkdirTemp("", "ranger_test_metadata_sig")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 

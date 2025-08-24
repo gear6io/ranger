@@ -5,11 +5,11 @@ import (
 	"os"
 	"testing"
 
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/paths"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/table"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/paths"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -41,8 +41,8 @@ func TestNewCatalogSQLite(t *testing.T) {
 	}
 	defer catalog.Close()
 
-	if catalog.Name() != "icebox-sqlite-catalog" {
-		t.Errorf("Expected catalog name 'icebox-sqlite-catalog', got %s", catalog.Name())
+	if catalog.Name() != "ranger-sqlite-catalog" {
+		t.Errorf("Expected catalog name 'ranger-sqlite-catalog', got %s", catalog.Name())
 	}
 
 	if catalog.CatalogType() != icebergcatalog.SQL {
@@ -67,8 +67,8 @@ func TestNewCatalogREST(t *testing.T) {
 	}
 	defer catalog.Close()
 
-	if catalog.Name() != "icebox-rest-catalog" {
-		t.Errorf("Expected catalog name 'icebox-rest-catalog', got %s", catalog.Name())
+	if catalog.Name() != "ranger-rest-catalog" {
+		t.Errorf("Expected catalog name 'ranger-rest-catalog', got %s", catalog.Name())
 	}
 
 	if catalog.CatalogType() != icebergcatalog.REST {
@@ -128,7 +128,7 @@ func TestNewCatalogJSON(t *testing.T) {
 	catalog, err := NewCatalog(cfg, pathManager)
 	require.NoError(t, err)
 	assert.NotNil(t, catalog)
-	assert.Equal(t, "icebox-json-catalog", catalog.Name())
+	assert.Equal(t, "ranger-json-catalog", catalog.Name())
 	assert.Equal(t, icebergcatalog.Hive, catalog.CatalogType())
 
 	// Test basic functionality

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/TFMV/icebox/pkg/sdk"
+	"github.com/gear6io/ranger/pkg/sdk"
 )
 
 // TestRowsErrorHandling tests the error handling capabilities of the Rows struct
@@ -151,7 +151,7 @@ func TestProtocolErrorHandling(t *testing.T) {
 		}
 
 		errorMsg := exception.Error()
-		assert.Contains(t, errorMsg, "icebox exception [1001]")
+		assert.Contains(t, errorMsg, "ranger exception [1001]")
 		assert.Contains(t, errorMsg, "TableNotFound")
 		assert.Contains(t, errorMsg, "Table 'users' does not exist")
 	})
@@ -166,7 +166,7 @@ func TestProtocolErrorHandling(t *testing.T) {
 		}
 
 		errorMsg := exception.Error()
-		assert.Contains(t, errorMsg, "icebox exception [0]")
+		assert.Contains(t, errorMsg, "ranger exception [0]")
 		assert.Contains(t, errorMsg, ": ")
 	})
 
@@ -180,7 +180,7 @@ func TestProtocolErrorHandling(t *testing.T) {
 		}
 
 		errorMsg := exception.Error()
-		assert.Contains(t, errorMsg, "icebox exception [1002]")
+		assert.Contains(t, errorMsg, "ranger exception [1002]")
 		assert.Contains(t, errorMsg, "Invalid syntax: 'SELECT * FROM table WHERE id = '1''")
 	})
 }

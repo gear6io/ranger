@@ -1,6 +1,8 @@
-# Icebox Metadata Package
+# Ranger Metadata Package
 
-A modern metadata management system that coordinates between Iceberg catalog operations and Icebox's personal metadata storage, using bun ORM for professional-grade migrations and deployment safety.
+## Overview
+
+A modern metadata management system that coordinates between Iceberg catalog operations and Ranger's personal metadata storage, using bun ORM for professional-grade migrations and deployment safety.
 
 ## 🏗️ **Architecture Overview**
 
@@ -40,10 +42,10 @@ MetadataManager (Coordinator)
 ### **Basic Usage**
 
 ```go
-import "github.com/TFMV/icebox/server/metadata"
+import "github.com/gear6io/ranger/server/metadata"
 
 // Create metadata manager with bun migrations
-manager, err := metadata.NewMetadataManager(catalog, "/tmp/icebox.db", "/tmp/icebox/data")
+manager, err := metadata.NewMetadataManager(catalog, "/tmp/ranger.db", "/tmp/ranger/data")
 if err != nil {
     log.Fatal(err)
 }
@@ -220,16 +222,16 @@ server/metadata/
 
 ### **Environment Variables**
 
-- `ICEBOX_DB_PATH`: Path to SQLite database file
-- `ICEBOX_DATA_PATH`: Path to data storage directory
+- `RANGER_DB_PATH`: Path to SQLite database file
+- `RANGER_DATA_PATH`: Path to data storage directory
 
 ### **Configuration File**
 
 ```yaml
-# icebox-server.yml
+# ranger-server.yml
 metadata:
-  db_path: "/var/lib/icebox/metadata.db"
-  data_path: "/var/lib/icebox/data"
+  db_path: "/var/lib/ranger/metadata.db"
+  data_path: "/var/lib/ranger/data"
   deployment:
     fail_fast: true
     verify_schema: true
@@ -339,7 +341,7 @@ func migrateWithValidation(ctx context.Context, db *bun.DB) error {
 
 ## 📄 **License**
 
-This project is licensed under the same license as the main Icebox project.
+This project is licensed under the same license as the main Ranger project.
 
 ---
 

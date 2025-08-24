@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/paths"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/table"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/paths"
 )
 
 // TestMain cleans up test databases after all tests
@@ -68,8 +68,8 @@ func TestNewCatalog(t *testing.T) {
 	}
 	defer catalog.Close()
 
-	if catalog.Name() != "icebox-sqlite-catalog" {
-		t.Errorf("Expected catalog name 'icebox-sqlite-catalog', got '%s'", catalog.Name())
+	if catalog.Name() != "ranger-sqlite-catalog" {
+		t.Errorf("Expected catalog name 'ranger-sqlite-catalog', got '%s'", catalog.Name())
 	}
 
 	if catalog.CatalogType() != icebergcatalog.SQL {

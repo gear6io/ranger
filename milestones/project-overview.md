@@ -1,13 +1,13 @@
-# 🚀 Icebox Parquet Storage Project Overview
+# 🚀 Data Lakehouse Parquet Storage Project Overview
 
 **Status**: 🚧 In Planning  
 **Project Duration**: 8-10 weeks  
 **Team Size**: 3-4 developers  
 **Priority**: 🔴 High  
 
-## 🎯 Project Vision
+## Project Summary
 
-Transform Icebox from a JSON-based storage system to a fully Apache Iceberg native platform that writes Parquet files on disk with minimal memory usage, proper file rotation, and complete Iceberg compliance.
+Transform the data lakehouse platform from a JSON-based storage system to a fully Apache Iceberg native platform that writes Parquet files on disk with minimal memory usage, proper file rotation, and complete Iceberg compliance.
 
 ## 📊 Current State Assessment
 
@@ -226,7 +226,7 @@ Week 10: Integration & Deployment
 - [ ] Production-ready with comprehensive monitoring and alerting
 
 ### **Project Success (Week 10)**
-- [ ] Icebox fully transformed to Apache Iceberg native storage
+- [ ] Data lakehouse fully transformed to Apache Iceberg native storage
 - [ ] All performance and quality metrics met
 - [ ] Production deployment successful
 - [ ] User adoption and satisfaction high

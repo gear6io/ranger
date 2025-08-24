@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/query"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/query"
 	"github.com/rs/zerolog"
 )
 

@@ -1,5 +1,5 @@
 // Package parser
-// SQL parser package integrated with Icebox
+// SQL parser package integrated with Ranger
 // Copyright (C) Alex Gaetano Padula
 //
 // This program is free software: you can redistribute it and/or modify
@@ -16,8 +16,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 package parser
 
-// Parser is following American National Standard SQL 1986/SQL-87/SQL-89 with some minor upgrades
-// INTEGRATED WITH ICEBOX - Some functionality commented out for compatibility
+// INTEGRATED WITH RANGER - Some functionality commented out for compatibility
 
 import (
 	"errors"
@@ -26,7 +25,7 @@ import (
 	"strings"
 )
 
-// Icebox-compatible data types - simplified version of SQL parser types
+// Ranger-compatible data types - simplified version of SQL parser types
 var basicDataTypes = []string{
 	"INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT",
 	"VARCHAR", "CHAR", "TEXT", "STRING",
@@ -60,7 +59,7 @@ var keywords = append([]string{
 	"COMPRESS", "ENCRYPT", "COLUMN", "ENGINE", "IF NOT EXISTS",
 }, basicDataTypes...)
 
-// Icebox-compatible type definitions to replace SQL parser types
+// Ranger-compatible type definitions to replace SQL parser types
 
 // PrivilegeAction represents a database privilege action
 type PrivilegeAction string

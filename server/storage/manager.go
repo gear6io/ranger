@@ -11,15 +11,15 @@ import (
 	"bufio"
 	"strings"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/catalog"
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/metadata"
-	"github.com/TFMV/icebox/server/metadata/registry"
-	"github.com/TFMV/icebox/server/paths"
-	"github.com/TFMV/icebox/server/storage/filesystem"
-	"github.com/TFMV/icebox/server/storage/memory"
-	"github.com/TFMV/icebox/server/storage/s3"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/catalog"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/metadata"
+	"github.com/gear6io/ranger/server/metadata/registry"
+	"github.com/gear6io/ranger/server/paths"
+	"github.com/gear6io/ranger/server/storage/filesystem"
+	"github.com/gear6io/ranger/server/storage/memory"
+	"github.com/gear6io/ranger/server/storage/s3"
 	"github.com/rs/zerolog"
 )
 
@@ -693,7 +693,7 @@ func (m *Manager) createIcebergMetadata(database, tableName string, schema []byt
 		"snapshot-log":          []interface{}{},
 		"metadata-log":          []interface{}{},
 		"properties": map[string]interface{}{
-			"engine-name":    "icebox",
+			"engine-name":    "ranger",
 			"engine-version": "0.1.0",
 		},
 	}

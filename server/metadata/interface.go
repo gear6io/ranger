@@ -3,7 +3,7 @@ package metadata
 import (
 	"context"
 
-	"github.com/TFMV/icebox/server/metadata/registry"
+	"github.com/gear6io/ranger/server/metadata/registry"
 )
 
 // MetadataManagerInterface defines the interface for the metadata manager

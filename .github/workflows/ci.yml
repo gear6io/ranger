@@ -126,8 +126,8 @@ jobs:
       - name: Test binary execution
         run: |
           echo "Testing binary execution..."
-          ./icebox-server --help || echo "icebox-server help failed"
-          ./icebox-client --help || echo "icebox-client help failed"
+          ./ranger-server --help || echo "ranger-server help failed"
+          ./ranger-client --help || echo "ranger-client help failed"
 
   integration-test:
     name: Integration Tests
@@ -150,7 +150,7 @@ jobs:
       - name: Run integration tests
         run: make test-integration
         env:
-          ICEBOX_INTEGRATION_TESTS: "true"
+          RANGER_INTEGRATION_TESTS: "true"
 
       - name: Upload integration test results
         uses: actions/upload-artifact@v4
@@ -223,9 +223,9 @@ jobs:
       - name: Validate configuration files
         run: |
           echo "Validating configuration files..."
-          if [ -f "icebox-server.yml" ]; then
-            echo "✅ icebox-server.yml exists"
+          if [ -f "ranger-server.yml" ]; then
+            echo "✅ ranger-server.yml exists"
           else
-            echo "❌ icebox-server.yml missing"
+            echo "❌ ranger-server.yml missing"
             exit 1
           fi

@@ -7,13 +7,13 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/TFMV/icebox/server"
-	"github.com/TFMV/icebox/server/config"
+	"github.com/gear6io/ranger/server"
+	"github.com/gear6io/ranger/server/config"
 )
 
 func main() {
 	// Load server configuration first
-	cfg, err := config.LoadConfig("icebox-server.yml")
+	cfg, err := config.LoadConfig("ranger-server.yml")
 	if err != nil {
 		// Try default config if file not found
 		cfg = config.LoadDefaultConfig()
@@ -45,12 +45,12 @@ func main() {
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
 
-		logger.Info().Msg("Shutting down icebox server...")
+		logger.Info().Msg("Shutting down data lakehouse server...")
 		cancel()
 	}()
 
 	// Start server
-	logger.Info().Msg("Starting icebox server...")
+	logger.Info().Msg("Starting data lakehouse server...")
 	if err := srv.Start(ctx); err != nil {
 		logger.Fatal().Err(err).Msg("Server failed")
 		os.Exit(1)

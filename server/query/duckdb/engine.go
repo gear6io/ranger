@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TFMV/icebox/server/catalog"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/apache/iceberg-go/table"
+	"github.com/gear6io/ranger/server/catalog"
 
 	_ "github.com/marcboeker/go-duckdb/v2"
 )
@@ -225,7 +225,7 @@ func (e *Engine) initializeExtensions() error {
 		// Try to load extension - failure is acceptable for optional extensions
 		if _, err := e.db.Exec(fmt.Sprintf("LOAD %s", ext)); err != nil {
 			e.log.Printf("Warning: Optional %s extension not available on this platform: %v", ext, err)
-			e.log.Printf("Info: Icebox will continue without native Iceberg support - some features may be limited")
+			e.log.Printf("Info: Ranger will continue without native Iceberg support - some features may be limited")
 			if ext == "iceberg" {
 				e.icebergAvailable = false
 			}

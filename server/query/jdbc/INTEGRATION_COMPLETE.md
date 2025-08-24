@@ -2,7 +2,7 @@
 
 ## Summary
 
-The integration of SQL Parser with the existing JDBC handler in Icebox has been **successfully completed**. The JDBC connection now leverages SQL Parser for enhanced query analysis, validation, and monitoring while maintaining full backward compatibility.
+The integration of SQL Parser with the existing JDBC handler in Ranger has been **successfully completed**. The JDBC connection now leverages SQL Parser for enhanced query analysis, validation, and monitoring while maintaining full backward compatibility.
 
 ## Accomplished Tasks
 
@@ -153,4 +153,4 @@ The SQL parser integration with the JDBC handler is **100% complete** and ready 
 - **Performance Insights**: Optimization hints and complexity assessment
 - **Zero Disruption**: Full backward compatibility maintained
 
-The JDBC connection in Icebox now leverages the full power of SQL parsing while maintaining the reliability and performance of the existing DuckDB engine. This integration represents a significant upgrade to the database's capabilities without any disruption to existing functionality.
+The JDBC connection in Ranger now leverages the full power of SQL parsing while maintaining the reliability and performance of the existing DuckDB engine. This integration represents a significant upgrade to the database's capabilities without any disruption to existing functionality.

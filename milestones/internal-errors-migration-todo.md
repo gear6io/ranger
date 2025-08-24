@@ -1,7 +1,7 @@
 # Internal Errors Package Migration Todo
 
 ## Overview
-This document tracks the migration of all packages from using Go's standard `fmt.Errorf` and `errors.New` to the internal `github.com/TFMV/icebox/pkg/errors` package. This migration is required to follow the workspace rule: "Never use fmt.Errorf or errors.New, must always use the internal errors package".
+This document tracks the migration of all packages from using Go's standard `fmt.Errorf` and `errors.New` to the internal `github.com/gear6io/ranger/pkg/errors` package. This migration is required to follow the workspace rule: "Never use fmt.Errorf or errors.New, must always use the internal errors package".
 
 ## Current Errors API Status
 **⚠️ IMPORTANT: The errors API has been simplified and no longer includes `WithAdditional` or `WithCause` methods.**

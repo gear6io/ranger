@@ -1,6 +1,6 @@
 package catalog
 
-import "github.com/TFMV/icebox/pkg/errors"
+import "github.com/gear6io/ranger/pkg/errors"
 
 // Catalog-specific error codes
 var (

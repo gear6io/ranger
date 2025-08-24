@@ -3,15 +3,15 @@ package loader
 import (
 	"context"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/catalog"
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/gateway"
-	"github.com/TFMV/icebox/server/metadata"
-	"github.com/TFMV/icebox/server/paths"
-	"github.com/TFMV/icebox/server/query"
-	"github.com/TFMV/icebox/server/shared"
-	"github.com/TFMV/icebox/server/storage"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/catalog"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/gateway"
+	"github.com/gear6io/ranger/server/metadata"
+	"github.com/gear6io/ranger/server/paths"
+	"github.com/gear6io/ranger/server/query"
+	"github.com/gear6io/ranger/server/shared"
+	"github.com/gear6io/ranger/server/storage"
 	"github.com/rs/zerolog"
 )
 

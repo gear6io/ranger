@@ -11,8 +11,8 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
-	"github.com/TFMV/icebox/server"
-	"github.com/TFMV/icebox/server/config"
+	"github.com/gear6io/ranger/server"
+	"github.com/gear6io/ranger/server/config"
 )
 
 // TestServer provides a real server for testing
@@ -26,7 +26,7 @@ func NewTestServer(t *testing.T) *TestServer {
 	t.Helper()
 
 	// Create temporary directory for test data
-	tempDir, err := os.MkdirTemp("", "icebox-test-*")
+	tempDir, err := os.MkdirTemp("", "ranger-test-*")
 	require.NoError(t, err)
 
 	// Create minimal test configuration

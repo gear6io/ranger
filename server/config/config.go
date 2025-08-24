@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/TFMV/icebox/pkg/errors"
+	"github.com/gear6io/ranger/pkg/errors"
 	"gopkg.in/yaml.v3"
 )
 
@@ -51,7 +51,7 @@ func LoadDefaultConfig() *Config {
 		Log: LogConfig{
 			Level:      "info",
 			Format:     "console",
-			FilePath:   "logs/icebox-server.log",
+			FilePath:   "logs/ranger-server.log",
 			Console:    true,
 			MaxSize:    100, // 100MB
 			MaxBackups: 3,

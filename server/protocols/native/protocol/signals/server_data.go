@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/TFMV/icebox/server/protocols/native/protocol"
+	"github.com/gear6io/ranger/server/protocols/native/protocol"
 )
 
 // ServerData represents a server data message for query results

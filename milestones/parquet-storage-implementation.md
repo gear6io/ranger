@@ -7,11 +7,11 @@
 
 ## 🎯 Overview
 
-Transform Icebox from JSON-based storage to a fully Apache Iceberg native system that writes Parquet files on disk with minimal memory usage, proper file rotation, and complete Iceberg compliance.
+Transform the data lakehouse platform from JSON-based storage to a fully Apache Iceberg native system that writes Parquet files on disk with minimal memory usage, proper file rotation, and complete Iceberg compliance.
 
 ## 📋 Requirements Summary
 
-- ❌ **No backward compatibility** - Icebox being Apache Iceberg native is supposed to write only Parquet files
+- ❌ **No backward compatibility** - The data lakehouse being Apache Iceberg native is supposed to write only Parquet files
 - ❌ **No schema inference** - Table schema will be fixed from user's standpoint, we would only like to validate the data against that schema
 - ❌ **Minimal memory usage** - Data shouldn't be copied in RAM, or to be copied least
 - ❌ **File rotation** - 50GB max for each file, SDK native batch = single file or split if crossed 50GB max
@@ -165,7 +165,7 @@ Transform Icebox from JSON-based storage to a fully Apache Iceberg native system
   - [ ] Add memory pressure handling and backpressure
 
 - [ ] **Optimize Arrow memory usage**
-  - [ ] Implement custom memory allocator for Icebox
+  - [ ] Implement custom memory allocator for the data lakehouse
   - [ ] Add memory pool management and reuse
   - [ ] Implement memory defragmentation strategies
   - [ ] Add memory usage profiling and optimization

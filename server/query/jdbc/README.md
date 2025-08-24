@@ -1,6 +1,6 @@
-# SQL Parser Integration with Icebox JDBC Handler
+# SQL Parser Integration with Ranger JDBC Handler
 
-This directory contains the enhanced JDBC handler that integrates SQL parsing and analysis capabilities with Icebox's existing DuckDB-based query execution engine.
+This directory contains the enhanced JDBC handler that integrates SQL parsing and analysis capabilities with Ranger's existing DuckDB-based query execution engine.
 
 ## Overview
 
@@ -45,7 +45,7 @@ type JDBCHandler struct {
 ```go
 import (
 	"github.com/rs/zerolog"
-	"github.com/TFMV/icebox/server/query/jdbc"
+	"github.com/gear6io/ranger/server/query/jdbc"
 )
 
 // Create logger
@@ -123,7 +123,7 @@ go test ./server/query/jdbc/integration_test.go
 ## Dependencies
 
 - `github.com/rs/zerolog` - Structured logging
-- `github.com/TFMV/icebox/server/query/parser` - SQL parser
+- `github.com/gear6io/ranger/server/query/parser` - SQL parser
 
 ## Examples
 

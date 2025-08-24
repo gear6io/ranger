@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  icebox-server:
+  ranger-server:
     build:
       context: .
       dockerfile: Dockerfile.server
@@ -9,18 +9,18 @@ services:
       - "8080:8080"
       - "5432:5432"
     volumes:
+      - ./ranger-server.yml:/root/ranger-server.yml
       - ./data:/root/data
-      - ./icebox-server.yml:/root/icebox-server.yml
     environment:
-      - ICEBOX_ENV=production
+      - RANGER_ENV=production
     restart: unless-stopped
 
-  icebox-client:
+  ranger-client:
     build:
       context: .
       dockerfile: Dockerfile.client
     depends_on:
-      - icebox-server
+      - ranger-server
     volumes:
-      - ./icebox-client.yml:/root/icebox-client.yml
-    command: ["./icebox-client", "shell"]
+      - ./ranger-client.yml:/root/ranger-client.yml
+    command: ["./ranger-client", "shell"]

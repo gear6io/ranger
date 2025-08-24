@@ -1,4 +1,4 @@
-module github.com/TFMV/icebox
+module github.com/gear6io/ranger
 
 go 1.24.2
 

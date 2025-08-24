@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/TFMV/icebox/server/config"
+	"github.com/gear6io/ranger/server/config"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,7 +13,7 @@ import (
 func TestStorageManagerWithCatalog(t *testing.T) {
 	// Load default configuration
 	cfg := config.LoadDefaultConfig()
-	cfg.Storage.DataPath = "/tmp/icebox_test"
+	cfg.Storage.DataPath = "/tmp/ranger_test"
 	cfg.Storage.Catalog.Type = "json"
 	// Storage engine is now specified per-table, not globally
 
@@ -28,7 +28,7 @@ func TestStorageManagerWithCatalog(t *testing.T) {
 	// Verify catalog was initialized
 	catalog := manager.GetCatalog()
 	assert.NotNil(t, catalog, "Catalog should be initialized")
-	assert.Equal(t, "icebox-json-catalog", catalog.Name())
+	assert.Equal(t, "ranger-json-catalog", catalog.Name())
 
 	// Verify path manager was initialized
 	pathManager := manager.GetPathManager()
@@ -36,7 +36,7 @@ func TestStorageManagerWithCatalog(t *testing.T) {
 
 	// Test catalog URI generation
 	catalogURI := pathManager.GetCatalogURI(cfg.GetCatalogType())
-	assert.Contains(t, catalogURI, "/tmp/icebox_test/catalog/catalog.json")
+	assert.Contains(t, catalogURI, "/tmp/ranger_test/catalog/catalog.json")
 
 	// Initialize storage
 	ctx := context.Background()
@@ -45,10 +45,10 @@ func TestStorageManagerWithCatalog(t *testing.T) {
 
 	// Get status
 	status := manager.GetStatus()
-	assert.Equal(t, "/tmp/icebox_test", status["base_path"])
-	assert.Equal(t, "/tmp/icebox_test/catalog", status["catalog_path"])
-	assert.Equal(t, "/tmp/icebox_test/data", status["data_path"])
-	assert.Equal(t, "/tmp/icebox_test/.icebox/metadata.db", status["metadata_path"])
+	assert.Equal(t, "/tmp/ranger_test", status["base_path"])
+	assert.Equal(t, "/tmp/ranger_test/catalog", status["catalog_path"])
+	assert.Equal(t, "/tmp/ranger_test/data", status["data_path"])
+	assert.Equal(t, "/tmp/ranger_test/.ranger/metadata.db", status["metadata_path"])
 	assert.Contains(t, status, "total_engines")
 	assert.Contains(t, status, "default_engine")
 }

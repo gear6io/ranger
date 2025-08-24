@@ -6,47 +6,46 @@ import (
 )
 
 // Helper to check if an error is of our Error type
-func IsIceboxError(err error) bool {
+func IsRangerError(err error) bool {
 	_, ok := err.(*Error)
 	return ok
 }
 
 // Helper to extract context from our errors
 func GetContext(err error) map[string]string {
-	if iceboxErr, ok := err.(*Error); ok {
-		return iceboxErr.Context
+	if rangerErr, ok := err.(*Error); ok {
+		return rangerErr.Context
 	}
 	return nil
 }
 
 // Helper to get error code
 func GetCode(err error) string {
-	if iceboxErr, ok := err.(*Error); ok {
-		return iceboxErr.Code.String()
+	if rangerErr, ok := err.(*Error); ok {
+		return rangerErr.Code.String()
 	}
 	return ""
 }
 
 // Helper to format error for logging
-func FormatForLog(err error) string {
-	if iceboxErr, ok := err.(*Error); ok {
+func FormatError(err error) string {
+	if rangerErr, ok := err.(*Error); ok {
 		var parts []string
-		parts = append(parts, fmt.Sprintf("Code: %s", iceboxErr.Code))
-		parts = append(parts, fmt.Sprintf("Message: %s", iceboxErr.Message))
+		parts = append(parts, fmt.Sprintf("Code: %s", rangerErr.Code))
+		parts = append(parts, fmt.Sprintf("Message: %s", rangerErr.Message))
 
-		if len(iceboxErr.Context) > 0 {
-			var contextParts []string
-			for k, v := range iceboxErr.Context {
-				contextParts = append(contextParts, fmt.Sprintf("%s=%s", k, v))
+		if len(rangerErr.Context) > 0 {
+			parts = append(parts, "Context:")
+			for k, v := range rangerErr.Context {
+				parts = append(parts, fmt.Sprintf("  %s: %v", k, v))
 			}
-			parts = append(parts, fmt.Sprintf("Context: %s", strings.Join(contextParts, ", ")))
 		}
 
-		if iceboxErr.Cause != nil {
-			parts = append(parts, fmt.Sprintf("Cause: %v", iceboxErr.Cause))
+		if rangerErr.Cause != nil {
+			parts = append(parts, fmt.Sprintf("Cause: %v", rangerErr.Cause))
 		}
 
-		return strings.Join(parts, " | ")
+		return strings.Join(parts, "\n")
 	}
 	return err.Error()
 }

@@ -1,4 +1,4 @@
-# GolangCI-Lint configuration for Icebox project
+# GolangCI-Lint configuration for Data Lakehouse Platform
 version: 1.0.0
 run:
   timeout: 5m

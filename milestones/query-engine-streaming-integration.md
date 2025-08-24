@@ -226,7 +226,7 @@ PASS: 4/4 tests passing
 - **Performance**: Streaming eliminates memory allocation overhead
 - **Maintainability**: Clean, consistent API design
 
-This milestone represents a significant step forward in making Icebox suitable for large-scale data operations while maintaining memory efficiency and performance.
+This milestone represents a significant step forward in making the data lakehouse platform suitable for large-scale data operations while maintaining memory efficiency and performance.
 
 ---
 

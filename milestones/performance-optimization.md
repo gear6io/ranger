@@ -5,9 +5,9 @@
 **Estimated Effort**: 2-3 weeks  
 **Dependencies**: Parquet Storage Implementation, Apache Arrow Go  
 
-## 🎯 Overview
+## �� Overview
 
-Optimize Icebox for high-performance, memory-efficient operations with focus on minimal RAM usage, streaming operations, and optimal resource utilization for large-scale data processing.
+Optimize the data lakehouse platform for high-performance, memory-efficient operations with focus on minimal RAM usage, streaming operations, and optimal resource utilization for large-scale data processing.
 
 > **🎉 STREAMING OPERATIONS COMPLETED**: Query Engine streaming integration has been successfully implemented, providing 80%+ memory reduction for large datasets. See [Query Engine Streaming Integration](query-engine-streaming-integration.md) for details.
 

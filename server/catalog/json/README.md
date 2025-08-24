@@ -1,8 +1,8 @@
-# 🧊 Icebox JSON Catalog for Apache Iceberg
+# 🧊 Ranger JSON Catalog for Apache Iceberg
 
 A **feature-complete**, local-first JSON-based catalog for Apache Iceberg for sandbox environments, embedded use cases, and rapid prototyping.
 
-> ⚡ Built into [Icebox](https://github.com/TFMV/icebox)  
+> ⚡ Built into [Data Lakehouse Platform](https://github.com/gear6io/ranger)  
 > 🪶 Inspired by [`boring-catalog`](https://github.com/boringdata/boring-catalog). Extended for full fidelity and concurrent workloads.
 
 ---
@@ -15,7 +15,7 @@ A **feature-complete**, local-first JSON-based catalog for Apache Iceberg for sa
 - **Optimistic concurrency**: Uses ETags to prevent race conditions
 - **Metrics & observability**: Tracks catalog ops, cache behavior, and detailed errors
 - **Type-complete**: Handles all Iceberg types — primitive, decimal, list, map, struct, and more
-- **Graceful fallbacks**: Load from `.icebox/index` for embedded catalog autodiscovery
+- **Graceful fallbacks**: Load from `.ranger/index` for embedded catalog autodiscovery
 
 ---
 
@@ -44,5 +44,5 @@ A **feature-complete**, local-first JSON-based catalog for Apache Iceberg for sa
 ### 🔁 Developer UX
 
 - Supports registration of existing tables with known metadata
-- Resilient startup via `.icebox/index` fallback
+- Resilient startup via `.ranger/index` fallback
 - Compatible with the `iceberg-go` interface for transparent drop-in usage

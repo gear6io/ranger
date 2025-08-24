@@ -1,11 +1,10 @@
 #!/bin/bash
-#
-# Install git hooks for Icebox project
+# Install git hooks for Data Lakehouse Platform
 #
 
 set -e
 
-echo "🔧 Installing git hooks for Icebox project..."
+echo "🔧 Installing git hooks for Data Lakehouse Platform..."
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/paths"
 	"github.com/apache/iceberg-go"
 	icebergcatalog "github.com/apache/iceberg-go/catalog"
 	"github.com/apache/iceberg-go/table"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/paths"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -56,7 +56,7 @@ func createTestCatalog(t *testing.T) (*Catalog, string) {
 func TestNewCatalog(t *testing.T) {
 	catalog, _ := createTestCatalog(t)
 	assert.NotNil(t, catalog)
-	assert.Equal(t, "icebox-json-catalog", catalog.Name())
+	assert.Equal(t, "ranger-json-catalog", catalog.Name())
 	assert.Equal(t, icebergcatalog.Hive, catalog.CatalogType())
 }
 
@@ -495,7 +495,7 @@ func TestCatalogFileStructure(t *testing.T) {
 	data, _, err := catalog.readCatalogData()
 	require.NoError(t, err)
 
-	assert.Equal(t, "icebox-json-catalog", data.CatalogName)
+	assert.Equal(t, "ranger-json-catalog", data.CatalogName)
 	assert.Contains(t, data.Namespaces, "test_namespace")
 	assert.Equal(t, "test", data.Namespaces["test_namespace"].Properties["description"])
 	assert.Contains(t, data.Tables, "test_namespace.test_table")
@@ -741,11 +741,11 @@ func TestPythonCatalogCompatibility(t *testing.T) {
 }
 
 func TestIndexConfigurationSupport(t *testing.T) {
-	// Create a temporary .icebox/index file
-	iceboxDir := filepath.Join(".", ".icebox")
-	err := os.MkdirAll(iceboxDir, 0755)
+	// Create a temporary .ranger/index file
+	rangerDir := filepath.Join(".", ".ranger")
+	err := os.MkdirAll(rangerDir, 0755)
 	require.NoError(t, err)
-	defer os.RemoveAll(iceboxDir)
+	defer os.RemoveAll(rangerDir)
 
 	tempDir, err := os.MkdirTemp("", "index-test")
 	require.NoError(t, err)
@@ -763,7 +763,7 @@ func TestIndexConfigurationSupport(t *testing.T) {
 	indexData, err := json.Marshal(indexConfig)
 	require.NoError(t, err)
 
-	indexPath := filepath.Join(iceboxDir, "index")
+	indexPath := filepath.Join(rangerDir, "index")
 	err = os.WriteFile(indexPath, indexData, 0644)
 	require.NoError(t, err)
 
@@ -773,7 +773,7 @@ func TestIndexConfigurationSupport(t *testing.T) {
 
 	catalog, err := NewCatalog(cfg, pathManager)
 	require.NoError(t, err)
-	assert.Equal(t, "icebox-json-catalog", catalog.Name())
+	assert.Equal(t, "ranger-json-catalog", catalog.Name())
 	assert.Equal(t, filepath.Join(tempDir, "catalog", "catalog.json"), catalog.uri)
 	// Note: warehouse field has been removed - catalogs only manage metadata
 
@@ -1529,7 +1529,7 @@ func TestIndexConfigurationEdgeCases(t *testing.T) {
 
 		catalog, err := NewCatalog(cfg, pathManager)
 		require.NoError(t, err)
-		assert.Equal(t, "icebox-json-catalog", catalog.Name())
+		assert.Equal(t, "ranger-json-catalog", catalog.Name())
 
 		err = catalog.Close()
 		assert.NoError(t, err)

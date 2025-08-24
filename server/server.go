@@ -5,12 +5,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/loader"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/loader"
 	"github.com/rs/zerolog"
 )
 
-// Server represents the main Icebox server
+// Server represents the main Data Lakehouse server
 type Server struct {
 	config    *config.Config
 	loader    *loader.Loader
@@ -45,14 +45,14 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Server, error) {
 
 // Start starts all protocol servers
 func (s *Server) Start(ctx context.Context) error {
-	s.logger.Info().Msg("Starting Icebox server...")
+	s.logger.Info().Msg("Starting Data Lakehouse server...")
 
 	// Start the Loader which will start all components including servers
 	if err := s.loader.Start(); err != nil {
 		return err
 	}
 
-	s.logger.Info().Msg("Icebox server started successfully")
+	s.logger.Info().Msg("Data Lakehouse server started successfully")
 	return nil
 }
 

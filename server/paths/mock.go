@@ -27,17 +27,17 @@ func (m *MockPathManager) GetDataPath() string {
 
 // GetInternalMetadataPath returns the internal metadata directory path
 func (m *MockPathManager) GetInternalMetadataPath() string {
-	return m.BasePath + "/.icebox"
+	return m.BasePath + "/.ranger"
 }
 
 // GetInternalMetadataDBPath returns the internal metadata database path
 func (m *MockPathManager) GetInternalMetadataDBPath() string {
-	return m.BasePath + "/.icebox/metadata.db"
+	return m.BasePath + "/.ranger/metadata.db"
 }
 
 // GetMigrationsPath returns the migrations directory path
 func (m *MockPathManager) GetMigrationsPath() string {
-	return m.BasePath + "/.icebox/migrations"
+	return m.BasePath + "/.ranger/migrations"
 }
 
 // GetCatalogURI returns the catalog URI based on catalog type

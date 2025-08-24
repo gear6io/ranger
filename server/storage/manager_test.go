@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TFMV/icebox/server/config"
+	"github.com/gear6io/ranger/server/config"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,7 +15,7 @@ import (
 
 func TestStorageManagerCreateTableWithEngines(t *testing.T) {
 	// Create test configuration with unique temporary directory
-	tempDir, err := os.MkdirTemp("", "icebox_test_storage_manager")
+	tempDir, err := os.MkdirTemp("", "ranger_test_storage_manager")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 

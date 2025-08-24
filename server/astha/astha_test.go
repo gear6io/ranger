@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
+	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"

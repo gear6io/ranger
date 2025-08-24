@@ -1,6 +1,6 @@
 package commands
 
-import "github.com/TFMV/icebox/pkg/errors"
+import "github.com/gear6io/ranger/pkg/errors"
 
 // Error codes for client commands package
 var (

@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/metadata/registry/migrations"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/metadata/registry/migrations"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/sqlitedialect"

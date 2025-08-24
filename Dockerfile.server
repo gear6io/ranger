@@ -4,15 +4,15 @@ WORKDIR /app
 COPY . .
 
 # Build server
-RUN go build -o icebox-server cmd/icebox-server/main.go
+RUN go build -o ranger-server cmd/ranger-server/main.go
 
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates
 
 WORKDIR /root/
-COPY --from=builder /app/icebox-server .
-COPY --from=builder /app/icebox-server.yml .
+COPY --from=builder /app/ranger-server .
+COPY --from=builder /app/ranger-server.yml .
 
 EXPOSE 8080 5432
 
-CMD ["./icebox-server"]
+CMD ["./ranger-server"]

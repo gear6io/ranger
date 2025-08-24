@@ -1,14 +1,14 @@
-# Contributing to Icebox
+# Contributing to Data Lakehouse Platform
 
-First off, thank you for considering contributing to Icebox! It's people like you that make Icebox such a great tool.
+First off, thank you for considering contributing to our data lakehouse platform! It's people like you that make this such a great tool.
 
-Icebox is an open-source project and we welcome any contributions, whether they are bug reports, feature requests, documentation improvements, or code contributions.
+This is an open-source project and we welcome any contributions, whether they are bug reports, feature requests, documentation improvements, or code contributions.
 
-This document provides guidelines for contributing to Icebox.
+This document provides guidelines for contributing to the platform.
 
 ## Table of Contents
 
-- [Contributing to Icebox](#contributing-to-icebox)
+- [Contributing to Data Lakehouse Platform](#contributing-to-data-lakehouse-platform)
   - [Table of Contents](#table-of-contents)
   - [Code of Conduct](#code-of-conduct)
   - [How Can I Contribute?](#how-can-i-contribute)
@@ -25,15 +25,15 @@ This document provides guidelines for contributing to Icebox.
 
 ## Code of Conduct
 
-This project and everyone participating in it is governed by the [Icebox Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to TFMV.
+This project and everyone participating in it is governed by our Code of Conduct. By participating, you are expected to uphold this code. Please report unacceptable behavior to the project maintainers.
 
 ## How Can I Contribute?
 
 ### Reporting Bugs
 
-If you find a bug, please ensure the bug was not already reported by searching on GitHub under [Issues](https://github.com/TFMV/icebox/issues).
+If you find a bug, please ensure the bug was not already reported by searching on GitHub under [Issues](https://github.com/gear6io/ranger/issues).
 
-If you're unable to find an open issue addressing the problem, [open a new one](https://github.com/TFMV/icebox/issues/new). Be sure to include a **title and clear description**, as much relevant information as possible, and a **code sample or an executable test case** demonstrating the expected behavior that is not occurring.
+If you're unable to find an open issue addressing the problem, [open a new one](https://github.com/gear6io/ranger/issues/new). Be sure to include a **title and clear description**, as much relevant information as possible, and a **code sample or an executable test case** demonstrating the expected behavior that is not occurring.
 
 ### Suggesting Enhancements
 
@@ -48,10 +48,10 @@ This allows for discussion and refinement of the idea before any code is written
 
 ### Your First Code Contribution
 
-Unsure where to begin contributing to Icebox? You can start by looking through `good first issue` and `help wanted` issues:
+Unsure where to begin contributing to the platform? You can start by looking through `good first issue` and `help wanted` issues:
 
-- [Good first issues](https://github.com/TFMV/icebox/labels/good%20first%20issue) - issues which should only require a few lines of code, and a test or two.
-- [Help wanted issues](https://github.com/TFMV/icebox/labels/help%20wanted) - issues which should be a bit more involved than `good first issue` issues.
+- [Good first issues](https://github.com/gear6io/ranger/labels/good%20first%20issue) - issues which should only require a few lines of code, and a test or two.
+- [Help wanted issues](https://github.com/gear6io/ranger/labels/help%20wanted) - issues which should be a bit more involved than `good first issue` issues.
 
 ### Pull Requests
 
@@ -76,10 +76,10 @@ Key prerequisites include:
 General build and test commands:
 
 ```bash
-git clone https://github.com/TFMV/icebox.git
-cd icebox
+git clone https://github.com/gear6io/ranger.git
+cd ranger
 go mod tidy
-go build -o icebox cmd/icebox/main.go
+go build -o ranger cmd/ranger-server/main.go
 go test ./...
 ```
 
@@ -201,6 +201,6 @@ Related to #456
 
 ## Community
 
-If you have questions, ideas, or just want to chat about Icebox, you can reach out via [GitHub Issues](https://github.com/TFMV/icebox/issues) or other channels that may be set up in the future (e.g., Discord, Slack).
+If you have questions, ideas, or just want to chat about the platform, you can reach out via [GitHub Issues](https://github.com/gear6io/ranger/issues) or other channels that may be set up in the future (e.g., Discord, Slack).
 
 We look forward to your contributions!

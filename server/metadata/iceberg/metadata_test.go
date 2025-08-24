@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TFMV/icebox/server/metadata/registry"
-	"github.com/TFMV/icebox/server/metadata/registry/regtypes"
+	"github.com/gear6io/ranger/server/metadata/registry"
+	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

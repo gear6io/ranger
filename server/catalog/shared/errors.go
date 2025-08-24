@@ -1,7 +1,7 @@
 package shared
 
 import (
-	"github.com/TFMV/icebox/pkg/errors"
+	"github.com/gear6io/ranger/pkg/errors"
 )
 
 // Catalog-specific error codes

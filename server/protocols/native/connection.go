@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TFMV/icebox/server/protocols/native/middleware"
-	"github.com/TFMV/icebox/server/protocols/native/protocol"
-	"github.com/TFMV/icebox/server/protocols/native/protocol/signals"
-	"github.com/TFMV/icebox/server/query"
+	"github.com/gear6io/ranger/server/protocols/native/middleware"
+	"github.com/gear6io/ranger/server/protocols/native/protocol"
+	"github.com/gear6io/ranger/server/protocols/native/protocol/signals"
+	"github.com/gear6io/ranger/server/query"
 	"github.com/rs/zerolog"
 )
 
@@ -476,7 +476,7 @@ func (h *ConnectionHandler) sendServerHello() error {
 	var payload []byte
 
 	// Server name
-	serverName := "Icebox Server"
+	serverName := "Ranger Server"
 	serverNameBytes := []byte(serverName)
 	serverNameLen := uint32(len(serverNameBytes))
 
@@ -512,7 +512,7 @@ func (h *ConnectionHandler) sendServerHello() error {
 	payload = append(payload, timezoneBytes...)
 
 	// Display name
-	displayName := "Icebox"
+	displayName := "Ranger"
 	displayNameBytes := []byte(displayName)
 	displayNameLen := uint32(len(displayNameBytes))
 	displayNameLenBytes := make([]byte, 4)
@@ -1008,7 +1008,7 @@ func (h *ConnectionHandler) handleClientCancelSignal(cancel *signals.ClientCance
 
 // sendServerHelloSignal sends server hello using unified protocol
 func (h *ConnectionHandler) sendServerHelloSignal() error {
-	hello := signals.NewServerHello("Icebox Server", "UTC", "Icebox Database Server")
+	hello := signals.NewServerHello("Ranger Server", "UTC", "Ranger Database Server")
 
 	message, err := h.codec.EncodeMessage(hello)
 	if err != nil {

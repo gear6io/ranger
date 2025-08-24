@@ -14,19 +14,19 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/catalog/shared"
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/paths"
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/catalog"
 	icebergio "github.com/apache/iceberg-go/io"
 	"github.com/apache/iceberg-go/table"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/catalog/shared"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/paths"
 	"github.com/google/uuid"
 )
 
 const (
-	DefaultCatalogName = "icebox"
+	DefaultCatalogName = "ranger"
 	// File permissions for catalog files
 	CatalogFilePermissions = 0644
 	// Maximum retry attempts for concurrent operations
@@ -330,28 +330,28 @@ func (m *CatalogMetrics) GetStats() map[string]int64 {
 	}
 }
 
-// IndexConfig represents the configuration stored in .icebox/index
+// IndexConfig represents the configuration stored in .ranger/index
 type IndexConfig struct {
 	CatalogName string                 `json:"catalog_name"`
 	CatalogURI  string                 `json:"catalog_uri"`
 	Properties  map[string]interface{} `json:"properties"`
 }
 
-// loadIndexConfig attempts to load configuration from .icebox/index file
+// loadIndexConfig attempts to load configuration from .ranger/index file
 func loadIndexConfig() (*IndexConfig, error) {
-	indexPath := filepath.Join(".", ".icebox", "index")
+	indexPath := filepath.Join(".", ".ranger", "index")
 	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
 		return nil, nil // No index file found, not an error
 	}
 
 	data, err := os.ReadFile(indexPath)
 	if err != nil {
-		return nil, errors.New(ErrIndexReadFailed, "failed to read .icebox/index", err)
+		return nil, errors.New(ErrIndexReadFailed, "failed to read .ranger/index", err)
 	}
 
 	var index IndexConfig
 	if err := json.Unmarshal(data, &index); err != nil {
-		return nil, errors.New(ErrIndexParseFailed, "failed to parse .icebox/index", err)
+		return nil, errors.New(ErrIndexParseFailed, "failed to parse .ranger/index", err)
 	}
 
 	return &index, nil
@@ -366,7 +366,7 @@ func NewCatalog(cfg *config.Config, pathManager paths.PathManager) (*Catalog, er
 
 	// Create catalog with validated settings
 	catalog := &Catalog{
-		name:        "icebox-json-catalog",
+		name:        "ranger-json-catalog",
 		uri:         pathManager.GetCatalogURI(cfg.GetCatalogType()),
 		fileIO:      icebergio.LocalFS{},
 		pathManager: pathManager,
@@ -523,7 +523,7 @@ func (c *Catalog) CreateView(ctx context.Context, identifier table.Identifier, s
 				SchemaID:    1,
 				TimestampMs: now.UnixMilli(),
 				Summary: map[string]string{
-					"engine-name":    "icebox",
+					"engine-name":    "ranger",
 					"engine-version": "1.0.0",
 				},
 				Representations: []ViewRepresentation{
@@ -992,7 +992,7 @@ func (c *Catalog) writeCatalogDataAtomic(data *CatalogData, expectedETag string)
 
 		if err := c.writeCatalogDataOnce(data, expectedETag); err != nil {
 			lastErr = err
-			if iceboxErr, ok := err.(*errors.Error); ok && iceboxErr.Code.Equals(shared.CatalogConcurrentMod) {
+			if rangerErr, ok := err.(*errors.Error); ok && rangerErr.Code.Equals(shared.CatalogConcurrentMod) {
 				continue // Retry on concurrent modification
 			}
 			return err // Don't retry on other errors

@@ -1,24 +1,15 @@
-# 🧊 Icebox
+# 🧊 Data Lakehouse
 
-<div align="center">
+A modern, high-performance data lakehouse platform built with Go.
 
-**A single-binary playground for Apache Iceberg**  
-*Five minutes to first query*
+[![Go Report Card](https://goreportcard.com/badge/github.com/gear6io/ranger)](https://goreportcard.com/report/github.com/gear6io/ranger)
+[![CI](https://github.com/gear6io/ranger/actions/workflows/ci.yml/badge.svg)](https://github.com/gear6io/ranger/actions/workflows/ci.yml)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/gear6io/ranger)](https://golang.org)
+[![License](https://img.shields.io/github/license/gear6io/ranger)](LICENSE)
 
-[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go&logoColor=white)](https://golang.org)
-[![Apache Iceberg](https://img.shields.io/badge/Apache%20Iceberg-v0.3.0--rc0-326ce5?style=flat&logo=apache&logoColor=white)](https://iceberg.apache.org)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![CI](https://github.com/TFMV/icebox/actions/workflows/ci.yml/badge.svg)](https://github.com/TFMV/icebox/actions/workflows/ci.yml)
+## 🎯 What is this?
 
-[Quick Start](#-quick-start) • [Features](#-features) • [Usage Guide](docs/usage.md) • [Contributing](#-contributing)
-
-</div>
-
----
-
-## 🎯 What is Icebox?
-
-Icebox is a **zero-configuration data lakehouse** that gets you from zero to querying Iceberg tables in under five minutes. Perfect for:
+This is a **zero-configuration data lakehouse** that gets you from zero to querying Iceberg tables in under five minutes. Perfect for:
 
 - 🔬 **Experimenting** with Apache Iceberg table format
 - 📚 **Learning** lakehouse concepts and workflows  
@@ -29,7 +20,7 @@ Icebox is a **zero-configuration data lakehouse** that gets you from zero to que
 
 ## 📈 Project Status
 
-Icebox is alpha software—functional, fast-moving, and rapidly evolving.
+This is alpha software—functional, fast-moving, and rapidly evolving.
 
 The core is there.
 Now we're looking for early contributors to help shape what comes next—whether through code, docs, testing, or ideas.
@@ -56,101 +47,54 @@ Now we're looking for early contributors to help shape what comes next—whether
 - **Go 1.21+** for building from source
 - **DuckDB v1.3.0+** for optimal Iceberg support (automatically bundled with Go driver)
 
-### 1. Install Icebox
+### 1. Install the Platform
 
 ```bash
-# Build from source
-git clone https://github.com/TFMV/icebox.git
-cd icebox
-go build -o icebox cmd/icebox/main.go
+# Clone the repository
+git clone https://github.com/gear6io/ranger.git
+cd ranger
+go build -o ranger cmd/ranger-server/main.go
 
-# Add to your PATH for global access
-sudo mv icebox /usr/local/bin/
-# Or add the current directory to PATH
-export PATH=$PATH:$(pwd)
+# Optional: Install globally
+sudo mv ranger /usr/local/bin/
 ```
 
-**💡 Tip:** Add `export PATH=$PATH:/usr/local/bin` to your shell profile (`.bashrc`, `.zshrc`) for permanent access.
-
-### 2. Initialize a Project
+### 2. Initialize Your Data Lakehouse
 
 ```bash
-# Create a new lakehouse project (default: SQLite catalog)
-./icebox init my-lakehouse
-cd my-lakehouse
+# Initialize a new data lakehouse
+./ranger init my-lakehouse
 
-# Or with JSON catalog for version control friendly development
-./icebox init my-lakehouse --catalog json
-cd my-lakehouse
+# Or with specific catalog type
+./ranger init my-lakehouse --catalog json
 ```
 
 ### 3. Import Your Data
 
 ```bash
-# Import a Parquet or Avro file into an Iceberg table
-./icebox import data.parquet --table sales
-# or
-./icebox import data.avro --table users
+# Import Parquet files
+./ranger import data.parquet --table sales
 
-✅ Successfully imported table!
-
-📊 Import Results:
-   Table: [default sales]
-   Records: 1,000,000
-   Size: 45.2 MB
-   Location: file:///.icebox/data/default/sales
-```
-
-### 3.5. Create Optimized Tables (Optional)
-
-```bash
-# Create tables with partitioning and sorting for better performance
-./icebox table create analytics_events \
-  --partition-by "date,region" \
-  --sort-by "timestamp ASC,user_id ASC" \
-  --schema events_schema.json
-
-✅ Successfully created table!
-✅ Applied partition specification with 2 field(s)
-✅ Applied sort order with 2 field(s)
-
-# Import data into the optimized table
-./icebox import events.parquet --table analytics_events
+# Import Avro files
+./ranger import data.avro --table users
 ```
 
 ### 4. Query Your Data
 
 ```bash
-# Run SQL queries
-./icebox sql "SELECT COUNT(*) FROM sales"
-📋 Registered 1 tables for querying
-⏱️  Query executed in 45ms
-📊 1 rows returned
-┌─────────────┐
-│ count_star()│
-├─────────────┤
-│ 1000000     │
-└─────────────┘
+# Query using SQL
+./ranger sql "SELECT * FROM sales WHERE amount > 1000"
 
-# Use the interactive shell for complex analysis
-./icebox shell
+# Location: file:///.metadata/data/default/sales
+```
 
-🧊 Icebox SQL Shell v0.1.0
-Interactive SQL querying for Apache Iceberg
-Type \help for help, \quit to exit
+### 5. Create Tables
 
-icebox> SELECT region, AVG(amount) as avg_amount FROM sales GROUP BY region;
-⏱️  Query executed in 23ms
-📊 3 rows returned
-┌─────────────┬────────────┐
-│ region      │ avg_amount │
-├─────────────┼────────────┤
-│ North       │ 1250.50    │
-│ South       │ 980.75     │
-│ West        │ 1450.25    │
-└─────────────┴────────────┘
-
-icebox> \quit
+```bash
+# Create a new table
+./ranger table create analytics_events \
+  --schema "id:int,event:string,timestamp:timestamp,user_id:string" \
+  --partition-by "date(timestamp),user_id"
 ```
 
 **🎉 You now have a working Iceberg lakehouse with your data and SQL querying!**
@@ -172,7 +116,7 @@ icebox> \quit
 
 ## 🤝 Contributing
 
-Icebox is designed to be **approachable for developers** at all levels.
+The platform is designed to be **approachable for developers** at all levels.
 
 ### Quick Contribution Guide
 
@@ -191,10 +135,10 @@ Icebox is designed to be **approachable for developers** at all levels.
 # Linux: See https://duckdb.org/docs/installation/
 
 # Build from source
-git clone https://github.com/TFMV/icebox.git
-cd icebox
+git clone https://github.com/gear6io/ranger.git
+cd ranger
 go mod tidy
-go build -o icebox cmd/icebox/main.go
+go build -o ranger cmd/ranger-server/main.go
 
 # Run tests
 go test ./...
@@ -225,7 +169,7 @@ This project is licensed under the **Apache License 2.0** - see the [LICENSE](LI
 
 **Made with ❤️ for the data community**
 
-[⭐ Star this project](https://github.com/TFMV/icebox) • [📚 Usage Guide](docs/usage.md) • [🐛 Report Issue](https://github.com/TFMV/icebox/issues)
+[⭐ Star this project](https://github.com/gear6io/ranger) • [📚 Usage Guide](docs/usage.md) • [🐛 Report Issue](https://github.com/gear6io/ranger/issues)
 
 </div>
 # Test comment

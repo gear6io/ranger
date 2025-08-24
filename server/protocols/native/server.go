@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/protocols/native/middleware"
-	"github.com/TFMV/icebox/server/query"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/protocols/native/middleware"
+	"github.com/gear6io/ranger/server/query"
 	"github.com/rs/zerolog"
 )
 

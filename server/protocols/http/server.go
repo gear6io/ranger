@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/query"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/query"
 	"github.com/rs/zerolog"
 )
 
@@ -154,7 +154,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	info := map[string]interface{}{
-		"server":      "icebox-http",
+		"server":      "ranger-http",
 		"version":     "0.1.0",
 		"protocol":    "HTTP/1.1",
 		"queryEngine": "enabled",
@@ -184,7 +184,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	health := map[string]interface{}{
 		"status":    "healthy",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
-		"server":    "icebox-http",
+		"server":    "ranger-http",
 	}
 
 	jsonResponse, err := json.Marshal(health)

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"github.com/TFMV/icebox/pkg/sdk"
+	"github.com/gear6io/ranger/pkg/sdk"
 )
 
 func TestSDKBasics(t *testing.T) {

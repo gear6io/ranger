@@ -1,6 +1,6 @@
-# Icebox Go SDK
+# Data Lakehouse Go SDK
 
-A high-performance, feature-rich Go SDK for Icebox, inspired by the excellent design patterns from `clickhouse-go` and `ch-go`. This SDK provides a native implementation with connection pooling, compression, comprehensive error handling, and full database/sql compatibility.
+A high-performance, feature-rich Go SDK for the data lakehouse platform, inspired by the excellent design patterns from `clickhouse-go` and `ch-go`. This SDK provides a native implementation with connection pooling, compression, comprehensive error handling, and full database/sql compatibility.
 
 ## Features
 
@@ -11,7 +11,7 @@ A high-performance, feature-rich Go SDK for Icebox, inspired by the excellent de
 - **Async Operations**: Non-blocking asynchronous inserts
 
 ### 🔧 **Developer Friendly**
-- **DSN Support**: Simple connection strings (`icebox://user:pass@host:port/db`)
+- **DSN Support**: Simple connection strings (`ranger://user:pass@host:port/db`)
 - **Database/sql Compatible**: Full compatibility with Go's standard database/sql package
 - **Comprehensive Settings**: Rich configuration options for query optimization
 - **Context Support**: Full context.Context integration for timeouts and cancellation
@@ -40,7 +40,7 @@ import (
     "fmt"
     "log"
     
-    "github.com/TFMV/icebox/pkg/sdk"
+    "github.com/gear6io/ranger/pkg/sdk"
     "go.uber.org/zap"
 )
 
@@ -76,7 +76,7 @@ func main() {
         log.Fatalf("Failed to ping: %v", err)
     }
 
-    fmt.Println("Connected to Icebox server!")
+    fmt.Println("Connected to data lakehouse server!")
 }
 ```
 
@@ -84,7 +84,7 @@ func main() {
 
 ```go
 // Parse DSN
-dsn := "icebox://user:password@localhost:9000/mydb?max_execution_time=60&timezone=UTC"
+dsn := "ranger://user:password@localhost:9000/mydb?max_execution_time=60&timezone=UTC"
 opt, err := sdk.ParseDSN(dsn)
 if err != nil {
     log.Fatalf("Failed to parse DSN: %v", err)
@@ -423,13 +423,13 @@ The SDK provides comprehensive error handling with specific error types:
 
 ```go
 var (
-    ErrBatchInvalid              = errors.New("icebox: batch is invalid. check appended data is correct")
-    ErrBatchAlreadySent          = errors.New("icebox: batch has already been sent")
-    ErrBatchNotSent              = errors.New("icebox: invalid retry, batch not sent yet")
-    ErrAcquireConnTimeout        = errors.New("icebox: acquire conn timeout. you can increase the number of max open conn or the dial timeout")
-    ErrUnsupportedServerRevision = errors.New("icebox: unsupported server revision")
-    ErrBindMixedParamsFormats    = errors.New("icebox [bind]: mixed named, numeric or positional parameters")
-    ErrAcquireConnNoAddress      = errors.New("icebox: no valid address supplied")
+    ErrBatchInvalid              = errors.New("ranger: batch is invalid. check appended data is correct")
+    ErrBatchAlreadySent          = errors.New("ranger: batch has already been sent")
+    ErrBatchNotSent              = errors.New("ranger: batch not sent yet")
+    ErrAcquireConnTimeout        = errors.New("ranger: acquire conn timeout. you can increase the number of max open conn or the dial timeout")
+    ErrUnsupportedServerRevision = errors.New("ranger: unsupported server revision")
+    ErrBindMixedParamsFormats    = errors.New("ranger [bind]: mixed named, numeric or positional parameters")
+    ErrAcquireConnNoAddress      = errors.New("ranger: no valid address supplied")
     ErrServerUnexpectedData      = errors.New("code: 101, message: Unexpected packet Data received from client")
 )
 ```
@@ -466,7 +466,7 @@ See the `example.go` file for comprehensive examples covering all SDK features:
 ## Installation
 
 ```bash
-go get github.com/TFMV/icebox/pkg/sdk
+go get github.com/gear6io/ranger/pkg/sdk
 ```
 
 ## Dependencies
@@ -478,7 +478,7 @@ go get github.com/TFMV/icebox/pkg/sdk
 
 ## License
 
-This SDK is part of the Icebox project and follows the same license terms.
+This SDK is part of the data lakehouse platform and follows the same license terms.
 
 ## Contributing
 

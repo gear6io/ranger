@@ -18,7 +18,7 @@ func TestErrorCodeChecker(t *testing.T) {
 	testFiles := map[string]string{
 		"errors.go": `package test
 
-import "github.com/TFMV/icebox/pkg/errors"
+import "github.com/gear6io/ranger/pkg/errors"
 
 var (
 	ErrTest1 = errors.MustNewCode("test.error1")
@@ -157,7 +157,7 @@ func TestExcludePaths(t *testing.T) {
 	testFiles := map[string]string{
 		"errors.go": `package test
 
-import "github.com/TFMV/icebox/pkg/errors"
+import "github.com/gear6io/ranger/pkg/errors"
 
 var (
 	ErrTest1 = errors.MustNewCode("test.error1")
@@ -165,7 +165,7 @@ var (
 `,
 		"excluded/errors.go": `package excluded
 
-import "github.com/TFMV/icebox/pkg/errors"
+import "github.com/gear6io/ranger/pkg/errors"
 
 var (
 	ErrExcluded = errors.MustNewCode("excluded.error")

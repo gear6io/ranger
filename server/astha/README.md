@@ -1,6 +1,6 @@
-# 🚀 Astha - CDC Scheduler for Icebox
+# 🚀 Astha - CDC Scheduler for Data Lakehouse Platform
 
-**Astha** (meaning "Trust and Reliability") is a Change Data Capture (CDC) scheduler that provides real-time event distribution for the Icebox metadata registry system.
+**Astha** (meaning "Trust and Reliability") is a Change Data Capture (CDC) scheduler that provides real-time event distribution for the Data Lakehouse Platform metadata registry system.
 
 ## 🎯 Overview
 
@@ -26,7 +26,7 @@ Subscribed Components
 
 ```go
 import (
-    "github.com/TFMV/icebox/server/astha"
+    "github.com/gear6io/ranger/server/astha"
     "github.com/rs/zerolog"
 )
 
@@ -370,5 +370,5 @@ func main() {
 
 ## 📄 License
 
-This package is part of the Icebox project and follows the same license terms.
+This package is part of the Data Lakehouse Platform and follows the same license terms.
 

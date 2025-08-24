@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TFMV/icebox/server/config"
-	"github.com/TFMV/icebox/server/query/parser"
-	"github.com/TFMV/icebox/server/storage"
+	"github.com/gear6io/ranger/server/config"
+	"github.com/gear6io/ranger/server/query/parser"
+	"github.com/gear6io/ranger/server/storage"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,7 +23,7 @@ import (
 // without testing storage components
 func TestEngineBasicFunctionality(t *testing.T) {
 	// Create minimal test configuration with unique temporary directory
-	tempDir, err := os.MkdirTemp("", "icebox_test_query_engine")
+	tempDir, err := os.MkdirTemp("", "ranger_test_query_engine")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
@@ -68,7 +68,7 @@ func TestEngineBasicFunctionality(t *testing.T) {
 // TestEngineQueryParsing tests query parsing without storage dependencies
 func TestEngineQueryParsing(t *testing.T) {
 	// Create minimal test configuration with unique temporary directory
-	tempDir, err := os.MkdirTemp("", "icebox_test_query_engine_parsing")
+	tempDir, err := os.MkdirTemp("", "ranger_test_query_engine_parsing")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
@@ -118,7 +118,7 @@ func TestEngineQueryParsing(t *testing.T) {
 // TestEngineConfiguration tests engine configuration without storage
 func TestEngineConfiguration(t *testing.T) {
 	// Create minimal test configuration with unique temporary directory
-	tempDir, err := os.MkdirTemp("", "icebox_test_query_engine_config")
+	tempDir, err := os.MkdirTemp("", "ranger_test_query_engine_config")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
@@ -154,7 +154,7 @@ func TestEngineConfiguration(t *testing.T) {
 // TestQueryEngineStreaming tests the new streaming methods for memory efficiency
 func TestQueryEngineStreaming(t *testing.T) {
 	// Create test configuration with unique temporary directory
-	tempDir, err := os.MkdirTemp("", "icebox_test_query_engine")
+	tempDir, err := os.MkdirTemp("", "ranger_test_query_engine")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
@@ -290,7 +290,7 @@ func TestQueryEngineStreaming(t *testing.T) {
 // TestQueryEngineStreamingPerformance tests memory efficiency of streaming vs non-streaming
 func TestQueryEngineStreamingPerformance(t *testing.T) {
 	// Create test configuration with unique temporary directory
-	tempDir, err := os.MkdirTemp("", "icebox_test_query_engine_perf")
+	tempDir, err := os.MkdirTemp("", "ranger_test_query_engine_perf")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 

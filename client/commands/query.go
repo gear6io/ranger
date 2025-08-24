@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/TFMV/icebox/client"
-	"github.com/TFMV/icebox/pkg/errors"
-	"github.com/TFMV/icebox/server/query/parser"
+	"github.com/gear6io/ranger/client"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/query/parser"
 	"github.com/rs/zerolog"
 )
 

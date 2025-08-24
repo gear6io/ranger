@@ -3,7 +3,7 @@ package signals
 import (
 	"fmt"
 
-	"github.com/TFMV/icebox/server/protocols/native/protocol"
+	"github.com/gear6io/ranger/server/protocols/native/protocol"
 )
 
 // ClientData represents a client data message for batch insertion
@@ -52,7 +52,7 @@ func (d *ClientData) Pack() ([]byte, error) {
 		buf = append(buf, colBytes...)
 	}
 
-	// Column types are not sent - Icebox knows the schema
+	// Column types are not sent - Ranger knows the schema
 
 	// Pack row data (4 bytes length + string for each value)
 	for _, row := range d.Rows {
@@ -121,7 +121,7 @@ func (d *ClientData) Unpack(data []byte) error {
 		pos += int(colLen)
 	}
 
-	// Column types are not read - Icebox knows the schema
+	// Column types are not read - Ranger knows the schema
 
 	// Read row data
 	d.Rows = make([][]interface{}, rowCount)
