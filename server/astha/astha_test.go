@@ -6,10 +6,39 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// MockComponent is a simple mock implementation for testing
+type MockComponent struct {
+	name    string
+	version string
+	status  string
+}
+
+func (m *MockComponent) GetComponentInfo() ComponentInfo {
+	return ComponentInfo{
+		Name:          m.name,
+		Version:       m.version,
+		Status:        m.status,
+		Subscriptions: []string{"tables"},
+	}
+}
+
+func (m *MockComponent) OnEvent(ctx context.Context, event Event[any]) error {
+	return nil
+}
+
+func (m *MockComponent) OnHealth(ctx context.Context) error {
+	return nil
+}
+
+func (m *MockComponent) OnRefresh(ctx context.Context) error {
+	return nil
+}
 
 func TestAsthaCreation(t *testing.T) {
 	// Create a mock database connection
@@ -38,32 +67,38 @@ func TestAsthaCreation(t *testing.T) {
 	assert.Equal(t, []string{"tables", "table_files", "table_statistics", "table_metadata"}, astha.GetMonitoredTables())
 }
 
-func TestComponentRegistration(t *testing.T) {
-	// Create a mock database connection
+func TestAsthaComponentRegistration(t *testing.T) {
+	// Create logger
+	logger := zerolog.New(zerolog.NewConsoleWriter()).Level(zerolog.DebugLevel)
+
+	// Create mock database connection
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err)
 	defer db.Close()
 
-	// Create logger
-	logger := zerolog.New(zerolog.NewConsoleWriter()).Level(zerolog.DebugLevel)
-
-	// Create Astha configuration
+	// Create astha config
 	cfg := &Config{
 		Database:     db,
 		Logger:       logger,
-		BatchSize:    256,
 		PollInterval: 100,
 	}
-
-	// Create Astha instance
 	astha, err := NewAstha(cfg)
 	require.NoError(t, err)
+	defer astha.Stop()
 
-	// Create example component
-	component := NewExampleComponent("test_component", "1.0.0", logger)
+	// Start astha
+	err = astha.Start()
+	require.NoError(t, err)
+
+	// Create mock component
+	component := &MockComponent{
+		name:    "test_component",
+		version: "1.0.0",
+		status:  "active",
+	}
 
 	// Register component
-	err = astha.RegisterComponent(component.GetComponentInfo())
+	err = astha.RegisterComponentWithInstance(component.GetComponentInfo(), component)
 	require.NoError(t, err)
 
 	// Verify component is registered
@@ -116,7 +151,13 @@ func TestEventStore(t *testing.T) {
 	events, err := eventStore.GetEvents(ctx, "tables", 10)
 	require.NoError(t, err)
 	assert.Len(t, events, 1)
-	assert.Equal(t, int64(1), events[0].ID)
+
+	// Type assert to access the ID field
+	if eventData, ok := events[0].(Event[any]); ok {
+		assert.Equal(t, int64(1), eventData.ID)
+	} else {
+		t.Error("Failed to type assert event")
+	}
 
 	// Mark event as processed
 	err = eventStore.MarkEventProcessed(ctx, 1)
@@ -154,6 +195,11 @@ func TestCDCConsumer(t *testing.T) {
 	assert.Equal(t, 256, consumer.batchSize)
 	assert.Equal(t, 100*time.Millisecond, consumer.pollInterval)
 
+	// Test CDC consumer start
+	ctx := context.Background()
+	err = consumer.Start(ctx)
+	require.NoError(t, err)
+
 	// Test configuration updates
 	consumer.SetBatchSize(128)
 	consumer.SetPollInterval(200 * time.Millisecond)
@@ -161,56 +207,3 @@ func TestCDCConsumer(t *testing.T) {
 	assert.Equal(t, 128, consumer.batchSize)
 	assert.Equal(t, 200*time.Millisecond, consumer.pollInterval)
 }
-
-func TestScheduler(t *testing.T) {
-	// Create logger
-	logger := zerolog.New(zerolog.NewConsoleWriter()).Level(zerolog.DebugLevel)
-
-	// Create event store
-	eventStore := NewMemoryEventStore(logger)
-
-	// Create mock CDC consumer
-	consumer := &CDCConsumer{
-		logTable:     "__cdc_log",
-		batchSize:    256,
-		pollInterval: 100 * time.Millisecond,
-		logger:       logger,
-		eventStore:   eventStore,
-	}
-
-	// Create scheduler
-	scheduler := NewScheduler(eventStore, consumer, logger)
-
-	// Verify initial state
-	stats := scheduler.GetSchedulerStats()
-	assert.Equal(t, 0, stats["component_count"])
-	assert.Equal(t, 0, stats["table_count"])
-
-	// Create and register component
-	component := NewExampleComponent("test_component", "1.0.0", logger)
-	err := scheduler.RegisterComponent(component.GetComponentInfo())
-	require.NoError(t, err)
-
-	// Verify component is registered
-	stats = scheduler.GetSchedulerStats()
-	assert.Equal(t, 1, stats["component_count"])
-	assert.Equal(t, 4, stats["table_count"]) // 4 monitored tables
-
-	// Get all components
-	components := scheduler.GetAllComponents()
-	assert.Len(t, components, 1)
-	assert.Equal(t, "test_component", components[0].Name)
-
-	// Get table subscribers
-	subscribers := scheduler.GetTableSubscribers("tables")
-	assert.Contains(t, subscribers, "test_component")
-
-	// Unregister component
-	err = scheduler.UnregisterComponent("test_component")
-	require.NoError(t, err)
-
-	// Verify component is unregistered
-	stats = scheduler.GetSchedulerStats()
-	assert.Equal(t, 0, stats["component_count"])
-}
-

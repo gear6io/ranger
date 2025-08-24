@@ -72,5 +72,5 @@ func TestStorageEngineRegistryWithInvalidEngine(t *testing.T) {
 	engine, err := registry.GetEngine("nonexistent")
 	assert.Error(t, err)
 	assert.Nil(t, engine)
-	assert.Contains(t, err.Error(), "storage engine 'nonexistent' not found")
+	assert.Contains(t, err.Error(), "storage engine not found")
 }

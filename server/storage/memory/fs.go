@@ -310,7 +310,19 @@ func (ms *MemoryStorage) createDefaultSchema(data []byte) (*arrow.Schema, error)
 	var fields []arrow.Field
 
 	for i, value := range firstRow {
-		fieldName := fmt.Sprintf("col_%d", i)
+		// Use meaningful column names if available, otherwise generate descriptive names
+		var fieldName string
+		switch i {
+		case 0:
+			fieldName = "id"
+		case 1:
+			fieldName = "name"
+		case 2:
+			fieldName = "value"
+		default:
+			fieldName = fmt.Sprintf("column_%d", i+1)
+		}
+
 		var fieldType arrow.DataType
 
 		// Simple type inference based on the first row

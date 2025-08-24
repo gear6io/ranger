@@ -10,7 +10,6 @@ import (
 func TestClientData(t *testing.T) {
 	// Test creating a new client data message
 	columns := []string{"id", "name", "email"}
-	columnTypes := []string{"int", "string", "string"}
 	rows := [][]interface{}{
 		{1, "John Doe", "john@example.com"},
 		{2, "Jane Smith", "jane@example.com"},
@@ -27,9 +26,6 @@ func TestClientData(t *testing.T) {
 	expectedSize := 4 + len("users") + 4 + 4 // table name + column count + row count
 	for _, col := range columns {
 		expectedSize += 4 + len(col)
-	}
-	for _, colType := range columnTypes {
-		expectedSize += 4 + len(colType)
 	}
 	for _, row := range rows {
 		for _, value := range row {
@@ -66,9 +62,6 @@ func TestClientData(t *testing.T) {
 	if len(newData.Columns) != len(data.Columns) {
 		t.Errorf("Columns count mismatch: expected %d, got %d", len(data.Columns), len(newData.Columns))
 	}
-	if len(newData.ColumnTypes) != len(data.ColumnTypes) {
-		t.Errorf("ColumnTypes count mismatch: expected %d, got %d", len(data.ColumnTypes), len(newData.ColumnTypes))
-	}
 	if len(newData.Rows) != len(data.Rows) {
 		t.Errorf("Rows count mismatch: expected %d, got %d", len(data.Rows), len(newData.Rows))
 	}
@@ -77,13 +70,6 @@ func TestClientData(t *testing.T) {
 	for i, col := range data.Columns {
 		if newData.Columns[i] != col {
 			t.Errorf("Column %d name mismatch: expected %s, got %s", i, col, newData.Columns[i])
-		}
-	}
-
-	// Verify column types
-	for i, colType := range data.ColumnTypes {
-		if newData.ColumnTypes[i] != colType {
-			t.Errorf("Column %d type mismatch: expected %s, got %s", i, colType, newData.ColumnTypes[i])
 		}
 	}
 

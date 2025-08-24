@@ -1247,7 +1247,7 @@ func (c *Catalog) CreateNamespace(ctx context.Context, namespace table.Identifie
 	for key, value := range props {
 		if err := c.validateProperty(key, value); err != nil {
 			c.metrics.IncrementOperationErrors()
-			return errors.Newf(shared.CatalogValidation, "invalid property %s", key)
+			return err // Return the original validation error with detailed message
 		}
 	}
 

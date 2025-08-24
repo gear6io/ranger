@@ -54,6 +54,10 @@ type CircuitBreaker struct {
 	// Query tracking per connection
 	connectionQueries map[string]int64
 	connectionMu      sync.RWMutex
+
+	// Cleanup control
+	stopMonitor chan struct{}
+	wg          sync.WaitGroup
 }
 
 // NewCircuitBreaker creates a new circuit breaker
@@ -65,9 +69,11 @@ func NewCircuitBreaker(thresholds ResourceThresholds, failureThreshold int, reco
 		recoveryTimeout:   recoveryTimeout,
 		logger:            logger,
 		connectionQueries: make(map[string]int64),
+		stopMonitor:       make(chan struct{}),
 	}
 
 	// Start monitoring goroutine
+	cb.wg.Add(1)
 	go cb.monitor()
 
 	return cb
@@ -294,23 +300,30 @@ func (cb *CircuitBreaker) scheduleRecovery() {
 
 // monitor periodically checks circuit breaker state
 func (cb *CircuitBreaker) monitor() {
+	defer cb.wg.Done()
+
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		cb.mu.RLock()
-		state := cb.state
-		lastFailure := cb.lastFailureTime
-		cb.mu.RUnlock()
+	for {
+		select {
+		case <-ticker.C:
+			cb.mu.RLock()
+			state := cb.state
+			lastFailure := cb.lastFailureTime
+			cb.mu.RUnlock()
 
-		// Log current state
-		cb.logger.Debug().
-			Str("state", cb.stateToString(state)).
-			Int64("failure_count", atomic.LoadInt64(&cb.failureCount)).
-			Int64("success_count", atomic.LoadInt64(&cb.successCount)).
-			Int64("active_queries", atomic.LoadInt64(&cb.activeQueries)).
-			Time("last_failure", lastFailure).
-			Msg("Circuit breaker status")
+			// Log current state
+			cb.logger.Debug().
+				Str("state", cb.stateToString(state)).
+				Int64("failure_count", atomic.LoadInt64(&cb.failureCount)).
+				Int64("success_count", atomic.LoadInt64(&cb.successCount)).
+				Int64("active_queries", atomic.LoadInt64(&cb.activeQueries)).
+				Time("last_failure", lastFailure).
+				Msg("Circuit breaker status")
+		case <-cb.stopMonitor:
+			return
+		}
 	}
 }
 
@@ -355,4 +368,11 @@ func (cb *CircuitBreaker) Reset() {
 	atomic.StoreInt64(&cb.successCount, 0)
 
 	cb.logger.Info().Msg("Circuit breaker reset")
+}
+
+// Close stops the circuit breaker and cleans up resources
+func (cb *CircuitBreaker) Close() error {
+	close(cb.stopMonitor)
+	cb.wg.Wait()
+	return nil
 }

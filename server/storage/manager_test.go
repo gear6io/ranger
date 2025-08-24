@@ -2,7 +2,10 @@ package storage
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/TFMV/icebox/server/config"
 	"github.com/rs/zerolog"
@@ -11,9 +14,13 @@ import (
 )
 
 func TestStorageManagerCreateTableWithEngines(t *testing.T) {
-	// Create test configuration
+	// Create test configuration with unique temporary directory
+	tempDir, err := os.MkdirTemp("", "icebox_test_storage_manager")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
 	cfg := config.LoadDefaultConfig()
-	cfg.Storage.DataPath = "/tmp/icebox_test_storage_manager"
+	cfg.Storage.DataPath = tempDir
 	cfg.Storage.Catalog.Type = "json"
 
 	// Create logger
@@ -29,9 +36,12 @@ func TestStorageManagerCreateTableWithEngines(t *testing.T) {
 	err = storageMgr.Initialize(ctx)
 	require.NoError(t, err)
 
+	// Use unique database names to avoid conflicts
+	timestamp := time.Now().UnixNano()
+
 	t.Run("CreateDatabase", func(t *testing.T) {
 		// Create a test database using metadata manager with unique name
-		dbName := "testdb_create"
+		dbName := fmt.Sprintf("testdb_create_%d", timestamp)
 		err := storageMgr.GetMetadataManager().CreateDatabase(ctx, dbName)
 		assert.NoError(t, err, "Should create database successfully")
 
@@ -42,7 +52,7 @@ func TestStorageManagerCreateTableWithEngines(t *testing.T) {
 
 	t.Run("CreateTableWithMemoryEngine", func(t *testing.T) {
 		// Create database first
-		dbName := "testdb_memory"
+		dbName := fmt.Sprintf("testdb_memory_%d", timestamp)
 		err := storageMgr.GetMetadataManager().CreateDatabase(ctx, dbName)
 		require.NoError(t, err, "Should create database successfully")
 
@@ -61,7 +71,7 @@ func TestStorageManagerCreateTableWithEngines(t *testing.T) {
 
 	t.Run("CreateTableWithFilesystemEngine", func(t *testing.T) {
 		// Create database first
-		dbName := "testdb_filesystem"
+		dbName := fmt.Sprintf("testdb_filesystem_%d", timestamp)
 		err := storageMgr.GetMetadataManager().CreateDatabase(ctx, dbName)
 		require.NoError(t, err, "Should create database successfully")
 
@@ -80,7 +90,7 @@ func TestStorageManagerCreateTableWithEngines(t *testing.T) {
 
 	t.Run("TestTableDataOperations", func(t *testing.T) {
 		// Create database and table for data operations test
-		dbName := "testdb_data"
+		dbName := fmt.Sprintf("testdb_data_%d", timestamp)
 		err := storageMgr.GetMetadataManager().CreateDatabase(ctx, dbName)
 		require.NoError(t, err, "Should create database successfully")
 

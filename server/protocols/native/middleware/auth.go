@@ -41,6 +41,10 @@ type AuthMiddleware struct {
 	tokenCache    map[string]*AuthResult
 	tokenCacheMu  sync.RWMutex
 	tokenCacheTTL time.Duration
+
+	// Cleanup control
+	stopCleanup chan struct{}
+	wg          sync.WaitGroup
 }
 
 // NewAuthMiddleware creates a new authentication middleware
@@ -53,10 +57,12 @@ func NewAuthMiddleware(provider AuthProvider, enabled, requireAuth bool, tokenTi
 		tokenTimeout:  tokenTimeout,
 		tokenCache:    make(map[string]*AuthResult),
 		tokenCacheTTL: cacheTTL,
+		stopCleanup:   make(chan struct{}),
 	}
 
 	// Start token cache cleanup
 	if enabled {
+		auth.wg.Add(1)
 		go auth.tokenCacheCleanup()
 	}
 
@@ -299,20 +305,36 @@ func (a *AuthMiddleware) removeCachedAuthResult(token string) {
 
 // tokenCacheCleanup periodically cleans up expired tokens
 func (a *AuthMiddleware) tokenCacheCleanup() {
+	defer a.wg.Done()
+
 	ticker := time.NewTicker(a.tokenCacheTTL / 2)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		a.tokenCacheMu.Lock()
-		now := time.Now()
+	for {
+		select {
+		case <-ticker.C:
+			a.tokenCacheMu.Lock()
+			now := time.Now()
 
-		for token, result := range a.tokenCache {
-			if now.After(result.ExpiresAt) {
-				delete(a.tokenCache, token)
+			for token, result := range a.tokenCache {
+				if now.After(result.ExpiresAt) {
+					delete(a.tokenCache, token)
+				}
 			}
+			a.tokenCacheMu.Unlock()
+		case <-a.stopCleanup:
+			return
 		}
-		a.tokenCacheMu.Unlock()
 	}
+}
+
+// Close stops the auth middleware and cleans up resources
+func (a *AuthMiddleware) Close() error {
+	if a.enabled {
+		close(a.stopCleanup)
+		a.wg.Wait()
+	}
+	return nil
 }
 
 // generateConnectionID generates a unique connection ID

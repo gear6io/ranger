@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -198,7 +199,12 @@ func TestTableMetadataOperations(t *testing.T) {
 		assert.Equal(t, "metatable", metadata.Name)
 		assert.Equal(t, schema, metadata.Schema)
 		assert.Equal(t, "parquet", metadata.StorageEngine)
-		assert.Equal(t, engineConfig, metadata.EngineConfig)
+
+		// EngineConfig is stored as JSON string, so we need to unmarshal it for comparison
+		var storedConfig map[string]interface{}
+		err = json.Unmarshal([]byte(metadata.EngineConfig), &storedConfig)
+		require.NoError(t, err)
+		assert.Equal(t, engineConfig, storedConfig)
 	})
 
 	t.Run("LoadTableMetadata", func(t *testing.T) {
@@ -293,16 +299,16 @@ func TestProductionSchemaConstraintsInStore(t *testing.T) {
 		// Test that unique constraints are enforced
 		// Insert first database
 		_, err = store.GetBunMigrationManager().GetDB().ExecContext(ctx, `
-			INSERT INTO databases (name, description, owner_id, table_count, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?)
-		`, "uniquetest", "test", 1, 0, "2023-01-01T00:00:00Z", "2023-01-01T00:00:00Z")
+			INSERT INTO databases (name, description, is_system, is_read_only, table_count, total_size, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, "uniquetest", "test", false, false, 0, 0, "2023-01-01T00:00:00Z", "2023-01-01T00:00:00Z")
 		require.NoError(t, err)
 
 		// Try to insert duplicate database name
 		_, err = store.GetBunMigrationManager().GetDB().ExecContext(ctx, `
-			INSERT INTO databases (name, description, owner_id, table_count, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?)
-		`, "uniquetest", "test2", 1, 0, "2023-01-01T00:00:00Z", "2023-01-01T00:00:00Z")
+			INSERT INTO databases (name, description, is_system, is_read_only, table_count, total_size, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, "uniquetest", "test2", false, false, 0, 0, "2023-01-01T00:00:00Z", "2023-01-01T00:00:00Z")
 
 		// This should fail due to unique constraint
 		assert.Error(t, err)

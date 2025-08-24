@@ -732,10 +732,8 @@ func TestPythonCatalogCompatibility(t *testing.T) {
 
 	err = catalog.CreateNamespace(ctx, table.Identifier{"invalid_test"}, invalidProps)
 	assert.Error(t, err)
-	// The validation may catch either the empty key or null character first
-	assert.True(t, strings.Contains(err.Error(), "property key cannot be empty") ||
-		strings.Contains(err.Error(), "property value contains null characters"),
-		"Expected property validation error, got: %s", err.Error())
+	// The validation catches the first invalid property it encounters (empty key)
+	assert.Contains(t, err.Error(), "property key cannot be empty", "Expected property validation error for empty key, got: %s", err.Error())
 
 	// Test 8: Graceful cleanup
 	err = catalog.Close()
@@ -1082,7 +1080,7 @@ func TestNamespacePropertyValidation(t *testing.T) {
 				strings.Repeat("a", 1000): "value",
 			},
 			expectError: true,
-			errorMsg:    "property key too long",
+			errorMsg:    "property key too long (max 255 characters)",
 		},
 		{
 			name: "very long property value",
@@ -1090,7 +1088,7 @@ func TestNamespacePropertyValidation(t *testing.T) {
 				"key": strings.Repeat("a", 10000),
 			},
 			expectError: true,
-			errorMsg:    "property value too long",
+			errorMsg:    "property value too long (max 4096 characters)",
 		},
 		{
 			name: "reserved property key",

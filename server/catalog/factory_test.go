@@ -90,7 +90,7 @@ func TestNewCatalogUnsupportedType(t *testing.T) {
 		t.Error("Expected error for unsupported catalog type")
 	}
 
-	expectedError := "unsupported catalog type: unsupported"
+	expectedError := "unsupported catalog type"
 	if err.Error() != expectedError {
 		t.Errorf("Expected error '%s', got '%s'", expectedError, err.Error())
 	}

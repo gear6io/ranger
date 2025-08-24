@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/TFMV/icebox/pkg/errors"
@@ -110,7 +111,7 @@ func (sm *Store) GetPendingFilesForIceberg(ctx context.Context) ([]*regtypes.Tab
 		SELECT 
 			tf.id, tf.table_id, tf.file_name, tf.file_path, tf.file_size, tf.file_type,
 			tf.partition_path, tf.row_count, tf.checksum, tf.is_compressed,
-			tf.created_at, tf.modified_at, tf.iceberg_metadata_state
+			tf.created_at, tf.updated_at, tf.iceberg_metadata_state
 		FROM table_files tf
 		WHERE tf.iceberg_metadata_state IN ('pending', 'failed')
 		ORDER BY tf.created_at ASC
@@ -128,7 +129,7 @@ func (sm *Store) GetPendingFilesForIceberg(ctx context.Context) ([]*regtypes.Tab
 		err := rows.Scan(
 			&file.ID, &file.TableID, &file.FileName, &file.FilePath, &file.FileSize, &file.FileType,
 			&file.PartitionPath, &file.RowCount, &file.Checksum, &file.IsCompressed,
-			&file.CreatedAt, &file.ModifiedAt, &file.IcebergMetadataState,
+			&file.CreatedAt, &file.UpdatedAt, &file.IcebergMetadataState,
 		)
 		if err != nil {
 			return nil, errors.New(errors.CommonInternal, "failed to scan table file", err)
@@ -143,9 +144,9 @@ func (sm *Store) GetPendingFilesForIceberg(ctx context.Context) ([]*regtypes.Tab
 func (sm *Store) CreateDatabase(ctx context.Context, dbName string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	// Insert database record using new production schema (no ownership tracking)
-	insertSQL := `INSERT INTO databases (name, description, owner_id, table_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-	_, err := sm.db.ExecContext(ctx, insertSQL, dbName, "", 1, 0, now, now)
+	// Insert database record using the actual schema that exists
+	insertSQL := `INSERT INTO databases (name, description, is_system, is_read_only, table_count, total_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err := sm.db.ExecContext(ctx, insertSQL, dbName, "", false, false, 0, 0, now, now)
 	if err != nil {
 		return errors.New(errors.CommonInternal, "failed to create database", err).AddContext("database", dbName)
 	}
@@ -266,10 +267,12 @@ func (sm *Store) CreateTable(ctx context.Context, database, tableName string, sc
 		return nil, errors.New(errors.CommonInternal, "failed to create table metadata", err).AddContext("table", tableName)
 	}
 
-	// Create table files record
-	filePath := filepath.Join("databases", database, tableName, "initial.parquet")
-	insertFileSQL := `INSERT INTO table_files (table_id, file_name, file_path, file_size, file_type, partition_path, row_count, checksum, is_compressed, created_at, modified_at, iceberg_metadata_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err = tx.ExecContext(ctx, insertFileSQL, tableID, "initial.parquet", filePath, 0, "parquet", "", 0, "", true, now, now, "pending")
+	// Create table files record with proper filename
+	timestamp := time.Now().Unix()
+	fileName := fmt.Sprintf("data_%d_%s.parquet", timestamp, strings.ToUpper(storageEngine))
+	filePath := filepath.Join("databases", database, tableName, fileName)
+	insertFileSQL := `INSERT INTO table_files (table_id, file_name, file_path, file_size, file_type, partition_path, row_count, checksum, is_compressed, created_at, updated_at, iceberg_metadata_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err = tx.ExecContext(ctx, insertFileSQL, tableID, fileName, filePath, 0, "parquet", "", 0, "", true, now, now, "pending")
 	if err != nil {
 		return nil, errors.New(errors.CommonInternal, "failed to create table file record", err).AddContext("table", tableName)
 	}
@@ -516,7 +519,7 @@ func (sm *Store) UpdateTableAfterInsertion(ctx context.Context, database, tableN
 
 	// 1. Insert table file record
 	now := time.Now().Format("2006-01-02 15:04:05")
-	insertFileSQL := `INSERT INTO table_files (table_id, file_name, file_path, file_size, file_type, partition_path, row_count, checksum, is_compressed, created_at, modified_at, iceberg_metadata_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	insertFileSQL := `INSERT INTO table_files (table_id, file_name, file_path, file_size, file_type, partition_path, row_count, checksum, is_compressed, created_at, updated_at, iceberg_metadata_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err = tx.ExecContext(ctx, insertFileSQL,
 		tableID,
@@ -530,7 +533,7 @@ func (sm *Store) UpdateTableAfterInsertion(ctx context.Context, database, tableN
 		fileInfo.IsCompressed,
 		now,
 		now,
-		IcebergMetadataGenerationStatePending)
+		regtypes.IcebergMetadataGenerationStatePending)
 
 	if err != nil {
 		return errors.New(errors.CommonInternal, "failed to insert table file", err).AddContext("table", tableName)
@@ -565,7 +568,7 @@ type FileInsertionInfo struct {
 
 // loadTableFiles loads file information for a table
 func (sm *Store) loadTableFiles(ctx context.Context, database, tableName string) ([]*regtypes.TableFile, error) {
-	query := `SELECT tf.file_name, tf.file_size, tf.created_at, tf.modified_at, tf.partition_path FROM table_files tf JOIN tables t ON tf.table_id = t.id JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ? ORDER BY tf.file_name`
+	query := `SELECT tf.file_name, tf.file_size, tf.created_at, tf.updated_at, tf.partition_path FROM table_files tf JOIN tables t ON tf.table_id = t.id JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ? ORDER BY tf.file_name`
 	rows, err := sm.db.QueryContext(ctx, query, database, tableName)
 	if err != nil {
 		return nil, errors.New(errors.CommonInternal, "failed to load table files", err).AddContext("database", database).AddContext("table", tableName)
@@ -593,13 +596,14 @@ func (sm *Store) loadTableFiles(ctx context.Context, database, tableName string)
 		}
 
 		fileInfo := &regtypes.TableFile{
-			FileName:             fileName,
-			FileSize:             fileSize,
-			CreatedAt:            createdAt,
-			ModifiedAt:           modifiedAt,
-			PartitionPath:        partitionPath,
-			IcebergMetadataState: "pending",
+			FileName:      fileName,
+			FileSize:      fileSize,
+			PartitionPath: partitionPath,
 		}
+
+		// Set the TimeAuditable fields
+		fileInfo.CreatedAt = createdAt
+		fileInfo.UpdatedAt = modifiedAt
 
 		files = append(files, fileInfo)
 	}
@@ -673,9 +677,11 @@ func (sm *Store) GetCompleteTableInfoByID(ctx context.Context, tableID int64) (*
 			SortBy:        sortBy,
 			Properties:    properties,
 			LastModified:  lastModified,
-			CreatedAt:     metadataCreated,
-			UpdatedAt:     metadataUpdated,
 		}
+
+		// Set the TimeAuditable fields
+		tableInfo.StorageInfo.CreatedAt = metadataCreated
+		tableInfo.StorageInfo.UpdatedAt = metadataUpdated
 	}
 
 	// Initialize lazy loading fields

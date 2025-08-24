@@ -17,7 +17,7 @@ func TestSDKBasics(t *testing.T) {
 	logger := zap.NewNop()
 	options := &sdk.Options{
 		Logger: logger,
-		Addr:   []string{"127.0.0.1:9000"},
+		Addr:   []string{"127.0.0.1:2849"},
 		Auth: sdk.Auth{
 			Username: "default",
 			Password: "",
@@ -27,7 +27,7 @@ func TestSDKBasics(t *testing.T) {
 
 	// Test setting defaults
 	options = options.SetDefaults()
-	assert.Equal(t, []string{"127.0.0.1:9000"}, options.Addr)
+	assert.Equal(t, []string{"127.0.0.1:2849"}, options.Addr)
 	assert.Equal(t, "default", options.Auth.Database)
 	assert.Equal(t, "default", options.Auth.Username)
 	assert.Equal(t, 3*time.Second, options.ReadTimeout)

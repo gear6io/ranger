@@ -124,6 +124,7 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) Stop() error {
 	s.logger.Info().Msg("Stopping native protocol server")
 
+	// First, stop accepting new connections
 	s.cancel()
 
 	if s.server != nil {
@@ -132,15 +133,27 @@ func (s *Server) Stop() error {
 		}
 	}
 
-	// Wait for all connections to close
-	s.wg.Wait()
-
-	// Close middleware components
+	// Close middleware components first to stop background goroutines
 	if s.connectionPool != nil {
 		if err := s.connectionPool.Close(); err != nil {
 			s.logger.Error().Err(err).Msg("Error closing connection pool")
 		}
 	}
+
+	if s.authMiddleware != nil {
+		if err := s.authMiddleware.Close(); err != nil {
+			s.logger.Error().Err(err).Msg("Error closing auth middleware")
+		}
+	}
+
+	if s.circuitBreaker != nil {
+		if err := s.circuitBreaker.Close(); err != nil {
+			s.logger.Error().Err(err).Msg("Error closing circuit breaker")
+		}
+	}
+
+	// Now wait for all connections to close
+	s.wg.Wait()
 
 	s.logger.Info().Msg("Native protocol server stopped")
 	return nil
@@ -183,7 +196,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	s.logger.Debug().Str("client", clientAddr).Msg("New client connected")
 
 	// Create a new connection handler with the QueryEngine and middleware chain
-	handler := NewConnectionHandler(conn, s.queryEngine, s.logger, s.middlewareChain)
+	handler := NewConnectionHandler(conn, s.queryEngine, s.logger, s.middlewareChain, s.ctx)
 
 	// Handle the connection
 	if err := handler.Handle(); err != nil {

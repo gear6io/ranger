@@ -289,10 +289,12 @@ func (o *Options) SetDefaults() *Options {
 	}
 
 	if len(o.Addr) == 0 {
-		o.Addr = []string{"127.0.0.1:9000"}
+		o.Addr = []string{"127.0.0.1:2849"}
 	}
 
-	if o.Auth.Username == "" {
+	// Only set username default if it's truly unset (not explicitly empty from DSN)
+	// We can detect this by checking if the Options was just created vs parsed from DSN
+	if o.Auth.Username == "" && o.scheme == "" {
 		o.Auth.Username = "default"
 	}
 
@@ -346,57 +348,98 @@ func (o *Options) SetDefaults() *Options {
 // ParseDSN parses a DSN string into Options
 func ParseDSN(dsn string) (*Options, error) {
 	opt := &Options{}
-	return opt, opt.fromDSN(dsn)
+	// Parse DSN first to set the scheme, then apply defaults
+	if err := opt.fromDSN(dsn); err != nil {
+		return nil, err
+	}
+	opt = opt.SetDefaults() // Initialize defaults including Settings map
+	return opt, nil
 }
 
 // fromDSN parses DSN string
 func (o *Options) fromDSN(dsn string) error {
-	// Parse DSN format: icebox://username:password@host:port/database?param=value
+	// Parse DSN format: icebox://[username:password@]host:port/database?param=value
 	if !strings.HasPrefix(dsn, "icebox://") {
 		return errors.New("invalid DSN format, must start with icebox://")
 	}
 
+	// Mark that this Options was created from DSN parsing
+	o.scheme = "icebox"
+
+	// Initialize Settings map if it's nil
+	if o.Settings == nil {
+		o.Settings = make(Settings)
+	}
+
 	dsn = strings.TrimPrefix(dsn, "icebox://")
 
-	// Split into parts
-	parts := strings.SplitN(dsn, "@", 2)
-	if len(parts) != 2 {
-		return errors.New("invalid DSN format")
-	}
-
-	// Parse auth
-	auth := parts[0]
-	if auth != "" {
-		authParts := strings.SplitN(auth, ":", 2)
-		if len(authParts) == 2 {
-			o.Auth.Username = authParts[0]
-			o.Auth.Password = authParts[1]
-		} else {
-			o.Auth.Username = authParts[0]
+	// Check if DSN has auth part (contains @)
+	if strings.Contains(dsn, "@") {
+		// Split into auth and host parts
+		parts := strings.SplitN(dsn, "@", 2)
+		if len(parts) != 2 {
+			return errors.New("invalid DSN format")
 		}
-	}
 
-	// Parse host and database
-	hostDB := parts[1]
-	hostDBParts := strings.SplitN(hostDB, "/", 2)
-
-	o.Addr = []string{hostDBParts[0]}
-
-	if len(hostDBParts) > 1 {
-		dbParts := strings.SplitN(hostDBParts[1], "?", 2)
-		o.Auth.Database = dbParts[0]
-
-		// Parse query parameters
-		if len(dbParts) > 1 {
-			params := dbParts[1]
-			query, err := url.ParseQuery(params)
-			if err != nil {
-				return errors.Wrap(err, "parse query parameters")
+		// Parse auth
+		auth := parts[0]
+		if auth != "" {
+			authParts := strings.SplitN(auth, ":", 2)
+			if len(authParts) == 2 {
+				o.Auth.Username = authParts[0]
+				o.Auth.Password = authParts[1]
+			} else {
+				o.Auth.Username = authParts[0]
 			}
+		}
 
-			for key, values := range query {
-				if len(values) > 0 {
-					o.Settings.Set(key, values[0])
+		// Parse host and database
+		hostDB := parts[1]
+		hostDBParts := strings.SplitN(hostDB, "/", 2)
+
+		o.Addr = []string{hostDBParts[0]}
+
+		if len(hostDBParts) > 1 {
+			dbParts := strings.SplitN(hostDBParts[1], "?", 2)
+			o.Auth.Database = dbParts[0]
+
+			// Parse query parameters
+			if len(dbParts) > 1 {
+				params := dbParts[1]
+				query, err := url.ParseQuery(params)
+				if err != nil {
+					return errors.Wrap(err, "parse query parameters")
+				}
+
+				for key, values := range query {
+					if len(values) > 0 {
+						o.Settings.Set(key, values[0])
+					}
+				}
+			}
+		}
+	} else {
+		// No auth part, parse directly as host:port/database
+		hostDBParts := strings.SplitN(dsn, "/", 2)
+
+		o.Addr = []string{hostDBParts[0]}
+
+		if len(hostDBParts) > 1 {
+			dbParts := strings.SplitN(hostDBParts[1], "?", 2)
+			o.Auth.Database = dbParts[0]
+
+			// Parse query parameters
+			if len(dbParts) > 1 {
+				params := dbParts[1]
+				query, err := url.ParseQuery(params)
+				if err != nil {
+					return errors.Wrap(err, "parse query parameters")
+				}
+
+				for key, values := range query {
+					if len(values) > 0 {
+						o.Settings.Set(key, values[0])
+					}
 				}
 			}
 		}

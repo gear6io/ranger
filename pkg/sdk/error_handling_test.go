@@ -209,7 +209,7 @@ func TestClientErrorHandling(t *testing.T) {
 	t.Run("ClientCreationWithValidOptions", func(t *testing.T) {
 		// Test client creation with valid options
 		client, err := sdk.NewClient(&sdk.Options{
-			Addr: []string{"localhost:9000"},
+			Addr: []string{"localhost:2849"},
 			Auth: sdk.Auth{
 				Username: "test",
 				Password: "test",
@@ -226,7 +226,7 @@ func TestClientErrorHandling(t *testing.T) {
 	t.Run("ClientCloseMultipleTimes", func(t *testing.T) {
 		// Test that closing a client multiple times doesn't cause errors
 		client, err := sdk.NewClient(&sdk.Options{
-			Addr: []string{"localhost:9000"},
+			Addr: []string{"localhost:2849"},
 			Auth: sdk.Auth{
 				Username: "test",
 				Password: "test",
@@ -252,7 +252,7 @@ func TestQueryErrorHandling(t *testing.T) {
 	t.Run("QueryWithContextCancellation", func(t *testing.T) {
 		// Test query cancellation through context
 		client, err := sdk.NewClient(&sdk.Options{
-			Addr: []string{"localhost:9000"},
+			Addr: []string{"localhost:2849"},
 			Auth: sdk.Auth{
 				Username: "test",
 				Password: "test",
@@ -280,7 +280,7 @@ func TestQueryErrorHandling(t *testing.T) {
 func TestBatchErrorHandling(t *testing.T) {
 	t.Run("BatchAppendAfterSend", func(t *testing.T) {
 		client, err := sdk.NewClient(&sdk.Options{
-			Addr: []string{"localhost:9000"},
+			Addr: []string{"localhost:2849"},
 			Auth: sdk.Auth{
 				Username: "test",
 				Password: "test",
@@ -306,7 +306,7 @@ func TestBatchErrorHandling(t *testing.T) {
 
 	t.Run("BatchAppendWithWrongColumnCount", func(t *testing.T) {
 		client, err := sdk.NewClient(&sdk.Options{
-			Addr: []string{"localhost:9000"},
+			Addr: []string{"localhost:2849"},
 			Auth: sdk.Auth{
 				Username: "test",
 				Password: "test",
@@ -400,7 +400,7 @@ func TestErrorRecovery(t *testing.T) {
 	t.Run("RecoverFromConnectionError", func(t *testing.T) {
 		// Test that client can recover from connection errors
 		client, err := sdk.NewClient(&sdk.Options{
-			Addr: []string{"localhost:9000"},
+			Addr: []string{"localhost:2849"},
 			Auth: sdk.Auth{
 				Username: "test",
 				Password: "test",
@@ -419,7 +419,7 @@ func TestErrorRecovery(t *testing.T) {
 	t.Run("RecoverFromQueryError", func(t *testing.T) {
 		// Test that client can recover from query errors
 		client, err := sdk.NewClient(&sdk.Options{
-			Addr: []string{"localhost:9000"},
+			Addr: []string{"localhost:2849"},
 			Auth: sdk.Auth{
 				Username: "test",
 				Password: "test",

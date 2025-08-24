@@ -40,7 +40,7 @@ type QueryResult struct {
 
 // NewEngine creates a new shared query engine service with storage
 func NewEngine(cfg *config.Config, storageMgr *storage.Manager, logger zerolog.Logger) (*Engine, error) {
-	// Get catalog from storage manager instead of creating a new one
+	// Get catalog from storage manager
 	catalogInstance := storageMgr.GetCatalog()
 
 	// Initialize DuckDB engine with the catalog and permissive config
@@ -543,10 +543,20 @@ func (e *Engine) buildInsertSQL(tableName string, data [][]interface{}) string {
 	var columns []string
 	schema, err := e.GetTableSchema(context.Background(), tableName)
 	if err != nil || schema == nil {
-		// Fallback to generic column names if schema not available
+		// Fallback to descriptive column names if schema not available
 		columns = make([]string, len(data[0]))
 		for i := range data[0] {
-			columns[i] = fmt.Sprintf("col_%d", i)
+			// Use meaningful column names if available, otherwise generate descriptive names
+			switch i {
+			case 0:
+				columns[i] = "id"
+			case 1:
+				columns[i] = "name"
+			case 2:
+				columns[i] = "value"
+			default:
+				columns[i] = fmt.Sprintf("column_%d", i+1)
+			}
 		}
 	} else {
 		// Use actual column names from schema

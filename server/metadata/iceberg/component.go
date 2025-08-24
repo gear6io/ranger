@@ -240,7 +240,7 @@ func (a *icebergComponentAdapter) OnEvent(ctx context.Context, event astha.Event
 			}
 			if modifiedAt, ok := dataMap["modified_at"].(string); ok {
 				if t, err := time.Parse(time.RFC3339, modifiedAt); err == nil {
-					fileInfo.ModifiedAt = t
+					fileInfo.UpdatedAt = t
 				}
 			}
 			if state, ok := dataMap["iceberg_metadata_state"].(string); ok {

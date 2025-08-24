@@ -6,6 +6,12 @@ import (
 	"github.com/uptrace/bun"
 )
 
+// TimeAuditable provides common timestamp fields for all auditable entities
+type TimeAuditable struct {
+	CreatedAt time.Time `bun:"created_at" json:"createdAt"`
+	UpdatedAt time.Time `bun:"updated_at" json:"updatedAt"`
+}
+
 // =============================================================================
 // CORE DATABASE ENTITIES
 // =============================================================================
@@ -20,9 +26,9 @@ type User struct {
 	DisplayName string     `bun:"display_name" json:"display_name"`
 	IsActive    bool       `bun:"is_active,notnull,default:true" json:"is_active"`
 	IsAdmin     bool       `bun:"is_admin,notnull,default:false" json:"is_admin"`
-	CreatedAt   time.Time  `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt   time.Time  `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
 	LastLoginAt *time.Time `bun:"last_login_at" json:"last_login_at,omitempty"`
+
+	TimeAuditable
 
 	// Relations
 	// User can have many databases, tables, and access logs
@@ -32,14 +38,17 @@ type User struct {
 type Database struct {
 	bun.BaseModel `bun:"table:databases"`
 
-	ID          int64     `bun:"id,pk,autoincrement" json:"id"`
-	Name        string    `bun:"name,notnull,unique" json:"name"`
-	DisplayName string    `bun:"display_name" json:"display_name"`
-	Description string    `bun:"description" json:"description"`
-	OwnerID     int64     `bun:"owner_id,notnull" json:"owner_id"`
-	TableCount  int       `bun:"table_count,notnull,default:0" json:"table_count"`
-	CreatedAt   time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt   time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+	ID          int64      `bun:"id,pk,autoincrement" json:"id"`
+	Name        string     `bun:"name,notnull,unique" json:"name"`
+	DisplayName string     `bun:"display_name" json:"display_name"`
+	Description string     `bun:"description" json:"description"`
+	IsSystem    bool       `bun:"is_system,notnull,default:false" json:"is_system"`
+	IsReadOnly  bool       `bun:"is_read_only,notnull,default:false" json:"is_read_only"`
+	TableCount  int        `bun:"table_count,notnull,default:0" json:"table_count"`
+	TotalSize   int64      `bun:"total_size,notnull,default:0" json:"total_size"`
+	DeletedAt   *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`
+
+	TimeAuditable
 
 	// Relations
 	// Database belongs to a User (Owner)
@@ -61,9 +70,9 @@ type Table struct {
 	RowCount    int64      `bun:"row_count,notnull,default:0" json:"row_count"`
 	FileCount   int        `bun:"file_count,notnull,default:0" json:"file_count"`
 	TotalSize   int64      `bun:"total_size,notnull,default:0" json:"total_size"`
-	CreatedAt   time.Time  `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt   time.Time  `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
 	DeletedAt   *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`
+
+	TimeAuditable
 
 	// Relations
 	Database *Database `bun:"rel:belongs-to,join:database_id=id"`
@@ -90,8 +99,8 @@ type TableMetadata struct {
 	SortBy        string    `bun:"sort_by" json:"sort_by"`
 	Properties    string    `bun:"properties,default:'{}'" json:"properties"`
 	LastModified  time.Time `bun:"last_modified,notnull,default:current_timestamp" json:"last_modified"`
-	CreatedAt     time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt     time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+
+	TimeAuditable
 
 	// Relations
 	Table *Table `bun:"rel:belongs-to,join:table_id=id"`
@@ -101,22 +110,22 @@ type TableMetadata struct {
 type TableColumn struct {
 	bun.BaseModel `bun:"table:table_columns"`
 
-	ID              int       `bun:"id,pk,autoincrement" json:"id"`
-	TableID         int64     `bun:"table_id,notnull" json:"table_id"`
-	ColumnName      string    `bun:"column_name,notnull" json:"column_name"`
-	DisplayName     string    `bun:"display_name" json:"display_name"`
-	DataType        string    `bun:"data_type,notnull" json:"data_type"`
-	IsNullable      bool      `bun:"is_nullable,notnull,default:true" json:"is_nullable"`
-	IsPrimary       bool      `bun:"is_primary,notnull,default:false" json:"is_primary"`
-	IsUnique        bool      `bun:"is_unique,notnull,default:false" json:"is_unique"`
-	DefaultValue    string    `bun:"default_value" json:"default_value"`
-	Description     string    `bun:"description" json:"description"`
-	OrdinalPosition int       `bun:"ordinal_position,notnull" json:"ordinal_position"`
-	MaxLength       int       `bun:"max_length" json:"max_length"`
-	Precision       int       `bun:"precision" json:"precision"`
-	Scale           int       `bun:"scale" json:"scale"`
-	CreatedAt       time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt       time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+	ID              int    `bun:"id,pk,autoincrement" json:"id"`
+	TableID         int64  `bun:"table_id,notnull" json:"table_id"`
+	ColumnName      string `bun:"column_name,notnull" json:"column_name"`
+	DisplayName     string `bun:"display_name" json:"display_name"`
+	DataType        string `bun:"data_type,notnull" json:"data_type"`
+	IsNullable      bool   `bun:"is_nullable,notnull,default:true" json:"is_nullable"`
+	IsPrimary       bool   `bun:"is_primary,notnull,default:false" json:"is_primary"`
+	IsUnique        bool   `bun:"is_unique,notnull,default:false" json:"is_unique"`
+	DefaultValue    string `bun:"default_value" json:"default_value"`
+	Description     string `bun:"description" json:"description"`
+	OrdinalPosition int    `bun:"ordinal_position,notnull" json:"ordinal_position"`
+	MaxLength       int    `bun:"max_length" json:"max_length"`
+	Precision       int    `bun:"precision" json:"precision"`
+	Scale           int    `bun:"scale" json:"scale"`
+
+	TimeAuditable
 
 	// Relations
 	Table *Table `bun:"rel:belongs-to,join:table_id=id"`
@@ -130,19 +139,19 @@ type TableColumn struct {
 type TableFile struct {
 	bun.BaseModel `bun:"table:table_files"`
 
-	ID                   int64     `bun:"id,pk,autoincrement" json:"id"`
-	TableID              int64     `bun:"table_id,notnull" json:"table_id"`
-	FileName             string    `bun:"file_name,notnull" json:"file_name"`
-	FilePath             string    `bun:"file_path,notnull" json:"file_path"`
-	FileSize             int64     `bun:"file_size,notnull" json:"file_size"`
-	FileType             string    `bun:"file_type,notnull" json:"file_type"`
-	PartitionPath        string    `bun:"partition_path" json:"partition_path"`
-	RowCount             int64     `bun:"row_count,notnull,default:0" json:"row_count"`
-	Checksum             string    `bun:"checksum" json:"checksum"`
-	IsCompressed         bool      `bun:"is_compressed,notnull,default:false" json:"is_compressed"`
-	CreatedAt            time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	ModifiedAt           time.Time `bun:"modified_at,notnull,default:current_timestamp" json:"modified_at"`
-	IcebergMetadataState string    `bun:"iceberg_metadata_state,notnull,default:'pending'" json:"iceberg_metadata_state"`
+	ID                   int64  `bun:"id,pk,autoincrement" json:"id"`
+	TableID              int64  `bun:"table_id,notnull" json:"table_id"`
+	FileName             string `bun:"file_name,notnull" json:"file_name"`
+	FilePath             string `bun:"file_path,notnull" json:"file_path"`
+	FileSize             int64  `bun:"file_size,notnull" json:"file_size"`
+	FileType             string `bun:"file_type,notnull" json:"file_type"`
+	PartitionPath        string `bun:"partition_path" json:"partition_path"`
+	RowCount             int64  `bun:"row_count,notnull,default:0" json:"row_count"`
+	Checksum             string `bun:"checksum" json:"checksum"`
+	IsCompressed         bool   `bun:"is_compressed,notnull,default:false" json:"is_compressed"`
+	IcebergMetadataState string `bun:"iceberg_metadata_state,notnull,default:'pending'" json:"iceberg_metadata_state"`
+
+	TimeAuditable
 
 	// Relations
 	Table *Table `bun:"rel:belongs-to,join:table_id=id"`
@@ -156,17 +165,17 @@ type TableFile struct {
 type TablePartition struct {
 	bun.BaseModel `bun:"table:table_partitions"`
 
-	ID            int64     `bun:"id,pk,autoincrement" json:"id"`
-	TableID       int64     `bun:"table_id,notnull" json:"table_id"`
-	PartitionKey  string    `bun:"partition_key,notnull" json:"partition_key"`
-	PartitionPath string    `bun:"partition_path,notnull" json:"partition_path"`
-	RowCount      int64     `bun:"row_count,notnull,default:0" json:"row_count"`
-	FileCount     int       `bun:"file_count,notnull,default:0" json:"file_count"`
-	TotalSize     int64     `bun:"total_size,notnull,default:0" json:"total_size"`
-	MinValues     string    `bun:"min_values" json:"min_values"`
-	MaxValues     string    `bun:"max_values" json:"max_values"`
-	CreatedAt     time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt     time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+	ID            int64  `bun:"id,pk,autoincrement" json:"id"`
+	TableID       int64  `bun:"table_id,notnull" json:"table_id"`
+	PartitionKey  string `bun:"partition_key,notnull" json:"partition_key"`
+	PartitionPath string `bun:"partition_path,notnull" json:"partition_path"`
+	RowCount      int64  `bun:"row_count,notnull,default:0" json:"row_count"`
+	FileCount     int    `bun:"file_count,notnull,default:0" json:"file_count"`
+	TotalSize     int64  `bun:"total_size,notnull,default:0" json:"total_size"`
+	MinValues     string `bun:"min_values" json:"min_values"`
+	MaxValues     string `bun:"max_values" json:"max_values"`
+
+	TimeAuditable
 
 	// Relations
 	Table *Table `bun:"rel:belongs-to,join:table_id=id"`
@@ -176,16 +185,16 @@ type TablePartition struct {
 type TableIndex struct {
 	bun.BaseModel `bun:"table:table_indexes"`
 
-	ID        int64     `bun:"id,pk,autoincrement" json:"id"`
-	TableID   int64     `bun:"table_id,notnull" json:"table_id"`
-	IndexName string    `bun:"index_name,notnull" json:"index_name"`
-	IndexType string    `bun:"index_type,notnull" json:"index_type"`
-	Columns   string    `bun:"columns,notnull" json:"columns"`
-	IsUnique  bool      `bun:"is_unique,notnull,default:false" json:"is_unique"`
-	IsPrimary bool      `bun:"is_primary,notnull,default:false" json:"is_primary"`
-	IsActive  bool      `bun:"is_active,notnull,default:true" json:"is_active"`
-	CreatedAt time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+	ID        int64  `bun:"id,pk,autoincrement" json:"id"`
+	TableID   int64  `bun:"table_id,notnull" json:"table_id"`
+	IndexName string `bun:"index_name,notnull" json:"index_name"`
+	IndexType string `bun:"index_type,notnull" json:"index_type"`
+	Columns   string `bun:"columns,notnull" json:"columns"`
+	IsUnique  bool   `bun:"is_unique,notnull,default:false" json:"is_unique"`
+	IsPrimary bool   `bun:"is_primary,notnull,default:false" json:"is_primary"`
+	IsActive  bool   `bun:"is_active,notnull,default:true" json:"is_active"`
+
+	TimeAuditable
 
 	// Relations
 	Table *Table `bun:"rel:belongs-to,join:table_id=id"`
@@ -195,19 +204,19 @@ type TableIndex struct {
 type TableConstraint struct {
 	bun.BaseModel `bun:"table:table_constraints"`
 
-	ID               int64     `bun:"id,pk,autoincrement" json:"id"`
-	TableID          int64     `bun:"table_id,notnull" json:"table_id"`
-	ConstraintName   string    `bun:"constraint_name,notnull" json:"constraint_name"`
-	ConstraintType   string    `bun:"constraint_type,notnull" json:"constraint_type"`
-	Columns          string    `bun:"columns,notnull" json:"columns"`
-	ReferenceTable   string    `bun:"reference_table" json:"reference_table"`
-	ReferenceColumns string    `bun:"reference_columns" json:"reference_columns"`
-	OnDelete         string    `bun:"on_delete" json:"on_delete"`
-	OnUpdate         string    `bun:"on_update" json:"on_update"`
-	IsDeferrable     bool      `bun:"is_deferrable,notnull,default:false" json:"is_deferrable"`
-	IsDeferred       bool      `bun:"is_deferred,notnull,default:false" json:"is_deferred"`
-	CreatedAt        time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt        time.Time `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
+	ID               int64  `bun:"id,pk,autoincrement" json:"id"`
+	TableID          int64  `bun:"table_id,notnull" json:"table_id"`
+	ConstraintName   string `bun:"constraint_name,notnull" json:"constraint_name"`
+	ConstraintType   string `bun:"constraint_type,notnull" json:"constraint_type"`
+	Columns          string `bun:"columns,notnull" json:"columns"`
+	ReferenceTable   string `bun:"reference_table" json:"reference_table"`
+	ReferenceColumns string `bun:"reference_columns" json:"reference_columns"`
+	OnDelete         string `bun:"on_delete" json:"on_delete"`
+	OnUpdate         string `bun:"on_update" json:"on_update"`
+	IsDeferrable     bool   `bun:"is_deferrable,notnull,default:false" json:"is_deferrable"`
+	IsDeferred       bool   `bun:"is_deferred,notnull,default:false" json:"is_deferred"`
+
+	TimeAuditable
 
 	// Relations
 	Table *Table `bun:"rel:belongs-to,join:table_id=id"`
@@ -228,7 +237,8 @@ type TableStatistic struct {
 	StatValue   string    `bun:"stat_value" json:"stat_value"`
 	StatData    string    `bun:"stat_data" json:"stat_data"`
 	LastUpdated time.Time `bun:"last_updated,notnull,default:current_timestamp" json:"last_updated"`
-	CreatedAt   time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
+
+	TimeAuditable
 
 	// Relations
 	Table *Table `bun:"rel:belongs-to,join:table_id=id"`
@@ -242,15 +252,16 @@ type TableStatistic struct {
 type AccessLog struct {
 	bun.BaseModel `bun:"table:access_log"`
 
-	ID        int64     `bun:"id,pk,autoincrement" json:"id"`
-	UserID    *int64    `bun:"user_id" json:"user_id,omitempty"`
-	Action    string    `bun:"action,notnull" json:"action"`
-	Resource  string    `bun:"resource,notnull" json:"resource"`
-	IPAddress string    `bun:"ip_address" json:"ip_address"`
-	UserAgent string    `bun:"user_agent" json:"user_agent"`
-	Status    int       `bun:"status,notnull" json:"status"`
-	Duration  int64     `bun:"duration_ms" json:"duration_ms"`
-	CreatedAt time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
+	ID        int64  `bun:"id,pk,autoincrement" json:"id"`
+	UserID    *int64 `bun:"user_id" json:"user_id,omitempty"`
+	Action    string `bun:"action,notnull" json:"action"`
+	Resource  string `bun:"resource,notnull" json:"resource"`
+	IPAddress string `bun:"ip_address" json:"ip_address"`
+	UserAgent string `bun:"user_agent" json:"user_agent"`
+	Status    int    `bun:"status,notnull" json:"status"`
+	Duration  int64  `bun:"duration_ms" json:"duration_ms"`
+
+	TimeAuditable
 
 	// Relations
 	User *User `bun:"rel:belongs-to,join:user_id=id"`
@@ -266,7 +277,8 @@ type SchemaVersion struct {
 	Description string    `bun:"description" json:"description"`
 	AppliedAt   time.Time `bun:"applied_at,notnull,default:current_timestamp" json:"applied_at"`
 	Checksum    string    `bun:"checksum" json:"checksum"`
-	CreatedAt   time.Time `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
+
+	TimeAuditable
 }
 
 // =============================================================================
@@ -276,29 +288,8 @@ type SchemaVersion struct {
 // CDCLogEntry represents a change data capture log entry
 type CDCLogEntry struct {
 	ID        int64     `json:"id"`
-	TableName string    `json:"table_name"`
-	Operation string    `json:"operation"` // INSERT, UPDATE, DELETE
-	RecordID  int64     `json:"record_id"`
-	OldData   string    `json:"old_data,omitempty"` // JSON string of old values
-	NewData   string    `json:"new_data,omitempty"` // JSON string of new values
+	TableID   int64     `json:"table_id"`
+	Operation string    `json:"operation"`
+	Data      string    `json:"data"`
 	Timestamp time.Time `json:"timestamp"`
-	Processed bool      `json:"processed"`
-}
-
-// CDCSetup represents CDC configuration and setup
-type CDCSetup struct {
-	Enabled      bool     `json:"enabled"`
-	Tables       []string `json:"tables"`
-	BatchSize    int      `json:"batch_size"`
-	PollInterval int      `json:"poll_interval_ms"`
-}
-
-// =============================================================================
-// CONFIGURATION TYPES
-// =============================================================================
-
-// ManagerConfig holds configuration for the metadata manager
-type ManagerConfig struct {
-	SQLitePath string `json:"sqlite_path"`
-	BasePath   string `json:"base_path"`
 }

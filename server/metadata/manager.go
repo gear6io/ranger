@@ -353,7 +353,7 @@ func (mm *MetadataManager) CreateTableMetadata(ctx context.Context, database, ta
 
 // LoadTableMetadata loads detailed metadata for a table
 func (mm *MetadataManager) LoadTableMetadata(ctx context.Context, database, tableName string) (*registry.TableMetadata, error) {
-	return nil, errors.New(MetadataOperationFailed, "not implemented", nil)
+	return mm.storage.LoadTableMetadata(ctx, database, tableName)
 }
 
 // ListAllTables returns a list of all tables across all databases (for storage manager)

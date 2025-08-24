@@ -79,7 +79,7 @@ func TestParquetManager_StoreData_InvalidData(t *testing.T) {
 
 	err := pm.StoreData(data)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "expected 2")
+	assert.Contains(t, err.Error(), "row has incorrect number of columns")
 
 	// Invalid data - wrong type
 	data = [][]interface{}{
