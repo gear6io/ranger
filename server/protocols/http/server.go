@@ -99,13 +99,12 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Create query context for HTTP requests
 	queryCtx := &types.QueryContext{
-		Database:   "default", // HTTP requests default to "default" database
-		User:       "http",    // HTTP requests use "http" as user
+		Query:      queryStr,
+		Database:   "default",
+		User:       "http",
 		ClientAddr: r.RemoteAddr,
 	}
-
-	// Execute query using QueryEngine
-	result, err := s.queryEngine.ExecuteQuery(r.Context(), queryStr, queryCtx)
+	result, err := s.queryEngine.ExecuteQuery(r.Context(), queryCtx)
 	if err != nil {
 		s.logger.Error().Err(err).Str("query", queryStr).Msg("Query execution failed")
 		http.Error(w, fmt.Sprintf("Query execution failed: %v", err), http.StatusInternalServerError)

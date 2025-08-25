@@ -81,18 +81,13 @@ func NewEngine(cfg *config.Config, storageMgr *storage.Manager, logger zerolog.L
 	}, nil
 }
 
-// ExecuteQuery routes and executes a query with tracking and cancellation support
-func (e *Engine) ExecuteQuery(ctx context.Context, query string, queryCtx *types.QueryContext) (*QueryResult, error) {
-	return e.ExecuteQueryWithTracking(ctx, query, queryCtx)
-}
-
-// ExecuteQueryWithTracking executes a query with full tracking and cancellation support
-func (e *Engine) ExecuteQueryWithTracking(ctx context.Context, query string, queryCtx *types.QueryContext) (*QueryResult, error) {
+// ExecuteQuery executes a query with full tracking and cancellation support
+func (e *Engine) ExecuteQuery(ctx context.Context, queryCtx *types.QueryContext) (*QueryResult, error) {
 	// Generate unique query ID
 	queryID := fmt.Sprintf("query_%d", time.Now().UnixNano())
 
 	// Start tracking the query
-	_, trackedCtx := e.queryManager.StartQuery(ctx, queryID, query, queryCtx.User, queryCtx.ClientAddr)
+	_, trackedCtx := e.queryManager.StartQuery(ctx, queryID, queryCtx.Query, queryCtx.User, queryCtx.ClientAddr)
 
 	// Use the tracked context for execution
 	ctx = trackedCtx
@@ -106,7 +101,7 @@ func (e *Engine) ExecuteQueryWithTracking(ctx context.Context, query string, que
 	}()
 
 	// Parse the query (validation will be handled separately if needed)
-	stmt, err := parser.Parse(query)
+	stmt, err := parser.Parse(queryCtx.Query)
 	if err != nil {
 		e.queryManager.CompleteQuery(queryID, 0, err)
 		return nil, errors.New(ErrQueryParseValidationFailed, "failed to parse and validate query", err)
@@ -121,11 +116,11 @@ func (e *Engine) ExecuteQueryWithTracking(ctx context.Context, query string, que
 	var result *QueryResult
 	switch stmt := stmt.(type) {
 	case *parser.SelectStmt:
-		result, err = e.executeReadQuery(ctx, query, queryCtx)
+		result, err = e.executeReadQuery(ctx, queryCtx.Query, queryCtx)
 	case *parser.InsertStmt:
-		result, err = e.executeInsertQuery(ctx, query, queryCtx)
+		result, err = e.executeInsertQuery(ctx, queryCtx.Query, queryCtx)
 	case *parser.CreateTableStmt:
-		result, err = e.executeDDLQuery(ctx, query, queryCtx)
+		result, err = e.executeDDLQuery(ctx, queryCtx.Query, queryCtx)
 	case *parser.CreateDatabaseStmt:
 		result, err = e.executeCreateDatabase(ctx, stmt)
 	case *parser.ShowStmt:

@@ -67,13 +67,13 @@ func TestEngineBasicFunctionality(t *testing.T) {
 
 	t.Run("QueryParsing", func(t *testing.T) {
 		// Test basic query parsing functionality
-		query := "SELECT * FROM test_table"
 		queryCtx := &types.QueryContext{
+			Query:      "SELECT * FROM test_table;",
 			Database:   "default",
 			User:       "test",
 			ClientAddr: "127.0.0.1",
 		}
-		result, err := engine.ExecuteQuery(context.Background(), query, queryCtx)
+		result, err := engine.ExecuteQuery(context.Background(), queryCtx)
 		// This might fail due to missing storage, but parsing should work
 		t.Logf("Query result: %v, error: %v", result, err)
 	})
@@ -124,9 +124,11 @@ func TestEngineQueryParsing(t *testing.T) {
 		query string
 		valid bool
 	}{
-		{"SimpleSelect", "SELECT * FROM table", true},
-		{"CreateTable", "CREATE TABLE test (id INT)", true},
-		{"InsertData", "INSERT INTO test VALUES (1)", true},
+		{"SimpleSelect", "SELECT * FROM table;", true},
+		{"CreateTable", "CREATE TABLE test (id INT) ENGINE = MEMORY;", true},
+		{"InsertData", "INSERT INTO test VALUES (1);", true},
+		{"ShowTables", "SHOW TABLES;", true},
+		{"ShowDatabases", "SHOW DATABASES;", true},
 		{"InvalidQuery", "INVALID SQL QUERY", false},
 	}
 
@@ -134,11 +136,12 @@ func TestEngineQueryParsing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Test query parsing (execution will fail without storage, but parsing should work)
 			queryCtx := &types.QueryContext{
+				Query:      tc.query,
 				Database:   "default",
 				User:       "test",
 				ClientAddr: "127.0.0.1",
 			}
-			result, err := engine.ExecuteQuery(context.Background(), tc.query, queryCtx)
+			result, err := engine.ExecuteQuery(context.Background(), queryCtx)
 			if tc.valid {
 				// Valid queries should parse but may fail execution due to missing storage
 				t.Logf("Query '%s' parsed successfully, execution result: %v, error: %v",
@@ -452,5 +455,365 @@ func TestQueryEngineStreamingPerformance(t *testing.T) {
 
 		assert.Greater(t, totalBytes, 0, "Should read data from streaming reader")
 		t.Logf("Streamed %d bytes for 1000 rows", totalBytes)
+	})
+}
+
+// TestDatabaseSelection tests the new database selection functionality
+func TestDatabaseSelection(t *testing.T) {
+	// Create test configuration with unique temporary directory
+	tempDir, err := os.MkdirTemp("", "ranger_test_db_selection")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	cfg := config.LoadDefaultConfig()
+	cfg.Storage.DataPath = tempDir
+	cfg.Storage.Catalog.Type = "json"
+
+	logger := zerolog.New(zerolog.NewConsoleWriter())
+
+	// Create path manager
+	pathManager := paths.NewManager(cfg.GetStoragePath())
+
+	// Create catalog
+	catalogInstance, err := catalog.NewCatalog(cfg, pathManager)
+	require.NoError(t, err)
+
+	// Create metadata manager
+	metadataMgr, err := metadata.NewMetadataManager(catalogInstance, pathManager.GetInternalMetadataDBPath(), cfg.GetStoragePath(), logger)
+	require.NoError(t, err)
+
+	// Create storage manager
+	storageMgr, err := storage.NewManager(cfg, logger, metadataMgr)
+	require.NoError(t, err)
+	defer storageMgr.Close()
+
+	// Create query engine
+	engine, err := NewEngine(cfg, storageMgr, logger)
+	require.NoError(t, err)
+	defer engine.Close()
+
+	// Initialize storage
+	ctx := context.Background()
+	err = storageMgr.Initialize(ctx)
+	require.NoError(t, err)
+
+	// Create test databases
+	testDB1 := "test_database_1"
+	testDB2 := "test_database_2"
+
+	err = storageMgr.CreateDatabase(ctx, testDB1)
+	require.NoError(t, err)
+	err = storageMgr.CreateDatabase(ctx, testDB2)
+	require.NoError(t, err)
+
+	// Create test tables in both databases
+	schema := &parser.TableSchema{
+		ColumnDefinitions: map[string]*parser.ColumnDefinition{
+			"id": {
+				DataType: "INT",
+				Nullable: false,
+			},
+			"name": {
+				DataType: "VARCHAR",
+				Length:   255,
+				Nullable: true,
+			},
+		},
+	}
+
+	// Create tables in both databases
+	err = engine.CreateTable(ctx, testDB1, "table1", "MEMORY", schema)
+	require.NoError(t, err)
+	err = engine.CreateTable(ctx, testDB1, "table2", "MEMORY", schema)
+	require.NoError(t, err)
+	err = engine.CreateTable(ctx, testDB2, "table3", "MEMORY", schema)
+	require.NoError(t, err)
+
+	t.Run("DatabaseSelectionFromContext", func(t *testing.T) {
+		// Test that database is selected from QueryContext when not specified in query
+		queryCtx := &types.QueryContext{
+			Query:      "SHOW TABLES;",
+			Database:   testDB1,
+			User:       "test_user",
+			ClientAddr: "127.0.0.1",
+		}
+
+		result, err := engine.ExecuteQuery(context.Background(), queryCtx)
+		assert.NoError(t, err, "Should execute SHOW TABLES successfully")
+		assert.NotNil(t, result, "Should return result")
+		assert.Equal(t, int64(2), result.RowCount, "Should show 2 tables from testDB1")
+		assert.Contains(t, result.Message, testDB1, "Message should mention the database")
+	})
+
+	t.Run("DatabaseSelectionFallbackToDefault", func(t *testing.T) {
+		// Test that database falls back to "default" when QueryContext has empty database
+		queryCtx := &types.QueryContext{
+			Query:      "SHOW TABLES;",
+			Database:   "", // Empty database should fall back to "default"
+			User:       "test_user",
+			ClientAddr: "127.0.0.1",
+		}
+
+		result, err := engine.ExecuteQuery(context.Background(), queryCtx)
+		// This should work since "default" database exists
+		assert.NoError(t, err, "Should execute SHOW TABLES with default database")
+		assert.NotNil(t, result, "Should return result")
+	})
+
+	t.Run("DatabaseValidation", func(t *testing.T) {
+		// Test that non-existent database returns proper error
+		queryCtx := &types.QueryContext{
+			Query:      "SHOW TABLES;",
+			Database:   "non_existent_database",
+			User:       "test_user",
+			ClientAddr: "127.0.0.1",
+		}
+
+		result, err := engine.ExecuteQuery(context.Background(), queryCtx)
+		assert.Error(t, err, "SHOW TABLES should fail with non-existent database")
+		assert.Nil(t, result, "Should not return result")
+
+		// Check error message contains database name
+		assert.Contains(t, err.Error(), "non_existent_database", "Error should mention the database name")
+		assert.Contains(t, err.Error(), "does not exist", "Error should indicate database doesn't exist")
+	})
+
+	t.Run("ShowDatabases", func(t *testing.T) {
+		// Test SHOW DATABASES functionality
+		queryCtx := &types.QueryContext{
+			Query:      "SHOW DATABASES;",
+			Database:   "default",
+			User:       "test_user",
+			ClientAddr: "127.0.0.1",
+		}
+
+		result, err := engine.ExecuteQuery(context.Background(), queryCtx)
+		assert.NoError(t, err, "Should execute SHOW DATABASES successfully")
+		assert.NotNil(t, result, "Should return result")
+		assert.GreaterOrEqual(t, result.RowCount, int64(2), "Should show at least 2 databases (testDB1, testDB2)")
+
+		// Verify specific databases are present
+		if result.Data != nil {
+			if rows, ok := result.Data.([][]interface{}); ok {
+				databases := make([]string, len(rows))
+				for i, row := range rows {
+					databases[i] = row[0].(string)
+				}
+				assert.Contains(t, databases, testDB1, "Should contain testDB1")
+				assert.Contains(t, databases, testDB2, "Should contain testDB2")
+				t.Logf("Found databases: %v", databases)
+			}
+		}
+	})
+
+	t.Run("CreateTableWithDatabaseContext", func(t *testing.T) {
+		// Test CREATE TABLE uses database from QueryContext
+		queryCtx := &types.QueryContext{
+			Query:      "CREATE TABLE context_table (id INT, name VARCHAR(255)) ENGINE = MEMORY;",
+			Database:   testDB1,
+			User:       "test_user",
+			ClientAddr: "127.0.0.1",
+		}
+
+		result, err := engine.ExecuteQuery(context.Background(), queryCtx)
+		assert.NoError(t, err, "Should create table using database from context")
+		assert.NotNil(t, result, "Should return result")
+		assert.Contains(t, result.Message, "created successfully", "Should indicate table creation success")
+
+		// Verify table exists in the correct database
+		exists := storageMgr.TableExists(ctx, testDB1, "context_table")
+		assert.True(t, exists, "Table should exist in testDB1")
+
+		// Verify table doesn't exist in other database
+		exists = storageMgr.TableExists(ctx, testDB2, "context_table")
+		assert.False(t, exists, "Table should not exist in testDB2")
+	})
+
+	t.Run("CreateTableWithQualifiedName", func(t *testing.T) {
+		// Test CREATE TABLE with database.table format overrides context
+		queryCtx := &types.QueryContext{
+			Query:      fmt.Sprintf("CREATE TABLE %s.qualified_table (id INT, name VARCHAR(255)) ENGINE = MEMORY;", testDB2),
+			Database:   testDB1, // Context says testDB1
+			User:       "test_user",
+			ClientAddr: "127.0.0.1",
+		}
+
+		// But query specifies testDB2
+		result, err := engine.ExecuteQuery(context.Background(), queryCtx)
+		assert.NoError(t, err, "Should create table in testDB2 despite context being testDB1")
+		assert.NotNil(t, result, "Should return result")
+
+		// Verify table exists in testDB2 (from query) not testDB1 (from context)
+		exists := storageMgr.TableExists(ctx, testDB2, "qualified_table")
+		assert.True(t, exists, "Table should exist in testDB2")
+
+		exists = storageMgr.TableExists(ctx, testDB1, "qualified_table")
+		assert.False(t, exists, "Table should not exist in testDB1")
+	})
+
+	t.Run("QueryContextPersistence", func(t *testing.T) {
+		// Test that QueryContext is properly passed through all query types
+		queryCtx := &types.QueryContext{
+			Query:      "SELECT * FROM table1;",
+			Database:   testDB1,
+			User:       "test_user",
+			ClientAddr: "127.0.0.1",
+		}
+
+		// Test SELECT query (should use context database)
+		selectResult, err := engine.ExecuteQuery(context.Background(), queryCtx)
+		// SELECT might fail due to DuckDB integration, but context should be passed
+		t.Logf("SELECT result: %v, error: %v", selectResult, err)
+
+		// Test INSERT query (should use context database)
+		insertResult, err := engine.ExecuteQuery(context.Background(), &types.QueryContext{
+			Query:      "INSERT INTO table1 VALUES (1, 'test');",
+			Database:   testDB1,
+			User:       "test_user",
+			ClientAddr: "127.0.0.1",
+		})
+		// INSERT might fail due to DuckDB integration, but context should be passed
+		t.Logf("INSERT result: %v, error: %v", insertResult, err)
+	})
+
+	t.Run("ShowTablesParsing", func(t *testing.T) {
+		// Test that SHOW TABLES properly parses and uses database context
+		queryCtx := &types.QueryContext{
+			Query:      "SHOW TABLES;",
+			Database:   testDB2, // Use testDB2 which now has 2 tables (table3 + qualified_table)
+			User:       "test_user",
+			ClientAddr: "127.0.0.1",
+		}
+
+		result, err := engine.ExecuteQuery(context.Background(), queryCtx)
+		assert.NoError(t, err, "Should execute SHOW TABLES successfully")
+		assert.NotNil(t, result, "Should return result")
+		assert.Equal(t, int64(2), result.RowCount, "Should show 2 tables from testDB2")
+		assert.Contains(t, result.Message, testDB2, "Message should mention testDB2")
+
+		// Verify the table names are correct
+		if result.Data != nil {
+			if rows, ok := result.Data.([][]interface{}); ok {
+				assert.Equal(t, 2, len(rows), "Should have 2 rows")
+				tableNames := []string{rows[0][0].(string), rows[1][0].(string)}
+				assert.Contains(t, tableNames, "table3", "Should show table3")
+				assert.Contains(t, tableNames, "qualified_table", "Should show qualified_table")
+			}
+		}
+	})
+
+	t.Run("ErrorHandlingNonExistentDatabase", func(t *testing.T) {
+		// Test various query types fail properly with non-existent database
+		nonExistentDB := "completely_nonexistent_db"
+		queryCtx := &types.QueryContext{
+			Query:      "SHOW TABLES;",
+			Database:   nonExistentDB,
+			User:       "test_user",
+			ClientAddr: "127.0.0.1",
+		}
+
+		// Test SHOW TABLES with non-existent database
+		result, err := engine.ExecuteQuery(context.Background(), queryCtx)
+		assert.Error(t, err, "SHOW TABLES should fail with non-existent database")
+		assert.Nil(t, result, "Should not return result")
+		assert.Contains(t, err.Error(), nonExistentDB, "Error should mention the database name")
+
+		// Test CREATE TABLE with non-existent database
+		result, err = engine.ExecuteQuery(context.Background(), &types.QueryContext{
+			Query:      "CREATE TABLE test_table (id INT) ENGINE = MEMORY;",
+			Database:   nonExistentDB,
+			User:       "test_user",
+			ClientAddr: "127.0.0.1",
+		})
+		assert.Error(t, err, "CREATE TABLE should fail with non-existent database")
+		assert.Nil(t, result, "Should not return result")
+		assert.Contains(t, err.Error(), nonExistentDB, "Error should mention the database name")
+	})
+}
+
+// TestDatabaseSelectionHelpers tests the database selection helper functions in isolation
+func TestDatabaseSelectionHelpers(t *testing.T) {
+	// Create minimal test configuration
+	tempDir, err := os.MkdirTemp("", "ranger_test_db_helpers")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	cfg := config.LoadDefaultConfig()
+	cfg.Storage.DataPath = tempDir
+	cfg.Storage.Catalog.Type = "json"
+
+	logger := zerolog.New(zerolog.NewConsoleWriter())
+
+	// Create path manager
+	pathManager := paths.NewManager(cfg.GetStoragePath())
+
+	// Create catalog
+	catalogInstance, err := catalog.NewCatalog(cfg, pathManager)
+	require.NoError(t, err)
+
+	// Create metadata manager
+	metadataMgr, err := metadata.NewMetadataManager(catalogInstance, pathManager.GetInternalMetadataDBPath(), cfg.GetStoragePath(), logger)
+	require.NoError(t, err)
+
+	// Create storage manager
+	storageMgr, err := storage.NewManager(cfg, logger, metadataMgr)
+	require.NoError(t, err)
+	defer storageMgr.Close()
+
+	// Create query engine
+	engine, err := NewEngine(cfg, storageMgr, logger)
+	require.NoError(t, err)
+	defer engine.Close()
+
+	// Initialize storage
+	ctx := context.Background()
+	err = storageMgr.Initialize(ctx)
+	require.NoError(t, err)
+
+	// Create test database
+	testDB := "helper_test_db"
+	err = storageMgr.CreateDatabase(ctx, testDB)
+	require.NoError(t, err)
+
+	t.Run("GetDatabaseFromContext", func(t *testing.T) {
+		// Test with specified database
+		queryCtx := &types.QueryContext{
+			Query:      "SHOW TABLES;",
+			Database:   testDB,
+			User:       "test_user",
+			ClientAddr: "127.0.0.1",
+		}
+
+		// Use reflection to access the private method for testing
+		// This tests the database selection logic in isolation
+		result := engine.getDatabaseFromContext(queryCtx)
+		assert.Equal(t, testDB, result, "Should return database from context")
+
+		// Test with empty database (should fall back to "default")
+		emptyCtx := &types.QueryContext{
+			Query:      "SHOW TABLES;",
+			Database:   "",
+			User:       "test_user",
+			ClientAddr: "127.0.0.1",
+		}
+
+		result = engine.getDatabaseFromContext(emptyCtx)
+		assert.Equal(t, "default", result, "Should fall back to default database")
+	})
+
+	t.Run("ValidateDatabaseExists", func(t *testing.T) {
+		// Test with existing database
+		err := engine.validateDatabaseExists(ctx, testDB)
+		assert.NoError(t, err, "Should not error for existing database")
+
+		// Test with default database (should skip validation)
+		err = engine.validateDatabaseExists(ctx, "default")
+		assert.NoError(t, err, "Should not error for default database")
+
+		// Test with non-existent database
+		err = engine.validateDatabaseExists(ctx, "non_existent_helper_db")
+		assert.Error(t, err, "Should error for non-existent database")
+		assert.Contains(t, err.Error(), "non_existent_helper_db", "Error should mention database name")
+		assert.Contains(t, err.Error(), "does not exist", "Error should indicate database doesn't exist")
 	})
 }

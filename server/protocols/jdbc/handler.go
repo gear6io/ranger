@@ -109,13 +109,12 @@ func (h *JDBCHandler) handleQuery(conn io.WriteCloser, msg *Message) error {
 
 	// Create query context for JDBC requests
 	queryCtx := &types.QueryContext{
-		Database:   "default", // JDBC requests default to "default" database
-		User:       "jdbc",    // JDBC requests use "jdbc" as user
-		ClientAddr: "jdbc",    // JDBC doesn't provide client address
+		Query:      queryStr,
+		Database:   "default",
+		User:       "jdbc",
+		ClientAddr: "jdbc",
 	}
-
-	// Execute query using the QueryEngine
-	result, err := h.queryEngine.ExecuteQuery(h.ctx, queryStr, queryCtx)
+	result, err := h.queryEngine.ExecuteQuery(h.ctx, queryCtx)
 	if err != nil {
 		h.logger.Error().Err(err).Str("query", queryStr).Msg("Query execution failed")
 		return WriteErrorResponse(conn, "XX000", fmt.Sprintf("Query execution failed: %v", err))
@@ -208,17 +207,16 @@ func (h *JDBCHandler) handleTerminate(conn io.WriteCloser, msg *Message) error {
 
 // ExecuteQuery executes a SQL query (for testing)
 func (h *JDBCHandler) ExecuteQuery(ctx context.Context, query string) (*QueryResult, error) {
-	// Create query context for JDBC requests
+	// Create query context for testing
 	queryCtx := &types.QueryContext{
-		Database:   "default", // JDBC requests default to "default" database
-		User:       "jdbc",    // JDBC requests use "jdbc" as user
-		ClientAddr: "jdbc",    // JDBC doesn't provide client address
+		Query:      query,
+		Database:   "default",
+		User:       "jdbc",
+		ClientAddr: "jdbc",
 	}
-
-	// Execute query using the QueryEngine
-	result, err := h.queryEngine.ExecuteQuery(ctx, query, queryCtx)
+	result, err := h.queryEngine.ExecuteQuery(ctx, queryCtx)
 	if err != nil {
-		return nil, errors.New(ErrQueryExecutionFailed, "query execution failed", err)
+		return nil, err
 	}
 
 	// Convert QueryEngine result to JDBC QueryResult format

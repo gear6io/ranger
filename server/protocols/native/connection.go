@@ -30,12 +30,11 @@ const (
 
 // ConnectionHandler handles a single client connection
 type ConnectionHandler struct {
-	conn         net.Conn
-	queryEngine  *query.Engine
-	logger       zerolog.Logger
-	codec        *protocol.DefaultCodec
-	helloSent    bool
-	currentQuery string
+	conn        net.Conn
+	queryEngine *query.Engine
+	logger      zerolog.Logger
+	codec       *protocol.DefaultCodec
+	helloSent   bool
 	// In-memory storage for tables (fallback)
 	tables map[string][][]interface{}
 	mu     sync.RWMutex
@@ -352,18 +351,14 @@ func (h *ConnectionHandler) handleClientQuerySignal(ctx context.Context, query *
 		Str("user", query.User).
 		Msg("Processing ClientQuery signal")
 
-	// Store current query
-	h.currentQuery = query.Query
-
 	// Create query context with database information
 	queryCtx := &types.QueryContext{
+		Query:      query.Query,
 		Database:   query.Database,
 		User:       query.User,
 		ClientAddr: h.connCtx.ClientAddr,
 	}
-
-	// Execute query using query engine with temporary database parameter
-	result, err := h.queryEngine.ExecuteQuery(ctx, query.Query, queryCtx)
+	result, err := h.queryEngine.ExecuteQuery(ctx, queryCtx)
 	if err != nil {
 		h.logger.Error().Err(err).Str("query", query.Query).Msg("Query execution failed")
 		return h.sendExceptionSignal(fmt.Sprintf("Query execution failed: %v", err))
