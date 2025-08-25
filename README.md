@@ -1,4 +1,4 @@
-# 🚀 Modern Data Lakehouse Platform
+# 🚀 Modern Data Warehouse (Iceberg-Native)
 
 > **Note**: "Ranger" is a placeholder name and may change at any time. This project is actively being developed and transferred to the gear6io organization.
 
@@ -11,20 +11,23 @@
 
 ## 🎯 What is this?
 
-A data lakehouse platform built with Go that aims to provide Apache Iceberg table format support with multiple storage backends and query capabilities. Currently in **experimental development** with a focus on streaming architecture and memory efficiency.
+A **modern data warehouse** built in Go with **Apache Iceberg as the native storage layer**.  
+It aims to combine the best of **data lakes** (scalability, openness) and **data warehouses** (performance, query capabilities), while staying lightweight, streaming-first, and memory-efficient.
 
 **⚠️ Experimental Status**: This platform is designed for research, development, and experimentation. It's not yet production-ready and should be used for learning and prototyping purposes only.
 
 ## ✨ Key Features
 
-- **🧊 Apache Iceberg**: Support for the Iceberg table format
-- **⚡ Go Implementation**: Built with Go for performance and efficiency
-- **🔌 Multiple Protocols**: HTTP, JDBC, and native binary protocol support
-- **📊 DuckDB Integration**: SQL query engine integration
-- **🔄 Streaming Architecture**: Memory-efficient data processing with batch operations
-- **🛡️ Development Tools**: Error handling, logging, and monitoring capabilities
-- **📁 Multiple Storage**: Memory, filesystem, and S3 storage backends
-- **🏷️ Multiple Catalogs**: JSON, SQLite, and REST catalog support
+### Core
+- 🧊 **Iceberg-Native Storage**: Iceberg is the primary table format (not just an option).  
+- ⚡ **Go Implementation**: Lightweight, efficient, designed for modern infrastructure.  
+- 📊 **DuckDB Integration**: Embedded SQL query engine for analytics.  
+- 🔄 **Streaming Architecture**: Efficient ingestion & batch processing.  
+
+### Extensibility
+- 📁 **Storage Options**: Memory, filesystem, and S3 — all wrapped with Iceberg tables.  
+- 🏷️ **Catalogs**: JSON (human-readable), SQLite (ACID), REST (distributed).  
+- 🔌 **Protocols**: HTTP, JDBC (Postgres wire), and Native Go client.  
 
 ## 🏗️ Architecture
 
@@ -294,7 +297,6 @@ psql -h localhost -p 2848 -U default -d default
 - 🔄 Interactive SQL shell
 - 🔄 Data import functionality
 - 🔄 Table creation and management
-- 🔄 Change Data Capture (CDC)
 - 🔄 Advanced query optimization
 
 **Experimental Features**:
