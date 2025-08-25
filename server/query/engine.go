@@ -203,8 +203,8 @@ func (e *Engine) executeShowStmt(ctx context.Context, stmt *parser.ShowStmt) (*Q
 func (e *Engine) executeShowDatabases(ctx context.Context) (*QueryResult, error) {
 	e.logger.Debug().Msg("Executing SHOW DATABASES")
 
-	// Get databases from metadata manager
-	databases, err := e.storageMgr.GetMetadataManager().ListDatabases(ctx)
+	// Get databases from storage manager
+	databases, err := e.storageMgr.ListDatabases(ctx)
 	if err != nil {
 		return nil, errors.New(ErrDatabaseListFailed, "failed to list databases", err)
 	}
@@ -227,9 +227,8 @@ func (e *Engine) executeShowDatabases(ctx context.Context) (*QueryResult, error)
 func (e *Engine) executeShowTables(ctx context.Context) (*QueryResult, error) {
 	e.logger.Debug().Msg("Executing SHOW TABLES")
 
-	// For now, show tables from default database
-	// TODO: Support USE database context
-	tables, err := e.storageMgr.GetMetadataManager().ListAllTables(ctx)
+	// Get tables from storage manager
+	tables, err := e.storageMgr.ListAllTables(ctx)
 	if err != nil {
 		return nil, errors.New(ErrTableListFailed, "failed to list tables", err)
 	}
@@ -256,7 +255,7 @@ func (e *Engine) executeCreateDatabase(ctx context.Context, stmt *parser.CreateD
 		Msg("Executing CREATE DATABASE")
 
 	// Check if database already exists
-	if e.storageMgr.GetMetadataManager().DatabaseExists(ctx, stmt.Name.Value) {
+	if e.storageMgr.DatabaseExists(ctx, stmt.Name.Value) {
 		if stmt.IfNotExists {
 			// Database exists and IF NOT EXISTS was specified - return success
 			return &QueryResult{
@@ -271,8 +270,8 @@ func (e *Engine) executeCreateDatabase(ctx context.Context, stmt *parser.CreateD
 		}
 	}
 
-	// Create database using metadata manager
-	err := e.storageMgr.GetMetadataManager().CreateDatabase(ctx, stmt.Name.Value)
+	// Create database using storage manager
+	err := e.storageMgr.CreateDatabase(ctx, stmt.Name.Value)
 	if err != nil {
 		return nil, errors.New(ErrDatabaseCreationFailed, "failed to create database", err)
 	}
@@ -298,15 +297,14 @@ func (e *Engine) executeDDLQuery(ctx context.Context, query string) (*QueryResul
 	// Handle different DDL statement types
 	switch stmt := stmt.(type) {
 	case *parser.CreateTableStmt:
-		// Extract database and table name
+		// Extract database and table name from TableIdentifier
 		database := "default"
-		tableName := stmt.TableName.Value
+		tableName := stmt.TableName.Table.Value
 
-		// Check if table name includes database prefix (e.g., "db.table")
-		if strings.Contains(tableName, ".") {
-			parts := strings.SplitN(tableName, ".", 2)
-			database = parts[0]
-			tableName = parts[1]
+		// Check if table name is qualified (database.table)
+		if stmt.TableName.IsQualified() {
+			database = stmt.TableName.Database.Value
+			tableName = stmt.TableName.Table.Value
 		}
 
 		e.logger.Debug().
@@ -315,8 +313,8 @@ func (e *Engine) executeDDLQuery(ctx context.Context, query string) (*QueryResul
 			Bool("ifNotExists", stmt.IfNotExists).
 			Msg("Processing CREATE TABLE statement")
 
-		// Check if table already exists
-		if e.storageMgr.GetMetadataManager().TableExists(ctx, database, tableName) {
+		// Check if table already exists using storage manager
+		if e.storageMgr.TableExists(ctx, database, tableName) {
 			if stmt.IfNotExists {
 				// Table exists and IF NOT EXISTS was specified - return success
 				return &QueryResult{

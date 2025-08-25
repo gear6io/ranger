@@ -623,9 +623,29 @@ func (m *Manager) ListTables(ctx context.Context) ([]string, error) {
 	return m.meta.ListAllTables(ctx)
 }
 
+// ListAllTables returns a list of all tables across all databases
+func (m *Manager) ListAllTables(ctx context.Context) ([]string, error) {
+	return m.meta.ListAllTables(ctx)
+}
+
 // TableExists checks if a table exists
 func (m *Manager) TableExists(ctx context.Context, database, tableName string) bool {
 	return m.meta.TableExists(ctx, database, tableName)
+}
+
+// ListDatabases returns a list of all databases
+func (m *Manager) ListDatabases(ctx context.Context) ([]string, error) {
+	return m.meta.ListDatabases(ctx)
+}
+
+// DatabaseExists checks if a database exists
+func (m *Manager) DatabaseExists(ctx context.Context, dbName string) bool {
+	return m.meta.DatabaseExists(ctx, dbName)
+}
+
+// CreateDatabase creates a new database
+func (m *Manager) CreateDatabase(ctx context.Context, dbName string) error {
+	return m.meta.CreateDatabase(ctx, dbName)
 }
 
 // createIcebergMetadata creates proper Iceberg metadata structure
@@ -737,9 +757,4 @@ func (m *Manager) createIcebergMetadata(database, tableName string, schema []byt
 func generateUUID() string {
 	// Simple UUID generation - in production, use proper UUID library
 	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), time.Now().Unix())
-}
-
-// GetMetadataManager returns the metadata manager instance
-func (m *Manager) GetMetadataManager() *metadata.MetadataManager {
-	return m.meta
 }

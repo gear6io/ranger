@@ -232,7 +232,7 @@ func TestQueryEngineStreaming(t *testing.T) {
 	tableName := "test_table"
 
 	// Create database
-	err = storageMgr.GetMetadataManager().CreateDatabase(ctx, database)
+	err = storageMgr.CreateDatabase(ctx, database)
 	require.NoError(t, err)
 
 	// Create table using Query Engine (which will use MEMORY engine by default)
@@ -379,7 +379,7 @@ func TestQueryEngineStreamingPerformance(t *testing.T) {
 	tableName := "perf_table"
 
 	// Create database
-	err = storageMgr.GetMetadataManager().CreateDatabase(ctx, database)
+	err = storageMgr.CreateDatabase(ctx, database)
 	require.NoError(t, err)
 
 	// Create table using Query Engine (which will use MEMORY engine by default)
