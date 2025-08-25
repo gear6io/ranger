@@ -1708,15 +1708,14 @@ func (p *Parser) parseDeleteStmt() (Node, error) {
 
 	p.consume() // Consume FROM
 
-	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+	// Parse table identifier (can be qualified or unqualified)
+	tableIdent, err := p.parseTableIdentifier()
+	if err != nil {
+		return nil, err
 	}
 
-	tableName := p.peek(0).value.(string)
-	p.consume() // Consume table name
-
 	deleteStmt := &DeleteStmt{
-		TableName: &Identifier{Value: tableName},
+		TableName: tableIdent,
 	}
 
 	if p.peek(0).tokenT == KEYWORD_TOK && p.peek(0).value == "WHERE" {
@@ -1736,12 +1735,11 @@ func (p *Parser) parseDeleteStmt() (Node, error) {
 func (p *Parser) parseUpdateStmt() (Node, error) {
 	p.consume() // Consume UPDATE
 
-	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+	// Parse table identifier (can be qualified or unqualified)
+	tableIdent, err := p.parseTableIdentifier()
+	if err != nil {
+		return nil, err
 	}
-
-	tableName := p.peek(0).value.(string)
-	p.consume() // Consume table name
 
 	if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "SET" {
 		return nil, errors.New("expected SET")
@@ -1750,7 +1748,7 @@ func (p *Parser) parseUpdateStmt() (Node, error) {
 	p.consume() // Consume SET
 
 	updateStmt := &UpdateStmt{
-		TableName: &Identifier{Value: tableName},
+		TableName: tableIdent,
 		SetClause: make([]*SetClause, 0),
 	}
 
@@ -1885,21 +1883,77 @@ func (p *Parser) parseDropUserStmt() (Node, error) {
 
 }
 
-// parseDropTableStmt parses a DROP TABLE statement
-func (p *Parser) parseDropTableStmt() (Node, error) {
-	p.consume() // Consume TABLE
-
+// parseTableIdentifier parses a table identifier that can be qualified (database.table) or unqualified (table)
+func (p *Parser) parseTableIdentifier() (*TableIdentifier, error) {
 	if p.peek(0).tokenT != IDENT_TOK {
 		return nil, errors.New("expected identifier")
 	}
 
-	tableName := p.peek(0).value.(string)
-	p.consume() // Consume identifier
+	databaseName := p.peek(0).value.(string)
+	p.consume() // Consume first identifier
+
+	// Check if next token is a dot (qualified name)
+	if p.peek(0).tokenT == DOT_TOK {
+		p.consume() // Consume dot
+
+		if p.peek(0).tokenT != IDENT_TOK {
+			return nil, errors.New("expected identifier after dot")
+		}
+
+		tableName := p.peek(0).value.(string)
+		p.consume() // Consume second identifier
+
+		// Validate the identifiers
+		if databaseName == "" {
+			return nil, errors.New("database name cannot be empty")
+		}
+		if tableName == "" {
+			return nil, errors.New("table name cannot be empty")
+		}
+
+		return &TableIdentifier{
+			Database: &Identifier{Value: databaseName},
+			Table:    &Identifier{Value: tableName},
+		}, nil
+	} else {
+		// Simple table name (unqualified)
+		if databaseName == "" {
+			return nil, errors.New("table name cannot be empty")
+		}
+
+		return &TableIdentifier{
+			Database: nil, // No database specified
+			Table:    &Identifier{Value: databaseName},
+		}, nil
+	}
+}
+
+// parseDropTableStmt parses a DROP TABLE statement
+func (p *Parser) parseDropTableStmt() (Node, error) {
+	p.consume() // Consume TABLE
+
+	// Check for IF EXISTS clause
+	ifExists := false
+	if p.peek(0).tokenT == KEYWORD_TOK && p.peek(0).value == "IF" {
+		p.consume() // Consume IF
+
+		if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "EXISTS" {
+			return nil, errors.New("expected EXISTS after IF")
+		}
+		p.consume() // Consume EXISTS
+		ifExists = true
+	}
+
+	// Parse table identifier (can be qualified or unqualified)
+	tableIdent, err := p.parseTableIdentifier()
+	if err != nil {
+		return nil, err
+	}
 
 	return &DropTableStmt{
-		TableName: &Identifier{Value: tableName},
+		TableName: tableIdent,
+		IfExists:  ifExists,
 	}, nil
-
 }
 
 // parseDropIndexStmt parses a DROP INDEX statement
@@ -1919,15 +1973,14 @@ func (p *Parser) parseDropIndexStmt() (Node, error) {
 
 	p.consume() // Consume ON
 
-	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+	// Parse table identifier (can be qualified or unqualified)
+	tableIdent, err := p.parseTableIdentifier()
+	if err != nil {
+		return nil, err
 	}
 
-	tableName := p.peek(0).value.(string)
-	p.consume() // Consume table name
-
 	return &DropIndexStmt{
-		TableName: &Identifier{Value: tableName},
+		TableName: tableIdent,
 		IndexName: &Identifier{Value: indexName},
 	}, nil
 
@@ -1969,26 +2022,12 @@ func (p *Parser) parseInsertStmt() (Node, error) {
 		return nil, errors.New("expected identifier")
 	}
 
-	// Handle qualified table name (database.table)
-	tableName := p.peek(0).value.(string)
-	p.consume() // Consume first identifier
-
-	// Check if next token is a dot (qualified name)
-	if p.peek(0).tokenT == DOT_TOK {
-		p.consume() // Consume dot
-
-		if p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected identifier after dot")
-		}
-
-		// Store the qualified name as database.table
-		qualifiedName := tableName + "." + p.peek(0).value.(string)
-		insertStmt.TableName = &Identifier{Value: qualifiedName}
-		p.consume() // Consume second identifier
-	} else {
-		// Simple table name
-		insertStmt.TableName = &Identifier{Value: tableName}
+	// Parse table identifier (can be qualified or unqualified)
+	tableIdent, err := p.parseTableIdentifier()
+	if err != nil {
+		return nil, err
 	}
+	insertStmt.TableName = tableIdent
 
 	insertStmt.ColumnNames = make([]*Identifier, 0)
 	insertStmt.Values = make([][]interface{}, 0)
@@ -2435,26 +2474,12 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 		return nil, errors.New("expected identifier")
 	}
 
-	// Handle qualified table name (database.table)
-	tableName := p.peek(0).value.(string)
-	p.consume() // Consume first identifier
-
-	// Check if next token is a dot (qualified name)
-	if p.peek(0).tokenT == DOT_TOK {
-		p.consume() // Consume dot
-
-		if p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected identifier after dot")
-		}
-
-		// Store the qualified name as database.table
-		qualifiedName := tableName + "." + p.peek(0).value.(string)
-		createTableStmt.TableName = &Identifier{Value: qualifiedName}
-		p.consume() // Consume second identifier
-	} else {
-		// Simple table name
-		createTableStmt.TableName = &Identifier{Value: tableName}
+	// Parse table identifier (can be qualified or unqualified)
+	tableIdent, err := p.parseTableIdentifier()
+	if err != nil {
+		return nil, err
 	}
+	createTableStmt.TableName = tableIdent
 
 	createTableStmt.TableSchema = &TableSchema{
 		ColumnDefinitions: make(map[string]*ColumnDefinition),
@@ -2803,12 +2828,11 @@ func (p *Parser) parseCreateIndexStmt() (Node, error) {
 
 	p.consume() // Consume ON
 
-	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+	// Parse table identifier (can be qualified or unqualified)
+	tableIdent, err := p.parseTableIdentifier()
+	if err != nil {
+		return nil, err
 	}
-
-	tableName := p.peek(0).value.(string)
-	p.consume() // Consume table name
 
 	if p.peek(0).tokenT != LPAREN_TOK {
 		return nil, errors.New("expected (")
@@ -2817,7 +2841,7 @@ func (p *Parser) parseCreateIndexStmt() (Node, error) {
 
 	p.consume() // Consume (
 
-	createIndexStmt.TableName = &Identifier{Value: tableName}
+	createIndexStmt.TableName = tableIdent
 	createIndexStmt.IndexName = &Identifier{Value: indexName}
 	createIndexStmt.ColumnNames = make([]*Identifier, 0)
 
