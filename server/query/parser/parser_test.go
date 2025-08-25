@@ -226,8 +226,11 @@ func TestNewParserCreateTable(t *testing.T) {
 
 				// Verify table name and engine
 				if tt.name == "TableWithMemoryEngine" {
-					if createTableStmt.TableName.Value != "testdb.my_memory_table" {
-						t.Fatalf("expected testdb.my_memory_table, got %s", createTableStmt.TableName.Value)
+					if !createTableStmt.TableName.IsQualified() {
+						t.Fatalf("expected qualified table name for TableWithMemoryEngine")
+					}
+					if createTableStmt.TableName.GetFullName() != "testdb.my_memory_table" {
+						t.Fatalf("expected testdb.my_memory_table, got %s", createTableStmt.TableName.GetFullName())
 					}
 					if createTableStmt.Engine.Value != "MEMORY" {
 						t.Fatalf("expected ENGINE = MEMORY, got ENGINE = %s", createTableStmt.Engine.Value)
@@ -236,8 +239,11 @@ func TestNewParserCreateTable(t *testing.T) {
 						t.Fatalf("expected IfNotExists to be false for TableWithMemoryEngine")
 					}
 				} else if tt.name == "TableWithFilesystemEngine" {
-					if createTableStmt.TableName.Value != "testdb.my_filesystem_table" {
-						t.Fatalf("expected testdb.my_filesystem_table, got %s", createTableStmt.TableName.Value)
+					if !createTableStmt.TableName.IsQualified() {
+						t.Fatalf("expected qualified table name for TableWithFilesystemEngine")
+					}
+					if createTableStmt.TableName.GetFullName() != "testdb.my_filesystem_table" {
+						t.Fatalf("expected testdb.my_filesystem_table, got %s", createTableStmt.TableName.GetFullName())
 					}
 					if createTableStmt.Engine.Value != "FILESYSTEM" {
 						t.Fatalf("expected ENGINE = FILESYSTEM, got ENGINE = %s", createTableStmt.Engine.Value)
@@ -246,18 +252,24 @@ func TestNewParserCreateTable(t *testing.T) {
 						t.Fatalf("expected IfNotExists to be false for TableWithFilesystemEngine")
 					}
 				} else if tt.name == "TableWithIfNotExists" {
-					if createTableStmt.TableName.Value != "testdb.my_memory_table" {
-						t.Fatalf("expected testdb.my_memory_table, got %s", createTableStmt.TableName.Value)
+					if !createTableStmt.TableName.IsQualified() {
+						t.Fatalf("expected qualified table name for TableWithIfNotExists")
+					}
+					if createTableStmt.TableName.GetFullName() != "testdb.my_memory_table" {
+						t.Fatalf("expected testdb.my_memory_table, got %s", createTableStmt.TableName.GetFullName())
 					}
 					if createTableStmt.Engine.Value != "MEMORY" {
 						t.Fatalf("expected ENGINE = MEMORY, got ENGINE = %s", createTableStmt.Engine.Value)
 					}
 					if !createTableStmt.IfNotExists {
-						t.Fatalf("expected IfNotExists to be true for TableWithIfNotExists")
+						t.Fatalf("expected IfNotExists to be true for TableWithIfExists")
 					}
 				} else if tt.name == "TableWithIfNotExistsAndSimpleName" {
-					if createTableStmt.TableName.Value != "simple_table" {
-						t.Fatalf("expected simple_table, got %s", createTableStmt.TableName.Value)
+					if createTableStmt.TableName.IsQualified() {
+						t.Fatalf("expected unqualified table name for TableWithIfNotExistsAndSimpleName")
+					}
+					if createTableStmt.TableName.Table.Value != "simple_table" {
+						t.Fatalf("expected simple_table, got %s", createTableStmt.TableName.Table.Value)
 					}
 					if createTableStmt.Engine.Value != "MEMORY" {
 						t.Fatalf("expected ENGINE = MEMORY, got ENGINE = %s", createTableStmt.Engine.Value)
@@ -305,8 +317,8 @@ func TestNewParserCreateIndex(t *testing.T) {
 		t.Fatalf("expected idx1, got %s", createIndexStmt.IndexName.Value)
 	}
 
-	if createIndexStmt.TableName.Value != "TEST" {
-		t.Fatalf("expected TEST, got %s", createIndexStmt.TableName.Value)
+	if createIndexStmt.TableName.Table.Value != "TEST" {
+		t.Fatalf("expected TEST, got %s", createIndexStmt.TableName.Table.Value)
 	}
 
 	if createIndexStmt.ColumnNames[0].Value != "col1" {
@@ -346,8 +358,8 @@ func TestNewParserCreateIndexUnique(t *testing.T) {
 		t.Fatalf("expected idx1, got %s", createIndexStmt.IndexName.Value)
 	}
 
-	if createIndexStmt.TableName.Value != "TEST" {
-		t.Fatalf("expected TEST, got %s", createIndexStmt.TableName.Value)
+	if createIndexStmt.TableName.Table.Value != "TEST" {
+		t.Fatalf("expected TEST, got %s", createIndexStmt.TableName.Table.Value)
 	}
 
 	if createIndexStmt.ColumnNames[0].Value != "col1" {
@@ -391,8 +403,8 @@ func TestNewParserCreateIndexMultipleColumns(t *testing.T) {
 		t.Fatalf("expected idx1, got %s", createIndexStmt.IndexName.Value)
 	}
 
-	if createIndexStmt.TableName.Value != "TEST" {
-		t.Fatalf("expected TEST, got %s", createIndexStmt.TableName.Value)
+	if createIndexStmt.TableName.Table.Value != "TEST" {
+		t.Fatalf("expected TEST, got %s", createIndexStmt.TableName.Table.Value)
 	}
 
 	expectedColumns := []string{"col1", "col2", "col3"}
@@ -456,12 +468,18 @@ func TestNewParserInsert(t *testing.T) {
 
 			// Verify table name
 			if tt.name == "BasicInsert" {
-				if insertStmt.TableName.Value != "TEST" {
-					t.Fatalf("expected TEST, got %s", insertStmt.TableName.Value)
+				if insertStmt.TableName.Table.Value != "TEST" {
+					t.Fatalf("expected TEST, got %s", insertStmt.TableName.Table.Value)
+				}
+				if insertStmt.TableName.IsQualified() {
+					t.Fatalf("expected unqualified table name for BasicInsert")
 				}
 			} else if tt.name == "InsertWithQualifiedTable" {
-				if insertStmt.TableName.Value != "testdb.my_memory_table" {
-					t.Fatalf("expected testdb.my_memory_table, got %s", insertStmt.TableName.Value)
+				if !insertStmt.TableName.IsQualified() {
+					t.Fatalf("expected qualified table name for InsertWithQualifiedTable")
+				}
+				if insertStmt.TableName.GetFullName() != "testdb.my_memory_table" {
+					t.Fatalf("expected testdb.my_memory_table, got %s", insertStmt.TableName.GetFullName())
 				}
 			}
 
@@ -540,36 +558,107 @@ func TestNewParserDropDatabase(t *testing.T) {
 	}
 }
 
-// TestNewParserDropTable tests DROP TABLE statement parsing
+// TestNewParserDropTable tests DROP TABLE statement parsing with various scenarios
 func TestNewParserDropTable(t *testing.T) {
-	statement := []byte(`
-	DROP TABLE TEST;
-`)
-
-	lexer := NewLexer(statement)
-	t.Log(string(statement))
-
-	parser := NewParser(lexer)
-	if parser == nil {
-		t.Fatal("expected non-nil parser")
+	tests := []struct {
+		name        string
+		statement   string
+		shouldFail  bool
+		expectedErr string
+		description string
+	}{
+		{
+			name:        "BasicDropTable",
+			statement:   `DROP TABLE TEST;`,
+			shouldFail:  false,
+			description: "Basic DROP TABLE with simple table name",
+		},
+		{
+			name:        "DropTableWithQualifiedName",
+			statement:   `DROP TABLE testdb.my_table;`,
+			shouldFail:  false,
+			description: "DROP TABLE with qualified table name (database.table) - should now parse correctly",
+		},
+		{
+			name:        "DropTableIfExists",
+			statement:   `DROP TABLE IF EXISTS TEST;`,
+			shouldFail:  false,
+			description: "DROP TABLE with IF EXISTS clause - should now parse correctly",
+		},
 	}
 
-	stmt, err := parser.Parse()
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			statement := []byte(tt.statement)
+			t.Log(tt.description)
+			t.Log(string(statement))
 
-	if stmt == nil {
-		t.Fatal("expected non-nil statement")
-	}
+			lexer := NewLexer(statement)
+			parser := NewParser(lexer)
+			if parser == nil {
+				t.Fatal("expected non-nil parser")
+			}
 
-	dropTableStmt, ok := stmt.(*DropTableStmt)
-	if !ok {
-		t.Fatalf("expected *DropTableStmt, got %T", stmt)
-	}
+			stmt, err := parser.Parse()
 
-	if dropTableStmt.TableName.Value != "TEST" {
-		t.Fatalf("expected TEST, got %s", dropTableStmt.TableName.Value)
+			if tt.shouldFail {
+				// Test should fail
+				if err == nil {
+					t.Fatal("expected error but got none")
+				}
+				if !strings.Contains(err.Error(), tt.expectedErr) {
+					t.Fatalf("expected error containing '%s', got '%s'", tt.expectedErr, err.Error())
+				}
+				t.Logf("✅ Correctly failed with error: %v", err)
+			} else {
+				// Test should pass
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if stmt == nil {
+					t.Fatal("expected non-nil statement")
+				}
+
+				dropTableStmt, ok := stmt.(*DropTableStmt)
+				if !ok {
+					t.Fatalf("expected *DropTableStmt, got %T", stmt)
+				}
+
+				// Verify table name based on test case
+				if tt.name == "BasicDropTable" {
+					if dropTableStmt.TableName.Table.Value != "TEST" {
+						t.Fatalf("expected TEST, got %s", dropTableStmt.TableName.Table.Value)
+					}
+					if dropTableStmt.TableName.IsQualified() {
+						t.Fatalf("expected unqualified table name, but got qualified")
+					}
+				} else if tt.name == "DropTableWithQualifiedName" {
+					// Should now properly parse qualified names
+					if !dropTableStmt.TableName.IsQualified() {
+						t.Fatalf("expected qualified table name, but got unqualified")
+					}
+					if dropTableStmt.TableName.Database.Value != "testdb" {
+						t.Fatalf("expected database 'testdb', got %s", dropTableStmt.TableName.Database.Value)
+					}
+					if dropTableStmt.TableName.Table.Value != "my_table" {
+						t.Fatalf("expected table 'my_table', got %s", dropTableStmt.TableName.Table.Value)
+					}
+					t.Logf("✅ Qualified table name 'testdb.my_table' parsed correctly")
+				} else if tt.name == "DropTableIfExists" {
+					// Should now properly parse IF EXISTS
+					if dropTableStmt.TableName.Table.Value != "TEST" {
+						t.Fatalf("expected TEST, got %s", dropTableStmt.TableName.Table.Value)
+					}
+					if !dropTableStmt.IfExists {
+						t.Fatalf("expected IfExists to be true")
+					}
+					t.Logf("✅ IF EXISTS clause parsed correctly")
+				}
+
+				t.Logf("✅ %s parsed successfully", tt.description)
+			}
+		})
 	}
 }
 
@@ -605,8 +694,8 @@ func TestNewParserDropIndex(t *testing.T) {
 		t.Fatalf("expected idx1, got %s", dropIndexStmt.IndexName.Value)
 	}
 
-	if dropIndexStmt.TableName.Value != "TEST" {
-		t.Fatalf("expected TEST, got %s", dropIndexStmt.TableName.Value)
+	if dropIndexStmt.TableName.Table.Value != "TEST" {
+		t.Fatalf("expected TEST, got %s", dropIndexStmt.TableName.Table.Value)
 	}
 }
 
@@ -844,8 +933,8 @@ func TestNewParserUpdate(t *testing.T) {
 		t.Fatalf("expected *UpdateStmt, got %T", stmt)
 	}
 
-	if updateStmt.TableName.Value != "tbl1" {
-		t.Fatalf("expected tbl1, got %s", updateStmt.TableName.Value)
+	if updateStmt.TableName.Table.Value != "tbl1" {
+		t.Fatalf("expected tbl1, got %s", updateStmt.TableName.Table.Value)
 	}
 
 	if updateStmt.SetClause[0].Column.Value != "col1" {
@@ -885,8 +974,8 @@ func TestNewParserDelete(t *testing.T) {
 		t.Fatalf("expected *DeleteStmt, got %T", stmt)
 	}
 
-	if deleteStmt.TableName.Value != "tbl1" {
-		t.Fatalf("expected tbl1, got %s", deleteStmt.TableName.Value)
+	if deleteStmt.TableName.Table.Value != "tbl1" {
+		t.Fatalf("expected tbl1, got %s", deleteStmt.TableName.Table.Value)
 	}
 }
 

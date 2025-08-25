@@ -595,7 +595,7 @@ func formatCreateTableStmt(stmt *CreateTableStmt) string {
 		parts = append(parts, "IF NOT EXISTS")
 	}
 
-	parts = append(parts, formatIdentifier(stmt.TableName))
+	parts = append(parts, formatTableIdentifier(stmt.TableName))
 
 	if stmt.TableSchema != nil {
 		parts = append(parts, "(")
@@ -695,7 +695,7 @@ func formatInsertStmt(stmt *InsertStmt) string {
 
 	var parts []string
 	parts = append(parts, "INSERT INTO")
-	parts = append(parts, formatIdentifier(stmt.TableName))
+	parts = append(parts, formatTableIdentifier(stmt.TableName))
 
 	// Column names
 	if len(stmt.ColumnNames) > 0 {
@@ -731,7 +731,7 @@ func formatUpdateStmt(stmt *UpdateStmt) string {
 
 	var parts []string
 	parts = append(parts, "UPDATE")
-	parts = append(parts, formatIdentifier(stmt.TableName))
+	parts = append(parts, formatTableIdentifier(stmt.TableName))
 
 	// SET clause
 	if len(stmt.SetClause) > 0 {
@@ -762,7 +762,7 @@ func formatDeleteStmt(stmt *DeleteStmt) string {
 
 	var parts []string
 	parts = append(parts, "DELETE FROM")
-	parts = append(parts, formatIdentifier(stmt.TableName))
+	parts = append(parts, formatTableIdentifier(stmt.TableName))
 
 	// WHERE clause
 	if stmt.WhereClause != nil {
@@ -791,6 +791,17 @@ func formatCreateDatabaseStmt(stmt *CreateDatabaseStmt) string {
 	return strings.Join(parts, " ") + ";"
 }
 
+// formatTableIdentifier formats a TableIdentifier as a string
+func formatTableIdentifier(ti *TableIdentifier) string {
+	if ti == nil {
+		return ""
+	}
+	if ti.IsQualified() {
+		return formatIdentifier(ti.Database) + "." + formatIdentifier(ti.Table)
+	}
+	return formatIdentifier(ti.Table)
+}
+
 // formatDropTableStmt formats a DROP TABLE statement
 func formatDropTableStmt(stmt *DropTableStmt) string {
 	if stmt == nil {
@@ -799,7 +810,12 @@ func formatDropTableStmt(stmt *DropTableStmt) string {
 
 	var parts []string
 	parts = append(parts, "DROP TABLE")
-	parts = append(parts, formatIdentifier(stmt.TableName))
+
+	if stmt.IfExists {
+		parts = append(parts, "IF EXISTS")
+	}
+
+	parts = append(parts, formatTableIdentifier(stmt.TableName))
 
 	return strings.Join(parts, " ") + ";"
 }

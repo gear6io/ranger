@@ -18,6 +18,7 @@ package parser
 import (
 	// External parser packages commented out - Ranger compatibility
 	"encoding/json"
+	"errors"
 )
 
 // Node represents an AST node
@@ -33,6 +34,39 @@ type Statement interface {
 // Identifier represents an identifier, like a table or column name
 type Identifier struct {
 	Value string
+}
+
+// TableIdentifier represents a table reference that can be qualified (database.table) or unqualified (table)
+type TableIdentifier struct {
+	Database *Identifier // Database name (can be nil for unqualified names)
+	Table    *Identifier // Table name (required)
+}
+
+// IsQualified returns true if this is a qualified table name (database.table)
+func (ti *TableIdentifier) IsQualified() bool {
+	return ti.Database != nil
+}
+
+// GetFullName returns the full qualified name as a string (database.table or just table)
+func (ti *TableIdentifier) GetFullName() string {
+	if ti.IsQualified() {
+		return ti.Database.Value + "." + ti.Table.Value
+	}
+	return ti.Table.Value
+}
+
+// Validate ensures the TableIdentifier is valid
+func (ti *TableIdentifier) Validate() error {
+	if ti.Table == nil {
+		return errors.New("table name is required")
+	}
+	if ti.Table.Value == "" {
+		return errors.New("table name cannot be empty")
+	}
+	if ti.Database != nil && ti.Database.Value == "" {
+		return errors.New("database name cannot be empty if specified")
+	}
+	return nil
 }
 
 // Literal represents a literal value, like a number or string
@@ -53,7 +87,7 @@ type DropDatabaseStmt struct {
 
 // CreateIndexStmt represents a CREATE INDEX statement
 type CreateIndexStmt struct {
-	TableName   *Identifier
+	TableName   *TableIdentifier
 	IndexName   *Identifier
 	ColumnNames []*Identifier
 	Unique      bool
@@ -61,13 +95,13 @@ type CreateIndexStmt struct {
 
 // DropIndexStmt represents a DROP INDEX statement
 type DropIndexStmt struct {
-	TableName *Identifier
+	TableName *TableIdentifier
 	IndexName *Identifier
 }
 
 // CreateTableStmt represents a CREATE TABLE statement
 type CreateTableStmt struct {
-	TableName   *Identifier
+	TableName   *TableIdentifier
 	TableSchema *TableSchema
 	Compress    bool
 	Encrypt     bool
@@ -78,7 +112,8 @@ type CreateTableStmt struct {
 
 // DropTableStmt represents a DROP TABLE statement
 type DropTableStmt struct {
-	TableName *Identifier
+	TableName *TableIdentifier
+	IfExists  bool // Support for IF EXISTS clause
 }
 
 // UseStmt represents a USE statement
@@ -88,7 +123,7 @@ type UseStmt struct {
 
 // InsertStmt represents an INSERT statement
 type InsertStmt struct {
-	TableName   *Identifier
+	TableName   *TableIdentifier
 	ColumnNames []*Identifier
 	Values      [][]interface{}
 }
@@ -104,7 +139,7 @@ type SelectStmt struct {
 
 // UpdateStmt represents an UPDATE statement
 type UpdateStmt struct {
-	TableName   *Identifier
+	TableName   *TableIdentifier
 	SetClause   []*SetClause
 	WhereClause *WhereClause
 }
@@ -117,7 +152,7 @@ type SetClause struct {
 
 // DeleteStmt represents a DELETE statement
 type DeleteStmt struct {
-	TableName   *Identifier
+	TableName   *TableIdentifier
 	WhereClause *WhereClause
 }
 
