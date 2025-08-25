@@ -14,6 +14,7 @@ var (
 	ErrTableListFailed             = errors.MustNewCode("query.table_list_failed")
 	ErrDatabaseAlreadyExists       = errors.MustNewCode("query.database_already_exists")
 	ErrDatabaseCreationFailed      = errors.MustNewCode("query.database_creation_failed")
+	ErrDatabaseNotFound            = errors.MustNewCode("query.database_not_found")
 	ErrDDLParseFailed              = errors.MustNewCode("query.ddl_parse_failed")
 	ErrTableAlreadyExists          = errors.MustNewCode("query.table_already_exists")
 	ErrDDLExecutionFailed          = errors.MustNewCode("query.ddl_execution_failed")

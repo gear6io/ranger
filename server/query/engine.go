@@ -14,6 +14,7 @@ import (
 	"github.com/gear6io/ranger/server/query/duckdb"
 	"github.com/gear6io/ranger/server/query/parser"
 	"github.com/gear6io/ranger/server/storage"
+	"github.com/gear6io/ranger/server/types"
 	"github.com/rs/zerolog"
 )
 
@@ -81,17 +82,17 @@ func NewEngine(cfg *config.Config, storageMgr *storage.Manager, logger zerolog.L
 }
 
 // ExecuteQuery routes and executes a query with tracking and cancellation support
-func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, error) {
-	return e.ExecuteQueryWithTracking(ctx, query, "unknown", "unknown")
+func (e *Engine) ExecuteQuery(ctx context.Context, query string, queryCtx *types.QueryContext) (*QueryResult, error) {
+	return e.ExecuteQueryWithTracking(ctx, query, queryCtx)
 }
 
 // ExecuteQueryWithTracking executes a query with full tracking and cancellation support
-func (e *Engine) ExecuteQueryWithTracking(ctx context.Context, query, user, clientAddr string) (*QueryResult, error) {
+func (e *Engine) ExecuteQueryWithTracking(ctx context.Context, query string, queryCtx *types.QueryContext) (*QueryResult, error) {
 	// Generate unique query ID
 	queryID := fmt.Sprintf("query_%d", time.Now().UnixNano())
 
 	// Start tracking the query
-	_, trackedCtx := e.queryManager.StartQuery(ctx, queryID, query, user, clientAddr)
+	_, trackedCtx := e.queryManager.StartQuery(ctx, queryID, query, queryCtx.User, queryCtx.ClientAddr)
 
 	// Use the tracked context for execution
 	ctx = trackedCtx
@@ -120,15 +121,15 @@ func (e *Engine) ExecuteQueryWithTracking(ctx context.Context, query, user, clie
 	var result *QueryResult
 	switch stmt := stmt.(type) {
 	case *parser.SelectStmt:
-		result, err = e.executeReadQuery(ctx, query)
+		result, err = e.executeReadQuery(ctx, query, queryCtx)
 	case *parser.InsertStmt:
-		result, err = e.executeInsertQuery(ctx, query)
+		result, err = e.executeInsertQuery(ctx, query, queryCtx)
 	case *parser.CreateTableStmt:
-		result, err = e.executeDDLQuery(ctx, query)
+		result, err = e.executeDDLQuery(ctx, query, queryCtx)
 	case *parser.CreateDatabaseStmt:
 		result, err = e.executeCreateDatabase(ctx, stmt)
 	case *parser.ShowStmt:
-		result, err = e.executeShowStmt(ctx, stmt)
+		result, err = e.executeShowStmt(ctx, stmt, queryCtx)
 	default:
 		err = errors.New(ErrUnsupportedStatementType, "unsupported statement type", nil).AddContext("statement_type", fmt.Sprintf("%T", stmt))
 	}
@@ -148,8 +149,43 @@ func (e *Engine) ExecuteQueryWithTracking(ctx context.Context, query, user, clie
 	return result, nil
 }
 
+// getDatabaseFromContext determines the database to use based on the query context
+func (e *Engine) getDatabaseFromContext(queryCtx *types.QueryContext) string {
+	// If database is specified in query context, use it
+	if queryCtx.Database != "" {
+		return queryCtx.Database
+	}
+
+	// Otherwise, fall back to "default"
+	return "default"
+}
+
+// validateDatabaseExists checks if the specified database exists
+func (e *Engine) validateDatabaseExists(ctx context.Context, database string) error {
+	// Skip validation for "default" database as it should always exist
+	if database == "default" {
+		return nil
+	}
+
+	// Check if database exists in storage manager
+	databases, err := e.storageMgr.ListDatabases(ctx)
+	if err != nil {
+		return errors.New(ErrDatabaseListFailed, "failed to validate database existence", err)
+	}
+
+	// Check if the specified database exists
+	for _, db := range databases {
+		if db == database {
+			return nil
+		}
+	}
+
+	// Database not found
+	return errors.New(ErrDatabaseNotFound, fmt.Sprintf("database '%s' does not exist", database), nil)
+}
+
 // executeReadQuery redirects read queries to DuckDB
-func (e *Engine) executeReadQuery(ctx context.Context, query string) (*QueryResult, error) {
+func (e *Engine) executeReadQuery(ctx context.Context, query string, queryCtx *types.QueryContext) (*QueryResult, error) {
 	e.logger.Debug().Str("query", query).Msg("Executing read queries on DuckDB")
 
 	// Execute on DuckDB engine
@@ -167,7 +203,7 @@ func (e *Engine) executeReadQuery(ctx context.Context, query string) (*QueryResu
 }
 
 // executeInsertQuery handles insert operations
-func (e *Engine) executeInsertQuery(ctx context.Context, query string) (*QueryResult, error) {
+func (e *Engine) executeInsertQuery(ctx context.Context, query string, queryCtx *types.QueryContext) (*QueryResult, error) {
 	e.logger.Debug().Str("query", query).Msg("Executing insert query")
 
 	// For now, route to DuckDB
@@ -186,14 +222,14 @@ func (e *Engine) executeInsertQuery(ctx context.Context, query string) (*QueryRe
 }
 
 // executeShowStmt handles SHOW statements
-func (e *Engine) executeShowStmt(ctx context.Context, stmt *parser.ShowStmt) (*QueryResult, error) {
+func (e *Engine) executeShowStmt(ctx context.Context, stmt *parser.ShowStmt, queryCtx *types.QueryContext) (*QueryResult, error) {
 	e.logger.Debug().Str("show_type", stmt.ShowType.String()).Msg("Executing SHOW statement")
 
 	switch stmt.ShowType {
 	case parser.SHOW_DATABASES:
 		return e.executeShowDatabases(ctx)
 	case parser.SHOW_TABLES:
-		return e.executeShowTables(ctx)
+		return e.executeShowTables(ctx, stmt, queryCtx)
 	default:
 		return nil, errors.New(ErrUnsupportedShowType, "unsupported SHOW type", nil).AddContext("show_type", stmt.ShowType.String())
 	}
@@ -224,11 +260,24 @@ func (e *Engine) executeShowDatabases(ctx context.Context) (*QueryResult, error)
 }
 
 // executeShowTables lists all available tables in the current database
-func (e *Engine) executeShowTables(ctx context.Context) (*QueryResult, error) {
-	e.logger.Debug().Msg("Executing SHOW TABLES")
+func (e *Engine) executeShowTables(ctx context.Context, stmt *parser.ShowStmt, queryCtx *types.QueryContext) (*QueryResult, error) {
+	// Determine which database to show tables for
+	database := e.getDatabaseFromContext(queryCtx)
 
-	// Get tables from storage manager
-	tables, err := e.storageMgr.ListAllTables(ctx)
+	// Check if the query specifies a database (e.g., SHOW TABLES FROM database_name)
+	if stmt.From != nil {
+		database = stmt.From.Value
+	}
+
+	// Validate that the database exists
+	if err := e.validateDatabaseExists(ctx, database); err != nil {
+		return nil, err
+	}
+
+	e.logger.Debug().Str("database", database).Msg("Executing SHOW TABLES")
+
+	// Get tables from storage manager for the specific database
+	tables, err := e.storageMgr.ListTablesForDatabase(ctx, database)
 	if err != nil {
 		return nil, errors.New(ErrTableListFailed, "failed to list tables", err)
 	}
@@ -243,7 +292,7 @@ func (e *Engine) executeShowTables(ctx context.Context) (*QueryResult, error) {
 		Data:     rows,
 		RowCount: int64(len(tables)),
 		Columns:  []string{"Table"},
-		Message:  fmt.Sprintf("Found %d table(s)", len(tables)),
+		Message:  fmt.Sprintf("Found %d table(s) in database %s", len(tables), database),
 	}, nil
 }
 
@@ -285,7 +334,7 @@ func (e *Engine) executeCreateDatabase(ctx context.Context, stmt *parser.CreateD
 }
 
 // executeDDLQuery handles DDL operations
-func (e *Engine) executeDDLQuery(ctx context.Context, query string) (*QueryResult, error) {
+func (e *Engine) executeDDLQuery(ctx context.Context, query string, queryCtx *types.QueryContext) (*QueryResult, error) {
 	e.logger.Debug().Str("query", query).Msg("Executing DDL query")
 
 	// Parse the query to determine the statement type
@@ -298,13 +347,18 @@ func (e *Engine) executeDDLQuery(ctx context.Context, query string) (*QueryResul
 	switch stmt := stmt.(type) {
 	case *parser.CreateTableStmt:
 		// Extract database and table name from TableIdentifier
-		database := "default"
+		database := e.getDatabaseFromContext(queryCtx)
 		tableName := stmt.TableName.Table.Value
 
 		// Check if table name is qualified (database.table)
 		if stmt.TableName.IsQualified() {
 			database = stmt.TableName.Database.Value
 			tableName = stmt.TableName.Table.Value
+		}
+
+		// Validate that the database exists
+		if err := e.validateDatabaseExists(ctx, database); err != nil {
+			return nil, err
 		}
 
 		e.logger.Debug().

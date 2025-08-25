@@ -17,6 +17,7 @@ import (
 	"github.com/gear6io/ranger/server/paths"
 	"github.com/gear6io/ranger/server/query/parser"
 	"github.com/gear6io/ranger/server/storage"
+	"github.com/gear6io/ranger/server/types"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,7 +68,12 @@ func TestEngineBasicFunctionality(t *testing.T) {
 	t.Run("QueryParsing", func(t *testing.T) {
 		// Test basic query parsing functionality
 		query := "SELECT * FROM test_table"
-		result, err := engine.ExecuteQuery(context.Background(), query)
+		queryCtx := &types.QueryContext{
+			Database:   "default",
+			User:       "test",
+			ClientAddr: "127.0.0.1",
+		}
+		result, err := engine.ExecuteQuery(context.Background(), query, queryCtx)
 		// This might fail due to missing storage, but parsing should work
 		t.Logf("Query result: %v, error: %v", result, err)
 	})
@@ -127,7 +133,12 @@ func TestEngineQueryParsing(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Test query parsing (execution will fail without storage, but parsing should work)
-			result, err := engine.ExecuteQuery(context.Background(), tc.query)
+			queryCtx := &types.QueryContext{
+				Database:   "default",
+				User:       "test",
+				ClientAddr: "127.0.0.1",
+			}
+			result, err := engine.ExecuteQuery(context.Background(), tc.query, queryCtx)
 			if tc.valid {
 				// Valid queries should parse but may fail execution due to missing storage
 				t.Logf("Query '%s' parsed successfully, execution result: %v, error: %v",

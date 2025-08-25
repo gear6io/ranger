@@ -210,14 +210,19 @@ func (m *Manager) GetStatus() map[string]interface{} {
 	return status
 }
 
-// GetPathManager returns the path manager for external use
-func (m *Manager) GetPathManager() paths.PathManager {
-	return m.pathManager
-}
-
-// GetCatalog returns the catalog for external use
+// GetCatalog returns the catalog interface
 func (m *Manager) GetCatalog() catalog.CatalogInterface {
 	return m.catalog
+}
+
+// GetMetadataManager returns the metadata manager
+func (m *Manager) GetMetadataManager() *metadata.MetadataManager {
+	return m.meta
+}
+
+// GetPathManager returns the path manager
+func (m *Manager) GetPathManager() paths.PathManager {
+	return m.pathManager
 }
 
 // GetEngineRegistry returns the engine registry for external use
@@ -621,6 +626,11 @@ func (m *Manager) RemoveTable(ctx context.Context, database, tableName string) e
 // ListTables returns a list of all tables
 func (m *Manager) ListTables(ctx context.Context) ([]string, error) {
 	return m.meta.ListAllTables(ctx)
+}
+
+// ListTablesForDatabase returns a list of tables in a specific database
+func (m *Manager) ListTablesForDatabase(ctx context.Context, database string) ([]string, error) {
+	return m.meta.ListTables(ctx, database)
 }
 
 // ListAllTables returns a list of all tables across all databases

@@ -12,6 +12,7 @@ import (
 	"github.com/gear6io/ranger/server/protocols/native/protocol"
 	"github.com/gear6io/ranger/server/protocols/native/protocol/signals"
 	"github.com/gear6io/ranger/server/query"
+	"github.com/gear6io/ranger/server/types"
 	"github.com/rs/zerolog"
 )
 
@@ -354,8 +355,15 @@ func (h *ConnectionHandler) handleClientQuerySignal(ctx context.Context, query *
 	// Store current query
 	h.currentQuery = query.Query
 
-	// Execute query using query engine
-	result, err := h.queryEngine.ExecuteQuery(ctx, query.Query)
+	// Create query context with database information
+	queryCtx := &types.QueryContext{
+		Database:   query.Database,
+		User:       query.User,
+		ClientAddr: h.connCtx.ClientAddr,
+	}
+
+	// Execute query using query engine with temporary database parameter
+	result, err := h.queryEngine.ExecuteQuery(ctx, query.Query, queryCtx)
 	if err != nil {
 		h.logger.Error().Err(err).Str("query", query.Query).Msg("Query execution failed")
 		return h.sendExceptionSignal(fmt.Sprintf("Query execution failed: %v", err))

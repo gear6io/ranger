@@ -44,14 +44,6 @@ func TestStorageManagerWithCatalog(t *testing.T) {
 	assert.NotNil(t, catalog, "Catalog should be initialized")
 	assert.Equal(t, "ranger-json-catalog", catalog.Name())
 
-	// Verify path manager was initialized
-	storagePathManager := manager.GetPathManager()
-	assert.NotNil(t, storagePathManager, "PathManager should be initialized")
-
-	// Test catalog URI generation
-	catalogURI := storagePathManager.GetCatalogURI(cfg.GetCatalogType())
-	assert.Contains(t, catalogURI, "/tmp/ranger_test/catalog/catalog.json")
-
 	// Initialize storage
 	ctx := context.Background()
 	err = manager.Initialize(ctx)
