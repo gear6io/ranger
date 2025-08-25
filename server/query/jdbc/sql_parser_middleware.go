@@ -176,7 +176,7 @@ func (m *SQLParserMiddleware) analyzeInsertStatement(stmt *parser.InsertStmt, an
 	analysis.StatementType = "INSERT"
 
 	if stmt.TableName != nil {
-		analysis.Tables = append(analysis.Tables, stmt.TableName.Value)
+		analysis.Tables = append(analysis.Tables, stmt.TableName.GetFullName())
 	}
 
 	return analysis
@@ -187,7 +187,7 @@ func (m *SQLParserMiddleware) analyzeUpdateStatement(stmt *parser.UpdateStmt, an
 	analysis.StatementType = "UPDATE"
 
 	if stmt.TableName != nil {
-		analysis.Tables = append(analysis.Tables, stmt.TableName.Value)
+		analysis.Tables = append(analysis.Tables, stmt.TableName.GetFullName())
 	}
 
 	return analysis
@@ -198,7 +198,7 @@ func (m *SQLParserMiddleware) analyzeDeleteStatement(stmt *parser.DeleteStmt, an
 	analysis.StatementType = "DELETE"
 
 	if stmt.TableName != nil {
-		analysis.Tables = append(analysis.Tables, stmt.TableName.Value)
+		analysis.Tables = append(analysis.Tables, stmt.TableName.GetFullName())
 	}
 
 	return analysis
@@ -209,7 +209,7 @@ func (m *SQLParserMiddleware) analyzeCreateTableStatement(stmt *parser.CreateTab
 	analysis.StatementType = "CREATE TABLE"
 
 	if stmt.TableName != nil {
-		analysis.Tables = append(analysis.Tables, stmt.TableName.Value)
+		analysis.Tables = append(analysis.Tables, stmt.TableName.GetFullName())
 	}
 
 	return analysis
@@ -220,7 +220,7 @@ func (m *SQLParserMiddleware) analyzeDropTableStatement(stmt *parser.DropTableSt
 	analysis.StatementType = "DROP TABLE"
 
 	if stmt.TableName != nil {
-		analysis.Tables = append(analysis.Tables, stmt.TableName.Value)
+		analysis.Tables = append(analysis.Tables, stmt.TableName.GetFullName())
 	}
 
 	return analysis
@@ -242,7 +242,7 @@ func (m *SQLParserMiddleware) analyzeCreateIndexStatement(stmt *parser.CreateInd
 	analysis.StatementType = "CREATE INDEX"
 
 	if stmt.TableName != nil {
-		analysis.Tables = append(analysis.Tables, stmt.TableName.Value)
+		analysis.Tables = append(analysis.Tables, stmt.TableName.GetFullName())
 	}
 
 	return analysis
