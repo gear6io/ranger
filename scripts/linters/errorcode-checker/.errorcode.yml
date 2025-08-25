@@ -29,14 +29,14 @@ forbidden_patterns:
 # Whether to check for forbidden patterns
 check_forbidden: true
 
+# Whether to check for internal functions using errors.New
+check_internal: true
+
+# Whether to check for errors.New usage when handling errors from internal package calls
+check_internal_package_calls: true
+
 # Output format: human, json, or golangci-lint
 output_format: "human"
-
-# Exit with error code if unused ErrorCodes found
-exit_on_unused: true
-
-# Exit with error code if forbidden patterns found
-exit_on_forbidden: true
 
 # Verbose output for debugging
 verbose: false
