@@ -1,12 +1,12 @@
-package parquet
+package schema
 
 import (
 	"fmt"
 	"time"
 
-	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/iceberg-go"
+	"github.com/gear6io/ranger/pkg/errors"
 )
 
 // Package-specific error codes for parquet schema
@@ -25,20 +25,20 @@ var (
 	ParquetSchemaTypeMismatch           = errors.MustNewCode("parquet.schema_type_mismatch")
 )
 
-// SchemaManager handles schema conversion and validation
-type SchemaManager struct {
+// Manager handles schema conversion and validation
+type Manager struct {
 	config *ParquetConfig
 }
 
-// NewSchemaManager creates a new schema manager
-func NewSchemaManager(config *ParquetConfig) *SchemaManager {
-	return &SchemaManager{
+// NewManager creates a new schema manager
+func NewManager(config *ParquetConfig) *Manager {
+	return &Manager{
 		config: config,
 	}
 }
 
 // ConvertIcebergToArrowSchema converts an Iceberg schema to an Arrow schema
-func (sm *SchemaManager) ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*arrow.Schema, error) {
+func (sm *Manager) ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*arrow.Schema, error) {
 	if schema == nil {
 		return nil, errors.New(ParquetSchemaNilSchema, "iceberg schema cannot be nil", nil)
 	}
@@ -57,7 +57,7 @@ func (sm *SchemaManager) ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*a
 }
 
 // convertIcebergField converts a single Iceberg field to an Arrow field
-func (sm *SchemaManager) convertIcebergField(field iceberg.NestedField) (arrow.Field, error) {
+func (sm *Manager) convertIcebergField(field iceberg.NestedField) (arrow.Field, error) {
 	arrowType, err := sm.convertIcebergType(field.Type)
 	if err != nil {
 		return arrow.Field{}, err
@@ -75,7 +75,7 @@ func (sm *SchemaManager) convertIcebergField(field iceberg.NestedField) (arrow.F
 }
 
 // convertIcebergType converts an Iceberg type to an Arrow type
-func (sm *SchemaManager) convertIcebergType(icebergType iceberg.Type) (arrow.DataType, error) {
+func (sm *Manager) convertIcebergType(icebergType iceberg.Type) (arrow.DataType, error) {
 	switch icebergType {
 	case iceberg.PrimitiveTypes.Bool:
 		return arrow.FixedWidthTypes.Boolean, nil
@@ -117,7 +117,7 @@ func (sm *SchemaManager) convertIcebergType(icebergType iceberg.Type) (arrow.Dat
 }
 
 // convertListType converts Iceberg list type to Arrow list type
-func (sm *SchemaManager) convertListType(lt *iceberg.ListType) (arrow.DataType, error) {
+func (sm *Manager) convertListType(lt *iceberg.ListType) (arrow.DataType, error) {
 	elementType, err := sm.convertIcebergType(lt.Element)
 	if err != nil {
 		return nil, err
@@ -127,7 +127,7 @@ func (sm *SchemaManager) convertListType(lt *iceberg.ListType) (arrow.DataType, 
 }
 
 // convertMapType converts Iceberg map type to Arrow map type
-func (sm *SchemaManager) convertMapType(mt *iceberg.MapType) (arrow.DataType, error) {
+func (sm *Manager) convertMapType(mt *iceberg.MapType) (arrow.DataType, error) {
 	keyType, err := sm.convertIcebergType(mt.KeyType)
 	if err != nil {
 		return nil, err
@@ -142,7 +142,7 @@ func (sm *SchemaManager) convertMapType(mt *iceberg.MapType) (arrow.DataType, er
 }
 
 // convertStructType converts Iceberg struct type to Arrow struct type
-func (sm *SchemaManager) convertStructType(st *iceberg.StructType) (arrow.DataType, error) {
+func (sm *Manager) convertStructType(st *iceberg.StructType) (arrow.DataType, error) {
 	fields := make([]arrow.Field, 0, len(st.Fields()))
 
 	for _, field := range st.Fields() {
@@ -157,7 +157,7 @@ func (sm *SchemaManager) convertStructType(st *iceberg.StructType) (arrow.DataTy
 }
 
 // ValidateData validates data against a given schema
-func (sm *SchemaManager) ValidateData(data [][]interface{}, schema *arrow.Schema) error {
+func (sm *Manager) ValidateData(data [][]interface{}, schema *arrow.Schema) error {
 	if len(data) == 0 {
 		return nil // Empty data is valid
 	}
@@ -182,7 +182,7 @@ func (sm *SchemaManager) ValidateData(data [][]interface{}, schema *arrow.Schema
 }
 
 // validateRow validates a single row against the schema
-func (sm *SchemaManager) validateRow(row []interface{}, schema *arrow.Schema, rowIndex int) error {
+func (sm *Manager) validateRow(row []interface{}, schema *arrow.Schema, rowIndex int) error {
 	for colIndex, value := range row {
 		field := schema.Field(colIndex)
 
@@ -195,7 +195,7 @@ func (sm *SchemaManager) validateRow(row []interface{}, schema *arrow.Schema, ro
 }
 
 // validateValue validates a single value against a field
-func (sm *SchemaManager) validateValue(value interface{}, field arrow.Field, rowIndex, colIndex int) error {
+func (sm *Manager) validateValue(value interface{}, field arrow.Field, rowIndex, colIndex int) error {
 	// Handle null values
 	if value == nil {
 		if !field.Nullable {
@@ -213,7 +213,7 @@ func (sm *SchemaManager) validateValue(value interface{}, field arrow.Field, row
 }
 
 // validateType validates that a value is compatible with an Arrow type
-func (sm *SchemaManager) validateType(value interface{}, arrowType arrow.DataType, fieldName string, rowIndex, colIndex int) error {
+func (sm *Manager) validateType(value interface{}, arrowType arrow.DataType, fieldName string, rowIndex, colIndex int) error {
 	switch arrowType.(type) {
 	case *arrow.BooleanType:
 		if _, ok := value.(bool); !ok {
@@ -260,7 +260,7 @@ func (sm *SchemaManager) validateType(value interface{}, arrowType arrow.DataTyp
 }
 
 // Type compatibility helpers
-func (sm *SchemaManager) isInt32Compatible(value interface{}) bool {
+func (sm *Manager) isInt32Compatible(value interface{}) bool {
 	switch value.(type) {
 	case int, int8, int16, int32, int64:
 		return true
@@ -274,7 +274,7 @@ func (sm *SchemaManager) isInt32Compatible(value interface{}) bool {
 	}
 }
 
-func (sm *SchemaManager) isInt64Compatible(value interface{}) bool {
+func (sm *Manager) isInt64Compatible(value interface{}) bool {
 	switch value.(type) {
 	case int, int8, int16, int32, int64:
 		return true
@@ -287,7 +287,7 @@ func (sm *SchemaManager) isInt64Compatible(value interface{}) bool {
 	}
 }
 
-func (sm *SchemaManager) isFloat32Compatible(value interface{}) bool {
+func (sm *Manager) isFloat32Compatible(value interface{}) bool {
 	switch value.(type) {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
 		return true
@@ -296,7 +296,7 @@ func (sm *SchemaManager) isFloat32Compatible(value interface{}) bool {
 	}
 }
 
-func (sm *SchemaManager) isFloat64Compatible(value interface{}) bool {
+func (sm *Manager) isFloat64Compatible(value interface{}) bool {
 	switch value.(type) {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
 		return true
@@ -305,7 +305,7 @@ func (sm *SchemaManager) isFloat64Compatible(value interface{}) bool {
 	}
 }
 
-func (sm *SchemaManager) isDateCompatible(value interface{}) bool {
+func (sm *Manager) isDateCompatible(value interface{}) bool {
 	switch value.(type) {
 	case time.Time, string:
 		return true
@@ -314,7 +314,7 @@ func (sm *SchemaManager) isDateCompatible(value interface{}) bool {
 	}
 }
 
-func (sm *SchemaManager) isTimestampCompatible(value interface{}) bool {
+func (sm *Manager) isTimestampCompatible(value interface{}) bool {
 	switch value.(type) {
 	case time.Time, string:
 		return true

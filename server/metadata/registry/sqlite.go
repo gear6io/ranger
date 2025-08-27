@@ -299,7 +299,6 @@ func (sm *Store) CreateTable(ctx context.Context, database, tableName string, sc
 	tableMetadata := &TableMetadata{
 		Database:      database,
 		Name:          tableName,
-		Schema:        schema,
 		StorageEngine: storageEngine,
 		EngineConfig:  engineConfigJSON,
 		FileCount:     0,
@@ -423,7 +422,6 @@ func (sm *Store) CreateTableMetadata(ctx context.Context, database, tableName st
 	tableMetadata := &TableMetadata{
 		Database:      database,
 		Name:          tableName,
-		Schema:        schema,
 		StorageEngine: storageEngine,
 		EngineConfig:  engineConfigJSON,
 		FileCount:     0,
@@ -438,14 +436,13 @@ func (sm *Store) CreateTableMetadata(ctx context.Context, database, tableName st
 
 // LoadTableMetadata loads detailed metadata for a table
 func (sm *Store) LoadTableMetadata(ctx context.Context, database, tableName string) (*TableMetadata, error) {
-	query := `SELECT tm.schema, tm.storage_engine, tm.engine_config, tm.last_modified, tm.created_at FROM table_metadata tm JOIN tables t ON tm.table_id = t.id JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ?`
+	query := `SELECT tm.storage_engine, tm.engine_config, tm.last_modified, tm.created_at FROM table_metadata tm JOIN tables t ON tm.table_id = t.id JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ?`
 	row := sm.db.QueryRowContext(ctx, query, database, tableName)
 
-	var schema []byte
 	var storageEngine, engineConfig string
 	var lastModified, createdAt time.Time
 
-	err := row.Scan(&schema, &storageEngine, &engineConfig, &lastModified, &createdAt)
+	err := row.Scan(&storageEngine, &engineConfig, &lastModified, &createdAt)
 	if err != nil {
 		return nil, errors.New(errors.CommonInternal, "failed to load table metadata", err).AddContext("database", database).AddContext("table", tableName)
 	}
@@ -466,7 +463,6 @@ func (sm *Store) LoadTableMetadata(ctx context.Context, database, tableName stri
 	tableMetadata := &TableMetadata{
 		Database:      database,
 		Name:          tableName,
-		Schema:        schema,
 		StorageEngine: storageEngine,
 		EngineConfig:  engineConfig,
 		FileCount:     fileCount,
@@ -624,8 +620,8 @@ func (sm *Store) GetCompleteTableInfoByID(ctx context.Context, tableID int64) (*
 			t.is_temporary, t.is_external, t.row_count, t.file_count, t.total_size,
 			t.created_at, t.updated_at, t.deleted_at,
 			d.name as database_name,
-			tm.schema_version, tm.schema, tm.storage_engine, tm.engine_config,
-			tm.format, tm.compression, tm.partition_by, tm.sort_by, tm.properties,
+			tm.schema_version, tm.storage_engine, tm.engine_config,
+			tm.format, tm.compression, tm.partition_by, tm.sort_by, tm.settings,
 			tm.last_modified, tm.created_at as metadata_created, tm.updated_at as metadata_updated
 		FROM tables t
 		JOIN databases d ON t.database_id = d.id
@@ -638,8 +634,7 @@ func (sm *Store) GetCompleteTableInfoByID(ctx context.Context, tableID int64) (*
 	var tableInfo CompleteTableInfo
 	var dbName string
 	var schemaVersion int
-	var schema []byte
-	var storageEngine, engineConfig, format, compression, partitionBy, sortBy, properties string
+	var storageEngine, engineConfig, format, compression, partitionBy, sortBy, settings string
 	var lastModified, metadataCreated, metadataUpdated time.Time
 
 	err := row.Scan(
@@ -647,8 +642,8 @@ func (sm *Store) GetCompleteTableInfoByID(ctx context.Context, tableID int64) (*
 		&tableInfo.IsTemporary, &tableInfo.IsExternal, &tableInfo.RowCount, &tableInfo.FileCount, &tableInfo.TotalSize,
 		&tableInfo.CreatedAt, &tableInfo.UpdatedAt, &tableInfo.DeletedAt,
 		&dbName,
-		&schemaVersion, &schema, &storageEngine, &engineConfig,
-		&format, &compression, &partitionBy, &sortBy, &properties,
+		&schemaVersion, &storageEngine, &engineConfig,
+		&format, &compression, &partitionBy, &sortBy, &settings,
 		&lastModified, &metadataCreated, &metadataUpdated,
 	)
 
@@ -662,20 +657,19 @@ func (sm *Store) GetCompleteTableInfoByID(ctx context.Context, tableID int64) (*
 	// Set the database name
 	tableInfo.Database = dbName
 
-	// Create TableMetadata if it exists
-	if schema != nil {
+	// Create TableMetadata if storage engine is specified
+	if storageEngine != "" {
 		tableInfo.StorageInfo = &regtypes.TableMetadata{
 			ID:            tableInfo.ID,
 			TableID:       tableInfo.ID,
 			SchemaVersion: schemaVersion,
-			Schema:        schema,
 			StorageEngine: storageEngine,
 			EngineConfig:  engineConfig,
 			Format:        format,
 			Compression:   compression,
 			PartitionBy:   partitionBy,
 			SortBy:        sortBy,
-			Properties:    properties,
+			Settings:      settings, // Renamed from Properties
 			LastModified:  lastModified,
 		}
 
@@ -727,7 +721,6 @@ func (sm *Store) ValidateTableMetadata(ctx context.Context, tableID int64) error
 		SELECT 
 			t.name as table_name,
 			d.name as database_name,
-			tm.schema,
 			tm.storage_engine,
 			tm.format
 		FROM tables t
@@ -739,10 +732,9 @@ func (sm *Store) ValidateTableMetadata(ctx context.Context, tableID int64) error
 	row := sm.db.QueryRowContext(ctx, query, tableID)
 
 	var tableName, dbName string
-	var schema []byte
 	var storageEngine, format string
 
-	err := row.Scan(&tableName, &dbName, &schema, &storageEngine, &format)
+	err := row.Scan(&tableName, &dbName, &storageEngine, &format)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return errors.New(RegistryTableNotFound, "table not found", nil).AddContext("table_id", tableID)
@@ -759,9 +751,7 @@ func (sm *Store) ValidateTableMetadata(ctx context.Context, tableID int64) error
 		return errors.New(RegistryTableNotFound, "table name is empty", nil).AddContext("table_id", tableID)
 	}
 
-	if schema == nil || len(schema) == 0 {
-		return errors.New(RegistryTableNotFound, "table schema is missing", nil).AddContext("table_id", tableID).AddContext("table", tableName)
-	}
+	// Schema validation removed - schema is now stored in TableColumn table
 
 	if storageEngine == "" {
 		return errors.New(RegistryTableNotFound, "storage engine is not specified", nil).AddContext("table_id", tableID).AddContext("table", tableName)

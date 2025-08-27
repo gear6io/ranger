@@ -54,7 +54,7 @@ Build a comprehensive schema management system that provides fixed table schemas
   - [x] Identify type validation needs
 
 - [x] **Implement comprehensive type system**
-  - [x] Create `server/storage/parquet/schema.go` (already exists)
+  - [x] Create `server/storage/schema/schema.go` (already exists)
   - [x] Implement all Iceberg primitive types
   - [x] Add support for complex types (list, map, struct)
   - [x] Implement type validation and constraints
@@ -65,8 +65,8 @@ Build a comprehensive schema management system that provides fixed table schemas
 
 #### **2.1 Schema Validation Engine**
 - [x] **Create validation framework**
-  - [x] Implement `server/storage/parquet/schema.go` (already exists)
-  - [x] Create `SchemaManager` struct with configurable rules
+  - [x] Implement `server/storage/schema/schema.go` (already exists)
+  - [x] Create `Manager` struct with configurable rules
   - [x] Add type checking for all supported types
   - [x] Implement null value validation
   - [x] Add custom validation rule support
@@ -107,14 +107,14 @@ Build a comprehensive schema management system that provides fixed table schemas
 
 #### **Schema Validation (in Parquet Package)**
 ```go
-// Already implemented in server/storage/parquet/schema.go
-type SchemaManager struct {
+// Already implemented in server/storage/schema/schema.go
+type Manager struct {
     config *ParquetConfig
 }
 
 // Already working methods
-func (sm *SchemaManager) ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*arrow.Schema, error)
-func (sm *SchemaManager) ValidateData(data [][]interface{}, schema *arrow.Schema) error
+func (sm *Manager) ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*arrow.Schema, error)
+func (sm *Manager) ValidateData(data [][]interface{}, schema *arrow.Schema) error
 ```
 
 #### **Type System (Complete)**

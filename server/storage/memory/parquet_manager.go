@@ -5,11 +5,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gear6io/ranger/pkg/errors"
-	"github.com/gear6io/ranger/server/storage/parquet"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/gear6io/ranger/pkg/errors"
+	parquet "github.com/gear6io/ranger/server/storage/schema"
 )
 
 // ParquetManager manages Parquet data operations in memory
@@ -57,8 +57,8 @@ func (dm *ParquetManager) StoreData(data [][]interface{}) error {
 	startTime := time.Now()
 
 	// Validate data against schema
-	schemaManager := parquet.NewSchemaManager(dm.config)
-	if err := schemaManager.ValidateData(data, dm.schema); err != nil {
+	Manager := parquet.NewManager(dm.config)
+	if err := Manager.ValidateData(data, dm.schema); err != nil {
 		return errors.New(ErrDataValidationFailed, "data validation failed", err)
 	}
 

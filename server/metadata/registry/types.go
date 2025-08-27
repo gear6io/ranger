@@ -18,9 +18,9 @@ type TableReference struct {
 // TableMetadata represents a composite view of table metadata for storage operations
 // This combines information from multiple tables for convenience
 type TableMetadata struct {
-	Database      string                `json:"database"`
-	Name          string                `json:"name"`
-	Schema        []byte                `json:"schema"`
+	Database string `json:"database"`
+	Name     string `json:"name"`
+	// Schema is now stored in TableColumn table, not here
 	StorageEngine string                `json:"storage_engine"`
 	EngineConfig  string                `json:"engine_config"`
 	FileCount     int                   `json:"file_count"`

@@ -1168,15 +1168,11 @@ func (p *Parser) parseAlterStmt() (Node, error) {
 func (p *Parser) parseAlterTableStmt() (Node, error) {
 	p.consume() // Consume TABLE
 
-	tableName := ""
-
-	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
+	// Parse table identifier (can be qualified or unqualified)
+	tableIdent, err := p.parseTableIdentifier()
+	if err != nil {
+		return nil, err
 	}
-
-	tableName = p.peek(0).value.(string)
-
-	p.consume() // Consume table name
 
 	// ALTER COLUMN [identifier] [column_definition]
 	// DROP COLUMN [identifier]
@@ -1204,8 +1200,78 @@ func (p *Parser) parseAlterTableStmt() (Node, error) {
 		p.consume()
 
 		return &AlterTableStmt{
-			TableName:  &Identifier{Value: tableName},
+			TableName:  tableIdent,
 			ColumnName: &Identifier{Value: columnName},
+			Action:     AlterTableActionDropColumn,
+		}, nil
+
+	case "SETTINGS":
+		p.consume() // Consume SETTINGS
+
+		// Parse settings as key=value pairs
+		settings := make(map[string]interface{})
+
+		// First token after SETTINGS must be an identifier (key)
+		if p.peek(0).tokenT != IDENT_TOK {
+			return nil, errors.New(ErrExpectedIdentifier, "expected identifier after SETTINGS", nil)
+		}
+
+		for {
+			// Check for end of statement
+			if p.peek(0).tokenT == SEMICOLON_TOK || p.peek(0).tokenT == EOF_TOK {
+				break
+			}
+
+			// Parse key=value pair
+			if p.peek(0).tokenT != IDENT_TOK {
+				break
+			}
+
+			key := p.peek(0).value.(string)
+			p.consume() // Consume key
+
+			if p.peek(0).tokenT != COMPARISON_TOK || p.peek(0).value != "=" {
+				return nil, errors.New(ErrExpectedEquals, "expected = after setting key", nil)
+			}
+			p.consume() // Consume =
+
+			// Parse value (can be literal or identifier)
+			var value interface{}
+			if p.peek(0).tokenT == LITERAL_TOK {
+				rawValue := p.peek(0).value
+				// Convert uint64 to int for consistency
+				if uint64Val, ok := rawValue.(uint64); ok {
+					value = int(uint64Val)
+				} else {
+					value = rawValue
+				}
+			} else if p.peek(0).tokenT == IDENT_TOK {
+				valueStr := p.peek(0).value.(string)
+				// Try to convert to appropriate type
+				if parsedValue, err := p.parseSettingValue(valueStr); err == nil {
+					value = parsedValue
+				} else {
+					value = valueStr
+				}
+			} else {
+				return nil, errors.New(ErrExpectedLiteral, "expected value after =", nil)
+			}
+			p.consume() // Consume value
+
+			settings[key] = value
+
+			// Check for comma separator
+			if p.peek(0).tokenT == COMMA_TOK {
+				p.consume() // Consume comma
+			} else {
+				break
+			}
+		}
+
+		return &AlterTableStmt{
+			TableName: tableIdent,
+			Action:    AlterTableActionSettings,
+			Settings:  settings,
 		}, nil
 
 	case "ALTER":
@@ -1316,9 +1382,10 @@ func (p *Parser) parseAlterTableStmt() (Node, error) {
 		}
 
 		return &AlterTableStmt{
-			TableName:        &Identifier{Value: tableName},
+			TableName:        tableIdent,
 			ColumnName:       &Identifier{Value: columnName},
 			ColumnDefinition: dummyCreateTblStatement.TableSchema.ColumnDefinitions[columnName],
+			Action:           AlterTableActionAlterColumn,
 		}, nil
 
 	}

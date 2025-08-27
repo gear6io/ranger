@@ -1,4 +1,4 @@
-package parquet
+package schema
 
 import (
 	"testing"
@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewSchemaManager(t *testing.T) {
+func TestNewManager(t *testing.T) {
 	config := DefaultParquetConfig()
-	sm := NewSchemaManager(config)
+	sm := NewManager(config)
 
 	assert.NotNil(t, sm)
 	assert.Equal(t, config, sm.config)
@@ -19,7 +19,7 @@ func TestNewSchemaManager(t *testing.T) {
 
 func TestConvertIcebergToArrowSchema_SimpleTypes(t *testing.T) {
 	config := DefaultParquetConfig()
-	sm := NewSchemaManager(config)
+	sm := NewManager(config)
 
 	// Create a simple Iceberg schema
 	schema := iceberg.NewSchema(0,
@@ -57,7 +57,7 @@ func TestConvertIcebergToArrowSchema_SimpleTypes(t *testing.T) {
 
 func TestConvertIcebergToArrowSchema_ComplexTypes(t *testing.T) {
 	config := DefaultParquetConfig()
-	sm := NewSchemaManager(config)
+	sm := NewManager(config)
 
 	// Create a complex Iceberg schema with nested types
 	schema := iceberg.NewSchema(0,
@@ -98,7 +98,7 @@ func TestConvertIcebergToArrowSchema_ComplexTypes(t *testing.T) {
 
 func TestValidateData_ValidData(t *testing.T) {
 	config := DefaultParquetConfig()
-	sm := NewSchemaManager(config)
+	sm := NewManager(config)
 
 	// Create a simple schema
 	schema := arrow.NewSchema([]arrow.Field{
@@ -120,7 +120,7 @@ func TestValidateData_ValidData(t *testing.T) {
 
 func TestValidateData_InvalidData(t *testing.T) {
 	config := DefaultParquetConfig()
-	sm := NewSchemaManager(config)
+	sm := NewManager(config)
 
 	// Create a simple schema
 	schema := arrow.NewSchema([]arrow.Field{
@@ -161,7 +161,7 @@ func TestValidateData_InvalidData(t *testing.T) {
 
 func TestValidateData_EmptyData(t *testing.T) {
 	config := DefaultParquetConfig()
-	sm := NewSchemaManager(config)
+	sm := NewManager(config)
 
 	schema := arrow.NewSchema([]arrow.Field{
 		{Name: "id", Type: arrow.PrimitiveTypes.Int64, Nullable: false},
@@ -179,7 +179,7 @@ func TestValidateData_EmptyData(t *testing.T) {
 
 func TestValidateData_NilSchema(t *testing.T) {
 	config := DefaultParquetConfig()
-	sm := NewSchemaManager(config)
+	sm := NewManager(config)
 
 	data := [][]interface{}{
 		{int64(1), "Alice"},

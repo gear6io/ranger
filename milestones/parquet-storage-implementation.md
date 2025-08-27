@@ -36,7 +36,7 @@ Transform the data lakehouse platform from JSON-based storage to a fully Apache 
   - [x] Identify gaps between current and required schema handling
 
 - [x] **Implement Iceberg to Arrow schema conversion**
-  - [x] Create `server/storage/parquet/schema_converter.go`
+  - [x] Create `server/storage/schema/schema_converter.go`
   - [x] Implement `ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*arrow.Schema, error)`
   - [x] Handle all Iceberg primitive types (int, long, float, double, string, boolean, date, timestamp)
   - [x] Handle Iceberg complex types (list, map, struct)
@@ -58,7 +58,7 @@ Transform the data lakehouse platform from JSON-based storage to a fully Apache 
   - [x] Document Arrow Parquet writer limitations and workarounds
 
 - [x] **Create core Parquet writer**
-  - [x] Implement `server/storage/parquet/writer.go`
+  - [x] Implement `server/storage/schema/writer.go`
   - [x] Create `ParquetWriter` struct with configurable options
   - [x] Implement `WriteBatch(data [][]interface{}, schema *arrow.Schema) error`
   - [x] Add streaming write support for large datasets
@@ -168,7 +168,7 @@ Transform the data lakehouse platform from JSON-based storage to a fully Apache 
 
 #### **Parquet Package Structure**
 ```
-server/storage/parquet/
+server/storage/schema/
 ├── interface.go          # ✅ Core interfaces
 ├── schema.go            # ✅ Schema management
 ├── compression.go       # ✅ Compression support

@@ -570,13 +570,10 @@ func (m *Manager) GetTableSchema(ctx context.Context, database, tableName string
 		return nil, errors.New(errors.CommonNotFound, "table does not exist", nil).AddContext("database", database).AddContext("table", tableName)
 	}
 
-	// Get table metadata
-	metadata, err := m.meta.LoadTableMetadata(ctx, database, tableName)
-	if err != nil {
-		return nil, err
-	}
-
-	return metadata.Schema, nil
+	// TODO: Schema is now stored in TableColumn table, not in TableMetadata
+	// This function needs to be updated to retrieve schema from columns
+	// For now, return an error indicating this needs implementation
+	return nil, errors.New(errors.CommonInternal, "schema retrieval not yet implemented - schema now stored in TableColumn table", nil).AddContext("database", database).AddContext("table", tableName)
 }
 
 // RemoveTable removes a table and all its data

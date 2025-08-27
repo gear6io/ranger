@@ -25,12 +25,12 @@ Implement a memory-based Parquet storage system that will serve as the foundatio
 ### **Phase 1: Core Foundation (Week 1) - ✅ **COMPLETED**
 
 #### **1.1 Create Parquet Package Structure**
-- [x] **Create `server/storage/parquet/` directory**
-- [x] **Create `server/storage/parquet/schema.go`**
-  - [x] Define `SchemaManager` interface
+- [x] **Create `server/storage/schema/` directory**
+- [x] **Create `server/storage/schema/schema.go`**
+  - [x] Define `Manager` interface
   - [x] Implement Iceberg to Arrow schema conversion
   - [x] Add comprehensive schema validation
-- [x] **Create `server/storage/parquet/data_manager.go`**
+- [x] **Create `server/storage/schema/data_manager.go`**
   - [x] Implement `ParquetDataManager` for in-memory storage
   - [x] Add memory management and limits
   - [x] Add streaming data operations
@@ -53,7 +53,7 @@ Implement a memory-based Parquet storage system that will serve as the foundatio
 #### **1.3 Extend Memory Storage**
 - [x] **Add Parquet fields to MemoryStorage**
   - [x] Add `parquetManager *ParquetDataManager` field
-  - [x] Add `schemaManager *SchemaManager` field
+  - [x] Add `Manager *Manager` field
   - [x] Add `tables map[string]*TableData` field
 - [x] **Create TableData struct**
   - [x] Store Arrow arrays instead of raw data
@@ -139,7 +139,7 @@ Implement a memory-based Parquet storage system that will serve as the foundatio
 
 ### **Parquet Package Structure**
 ```
-server/storage/parquet/
+server/storage/schema/
 ├── interface.go          # Core interfaces
 ├── schema.go            # Schema management
 ├── compression.go       # Compression support
@@ -167,10 +167,10 @@ type MemoryStorage struct {
 ### **Schema Conversion**
 ```go
 // Convert Iceberg schema to Arrow schema
-func (sm *SchemaManager) ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*arrow.Schema, error)
+func (sm *Manager) ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*arrow.Schema, error)
 
 // Validate data against Arrow schema
-func (sm *SchemaManager) ValidateData(data [][]interface{}, schema *arrow.Schema) error
+func (sm *Manager) ValidateData(data [][]interface{}, schema *arrow.Schema) error
 ```
 
 ## 📊 **Progress Summary**

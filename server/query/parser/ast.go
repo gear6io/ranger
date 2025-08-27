@@ -472,10 +472,24 @@ type ShowStmt struct {
 
 // AlterTableStmt represents an ALTER TABLE statement
 type AlterTableStmt struct {
-	TableName        *Identifier       // Table name
+	TableName        *TableIdentifier  // Table name (can be qualified database.table)
 	ColumnName       *Identifier       // Column name
 	ColumnDefinition *ColumnDefinition // Column definition
+
+	// Enhanced ALTER TABLE support
+	Action   AlterTableAction       // Type of alteration
+	Settings map[string]interface{} // SETTINGS clause for ALTER TABLE SETTINGS
 }
+
+// AlterTableAction represents the type of ALTER TABLE action
+type AlterTableAction int
+
+const (
+	AlterTableActionUnknown AlterTableAction = iota
+	AlterTableActionDropColumn
+	AlterTableActionAlterColumn
+	AlterTableActionSettings
+)
 
 type AlterUserSetType int
 

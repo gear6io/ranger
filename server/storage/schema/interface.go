@@ -1,4 +1,4 @@
-package parquet
+package schema
 
 import (
 	"github.com/apache/arrow-go/v18/arrow"
