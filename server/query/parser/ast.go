@@ -18,7 +18,8 @@ package parser
 import (
 	// External parser packages commented out - Ranger compatibility
 	"encoding/json"
-	"errors"
+
+	"github.com/gear6io/ranger/pkg/errors"
 )
 
 // Node represents an AST node
@@ -58,13 +59,13 @@ func (ti *TableIdentifier) GetFullName() string {
 // Validate ensures the TableIdentifier is valid
 func (ti *TableIdentifier) Validate() error {
 	if ti.Table == nil {
-		return errors.New("table name is required")
+		return errors.New(ErrTableNameRequired, "table name is required", nil)
 	}
 	if ti.Table.Value == "" {
-		return errors.New("table name cannot be empty")
+		return errors.New(ErrTableNameEmpty, "table name cannot be empty", nil)
 	}
 	if ti.Database != nil && ti.Database.Value == "" {
-		return errors.New("database name cannot be empty if specified")
+		return errors.New(ErrDatabaseNameEmptyIfSpecified, "database name cannot be empty if specified", nil)
 	}
 	return nil
 }
@@ -106,8 +107,20 @@ type CreateTableStmt struct {
 	Compress    bool
 	Encrypt     bool
 	EncryptKey  *Literal
-	Engine      *Identifier // Storage engine (e.g., MEMORY, FILESYSTEM, S3)
 	IfNotExists bool
+
+	// Enhanced CREATE TABLE support
+	StorageEngine *Identifier // STORAGE clause (mandatory)
+	StoragePath   *Literal    // Optional storage path
+
+	// Partitioning support
+	PartitionBy []*Identifier // PARTITION BY clause
+
+	// Sorting support
+	OrderBy []*Identifier // ORDER BY clause
+
+	// Table settings (raw parsed values from SETTINGS clause)
+	Settings map[string]interface{} // SETTINGS clause
 }
 
 // DropTableStmt represents a DROP TABLE statement

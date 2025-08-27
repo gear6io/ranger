@@ -19,10 +19,11 @@ package parser
 // INTEGRATED WITH RANGER - Some functionality commented out for compatibility
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/gear6io/ranger/pkg/errors"
 )
 
 // Ranger-compatible data types - simplified version of SQL parser types
@@ -56,7 +57,7 @@ var keywords = append([]string{
 	"UPPER", "LOWER", "CAST", "COALESCE", "REVERSE", "ROUND", "POSITION", "LENGTH", "REPLACE",
 	"CONCAT", "SUBSTRING", "TRIM", "GENERATE_UUID", "SYS_DATE", "SYS_TIME", "SYS_TIMESTAMP", "SYS_DATETIME",
 	"CASE", "WHEN", "THEN", "ELSE", "END", "IF", "ELSEIF", "DEALLOCATE", "NEXT", "WHILE", "PRINT", "EXPLAIN",
-	"COMPRESS", "ENCRYPT", "COLUMN", "ENGINE", "IF NOT EXISTS",
+	"COMPRESS", "ENCRYPT", "COLUMN", "IF NOT EXISTS", "STORAGE", "PARTITION", "SETTINGS",
 }, basicDataTypes...)
 
 // Ranger-compatible type definitions to replace SQL parser types
@@ -537,11 +538,19 @@ func (l *Lexer) nextToken() Token {
 					}
 
 					if checkKeyword(string(l.input[startPos:l.pos])) {
+						word := string(l.input[startPos:l.pos])
 
-						if IsValidDataType(string(l.input[startPos:l.pos])) {
-							return Token{tokenT: DATATYPE_TOK, value: string(l.input[startPos:l.pos])}
+						// Special case: if it's a lowercase word that could be a data type,
+						// treat it as an identifier (column name) first
+						// This handles cases like "date DATE" where "date" should be a column name
+						if strings.ToLower(word) == word && IsValidDataType(word) {
+							return Token{tokenT: IDENT_TOK, value: word}
+						}
+
+						if IsValidDataType(word) {
+							return Token{tokenT: DATATYPE_TOK, value: word}
 						} else {
-							return Token{tokenT: KEYWORD_TOK, value: strings.ToUpper(string(l.input[startPos:l.pos]))}
+							return Token{tokenT: KEYWORD_TOK, value: strings.ToUpper(word)}
 						}
 					} else {
 						parsedUInt, err := strconv.ParseUint(string(l.input[startPos:l.pos]), 10, 32) // convert string to uint
@@ -672,16 +681,16 @@ func (p *Parser) Parse() (Node, error) {
 
 	// Check if statement is empty
 	if len(p.lexer.tokens) == 0 {
-		return nil, errors.New("empty statement")
+		return nil, errors.New(ErrEmptyStatement, "empty statement", nil)
 	}
 
 	if len(p.lexer.tokens) < 1 {
-		return nil, errors.New("invalid statement")
+		return nil, errors.New(ErrInvalidStatement, "invalid statement", nil)
 	}
 
 	// Check if statement ends with a semicolon
 	if p.lexer.tokens[len(p.lexer.tokens)-1].tokenT != SEMICOLON_TOK {
-		return nil, errors.New("expected ';'")
+		return nil, errors.New(ErrMissingSemicolon, "expected ';'", nil)
 	}
 
 	// Check if statement starts with a keyword
@@ -737,7 +746,7 @@ func (p *Parser) Parse() (Node, error) {
 		}
 	}
 
-	return nil, errors.New("expected keyword")
+	return nil, errors.New(ErrExpectedKeyword, "expected keyword", nil)
 
 }
 
@@ -746,7 +755,7 @@ func (p *Parser) parseExplainStmt() (Node, error) {
 	p.consume() // Consume EXPLAIN
 
 	if p.peek(0).tokenT != KEYWORD_TOK {
-		return nil, errors.New("expected keyword")
+		return nil, errors.New(ErrExpectedKeyword, "expected keyword", nil)
 	}
 
 	switch p.peek(0).value {
@@ -786,7 +795,7 @@ func (p *Parser) parseExplainStmt() (Node, error) {
 		}, nil
 	}
 
-	return nil, errors.New("expected SELECT, DELETE, UPDATE")
+	return nil, errors.New(ErrExpectedSelectInsert, "expected SELECT, DELETE, UPDATE", nil)
 
 }
 
@@ -802,7 +811,7 @@ func (p *Parser) parsePrintStmt() (Node, error) {
 	if p.peek(0).tokenT == AT_TOK {
 		variableName := ""
 		if p.peek(1).tokenT != IDENT_TOK {
-			return nil, errors.New("expected identifier")
+			return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 		}
 
 		variableName = p.peek(0).value.(string) + p.peek(1).value.(string)
@@ -815,7 +824,7 @@ func (p *Parser) parsePrintStmt() (Node, error) {
 	} else {
 		// check for literal
 		if p.peek(0).tokenT != LITERAL_TOK {
-			return nil, errors.New("expected literal")
+			return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 		}
 
 		return &PrintStmt{
@@ -834,20 +843,20 @@ func (p *Parser) parseWhileStmt() (Node, error) {
 	p.consume() // Consume WHILE
 
 	if p.peek(0).tokenT != AT_TOK {
-		return nil, errors.New("expected @")
+		return nil, errors.New(ErrExpectedAtSymbol, "expected @", nil)
 	}
 
 	p.consume() // Consume @
 
 	if p.peek(0).tokenT != AT_TOK {
-		return nil, errors.New("expected @")
+		return nil, errors.New(ErrExpectedAtSymbol, "expected @", nil)
 	}
 
 	p.consume() // Consume @
 
 	// Should be FETCH_STATUS
 	if p.peek(0).tokenT != IDENT_TOK || p.peek(0).value != "FETCH_STATUS" {
-		return nil, errors.New("expected FETCH_STATUS")
+		return nil, errors.New(ErrExpectedFetchStatus, "expected FETCH_STATUS", nil)
 
 	}
 
@@ -855,14 +864,14 @@ func (p *Parser) parseWhileStmt() (Node, error) {
 
 	// Next tok should be =
 	if p.peek(0).tokenT != COMPARISON_TOK || p.peek(0).value != "=" {
-		return nil, errors.New("expected =")
+		return nil, errors.New(ErrExpectedEquals, "expected =", nil)
 	}
 
 	p.consume() // Consume =
 
 	// Next tok should be 0
 	if p.peek(0).tokenT != LITERAL_TOK || p.peek(0).value != uint64(0) {
-		return nil, errors.New("expected 0") // While @@FETCH_STATUS = 0 means while there are rows to fetch
+		return nil, errors.New(ErrExpectedZero, "expected 0", nil) // While @@FETCH_STATUS = 0 means while there are rows to fetch
 		// There is no benefit in using -1, or -2, or any other number
 	}
 
@@ -873,7 +882,7 @@ func (p *Parser) parseWhileStmt() (Node, error) {
 	// Next tok should be BEGIN
 
 	if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "BEGIN" {
-		return nil, errors.New("expected BEGIN")
+		return nil, errors.New(ErrExpectedBegin, "expected BEGIN", nil)
 	}
 
 	p.consume() // Consume BEGIN
@@ -886,7 +895,7 @@ func (p *Parser) parseWhileStmt() (Node, error) {
 
 	// Look for END
 	if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "END" {
-		return nil, errors.New("expected END")
+		return nil, errors.New(ErrExpectedEnd, "expected END", nil)
 	}
 
 	p.consume() // Consume END
@@ -931,19 +940,19 @@ func (p *Parser) parseFetchStmt() (Node, error) {
 	p.consume() // Consume FETCH
 
 	if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "NEXT" {
-		return nil, errors.New("expected NEXT")
+		return nil, errors.New(ErrExpectedNext, "expected NEXT", nil)
 	}
 
 	p.consume() // Consume NEXT
 
 	if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "FROM" {
-		return nil, errors.New("expected FROM")
+		return nil, errors.New(ErrExpectedFrom, "expected FROM", nil)
 	}
 
 	p.consume() // Consume FROM
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	cursorName := p.peek(0).value.(string)
@@ -951,7 +960,7 @@ func (p *Parser) parseFetchStmt() (Node, error) {
 
 	// check for INTO
 	if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "INTO" {
-		return nil, errors.New("expected INTO")
+		return nil, errors.New(ErrExpectedInto, "expected INTO", nil)
 	}
 
 	p.consume() // Consume INTO
@@ -961,13 +970,13 @@ func (p *Parser) parseFetchStmt() (Node, error) {
 	for {
 		// The cursor variable name must start with a @
 		if p.peek(0).tokenT != IDENT_TOK && !strings.HasPrefix(p.peek(0).value.(string), "@") {
-			return nil, errors.New("expected cursor variable name")
+			return nil, errors.New(ErrExpectedCursorVar, "expected cursor variable name", nil)
 		}
 
 		varName := p.peek(0).value.(string)
 
 		if p.peek(1).tokenT != IDENT_TOK {
-			return nil, errors.New("expected identifier")
+			return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 		}
 
 		varName += p.peek(1).value.(string)
@@ -997,14 +1006,14 @@ func (p *Parser) parseDeallocateStmt() (Node, error) {
 	p.consume() // Consume DEALLOCATE
 
 	if p.peek(0).tokenT != IDENT_TOK && p.peek(0).value != "@" {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	// if the ident starts with a @
 	if strings.HasPrefix(p.peek(0).value.(string), "@") {
 		// check next token
 		if p.peek(1).tokenT != IDENT_TOK {
-			return nil, errors.New("expected identifier")
+			return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 		}
 
 		variableName := p.peek(0).value.(string) + p.peek(1).value.(string)
@@ -1032,7 +1041,7 @@ func (p *Parser) parseCloseStmt() (Node, error) {
 	p.consume() // Consume OPEN
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	cursorName := p.peek(0).value.(string)
@@ -1049,7 +1058,7 @@ func (p *Parser) parseOpenStmt() (Node, error) {
 	p.consume() // Consume OPEN
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	cursorName := p.peek(0).value.(string)
@@ -1066,13 +1075,13 @@ func (p *Parser) parseDeclareStmt() (Node, error) {
 	p.consume() // Consume DECLARE
 
 	if p.peek(0).tokenT != IDENT_TOK && p.peek(0).value != "@" {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	// if the ident starts with a @
 	if strings.HasPrefix(p.peek(0).value.(string), "@") {
 		if p.peek(1).tokenT != IDENT_TOK {
-			return nil, errors.New("expected identifier")
+			return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 		}
 
 		// we know it's a cursor variable not a cursor
@@ -1085,7 +1094,7 @@ func (p *Parser) parseDeclareStmt() (Node, error) {
 
 		// Check for datatype
 		if p.peek(0).tokenT != DATATYPE_TOK {
-			return nil, errors.New("expected datatype")
+			return nil, errors.New(ErrExpectedDataType, "expected datatype", nil)
 		}
 
 		// consume the datatype
@@ -1108,15 +1117,15 @@ func (p *Parser) parseDeclareStmt() (Node, error) {
 		// consume the cursor name
 		p.consume()
 
-		// look gor CURSOR FOR
+		// look for CURSOR FOR
 		if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "CURSOR" {
-			return nil, errors.New("expected CURSOR")
+			return nil, errors.New(ErrExpectedCursor, "expected CURSOR", nil)
 		}
 
 		p.consume() // Consume CURSOR
 
 		if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "FOR" {
-			return nil, errors.New("expected FOR")
+			return nil, errors.New(ErrExpectedFor, "expected FOR", nil)
 		}
 
 		p.consume() // Consume FOR
@@ -1141,7 +1150,7 @@ func (p *Parser) parseAlterStmt() (Node, error) {
 	p.consume() // Consume ALTER
 
 	if p.peek(0).tokenT != KEYWORD_TOK {
-		return nil, errors.New("expected keyword")
+		return nil, errors.New(ErrExpectedKeyword, "expected keyword", nil)
 	}
 
 	switch p.peek(0).value {
@@ -1151,7 +1160,7 @@ func (p *Parser) parseAlterStmt() (Node, error) {
 		return p.parseAlterTableStmt()
 	}
 
-	return nil, errors.New("expected USER or TABLE")
+	return nil, errors.New(ErrExpectedUserOrTable, "expected USER or TABLE", nil)
 
 }
 
@@ -1162,7 +1171,7 @@ func (p *Parser) parseAlterTableStmt() (Node, error) {
 	tableName := ""
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	tableName = p.peek(0).value.(string)
@@ -1173,7 +1182,7 @@ func (p *Parser) parseAlterTableStmt() (Node, error) {
 	// DROP COLUMN [identifier]
 
 	if p.peek(0).tokenT != KEYWORD_TOK {
-		return nil, errors.New("expected keyword")
+		return nil, errors.New(ErrExpectedKeyword, "expected keyword", nil)
 	}
 
 	switch p.peek(0).value {
@@ -1181,13 +1190,13 @@ func (p *Parser) parseAlterTableStmt() (Node, error) {
 		p.consume() // Consume DROP
 
 		if p.peek(0).tokenT != KEYWORD_TOK {
-			return nil, errors.New("expected keyword")
+			return nil, errors.New(ErrExpectedKeyword, "expected keyword", nil)
 		}
 
 		p.consume() // Consume COLUMN
 
 		if p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected identifier")
+			return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 		}
 
 		columnName := p.peek(0).value.(string)
@@ -1203,7 +1212,7 @@ func (p *Parser) parseAlterTableStmt() (Node, error) {
 		p.consume() // Consume ALTER
 
 		if p.peek(0).tokenT != KEYWORD_TOK {
-			return nil, errors.New("expected keyword")
+			return nil, errors.New(ErrExpectedKeyword, "expected keyword", nil)
 		}
 
 		p.consume() // Consume COLUMN
@@ -1229,7 +1238,7 @@ func (p *Parser) parseAlterTableStmt() (Node, error) {
 
 		if p.peek(0).tokenT != DATATYPE_TOK {
 
-			return nil, errors.New("expected data type")
+			return nil, errors.New(ErrExpectedDataType, "expected data type", nil)
 		}
 
 		dataType := p.peek(0).value.(string)
@@ -1248,8 +1257,7 @@ func (p *Parser) parseAlterTableStmt() (Node, error) {
 				p.consume() // Consume (
 
 				if p.peek(0).tokenT != LITERAL_TOK {
-
-					return nil, errors.New("expected literal")
+					return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 				}
 
 				length := p.peek(0).value.(uint64)
@@ -1257,7 +1265,7 @@ func (p *Parser) parseAlterTableStmt() (Node, error) {
 				p.consume() // Consume literal
 
 				if p.peek(0).tokenT != RPAREN_TOK {
-					return nil, errors.New("expected )")
+					return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 				}
 
 				p.consume() // Consume )
@@ -1268,7 +1276,7 @@ func (p *Parser) parseAlterTableStmt() (Node, error) {
 				p.consume() // Consume (
 
 				if p.peek(0).tokenT != LITERAL_TOK {
-					return nil, errors.New("expected literal")
+					return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 				}
 
 				precision := p.peek(0).value.(uint64)
@@ -1276,13 +1284,13 @@ func (p *Parser) parseAlterTableStmt() (Node, error) {
 				p.consume() // Consume literal
 
 				if p.peek(0).tokenT != COMMA_TOK {
-					return nil, errors.New("expected ,")
+					return nil, errors.New(ErrExpectedComma, "expected ,", nil)
 				}
 
 				p.consume() // Consume ,
 
 				if p.peek(0).tokenT != LITERAL_TOK {
-					return nil, errors.New("expected literal")
+					return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 				}
 
 				scale := p.peek(0).value.(uint64)
@@ -1290,7 +1298,7 @@ func (p *Parser) parseAlterTableStmt() (Node, error) {
 				p.consume() // Consume literal
 
 				if p.peek(0).tokenT != RPAREN_TOK {
-					return nil, errors.New("expected )")
+					return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 				}
 
 				p.consume() // Consume )
@@ -1315,7 +1323,7 @@ func (p *Parser) parseAlterTableStmt() (Node, error) {
 
 	}
 
-	return nil, errors.New("expected ADD, DROP, SET, RENAME, or MODIFY")
+	return nil, errors.New(ErrExpectedAddDropSet, "expected ADD, DROP, SET, RENAME, or MODIFY", nil)
 
 }
 
@@ -1325,14 +1333,14 @@ func (p *Parser) parseAlterUserStmt() (Node, error) {
 	p.consume() // Consume USER
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	alterUserStmt.Username = &Identifier{Value: p.peek(0).value.(string)}
 	p.consume() // Consume username
 
 	if p.peek(0).tokenT != KEYWORD_TOK {
-		return nil, errors.New("expected keyword")
+		return nil, errors.New(ErrExpectedKeyword, "expected keyword", nil)
 	}
 
 	switch p.peek(0).value {
@@ -1344,18 +1352,18 @@ func (p *Parser) parseAlterUserStmt() (Node, error) {
 		case "USERNAME":
 			alterUserStmt.SetType = ALTER_USER_SET_USERNAME
 		default:
-			return nil, errors.New("expected PASSWORD or USERNAME")
+			return nil, errors.New(ErrExpectedPasswordUser, "expected PASSWORD or USERNAME", nil)
 
 		}
 	default:
-		return nil, errors.New("expected SET")
+		return nil, errors.New(ErrExpectedSet, "expected SET", nil)
 	}
 
 	p.consume() // Consume PASSWORD or USERNAME
 
 	if p.peek(0).tokenT != LITERAL_TOK {
 
-		return nil, errors.New("expected literal")
+		return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 	}
 
 	alterUserStmt.Value = &Literal{Value: strings.TrimSuffix(strings.TrimPrefix(p.peek(0).value.(string), "'"), "'")}
@@ -1378,14 +1386,14 @@ func (p *Parser) parseShowStmt() (Node, error) {
 		p.consume() // Consume INDEXES
 
 		if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "FROM" {
-			return nil, errors.New("expected FROM")
+			return nil, errors.New(ErrExpectedFrom, "expected FROM", nil)
 		}
 
 		p.consume() // Consume FROM
 
 		if p.peek(0).tokenT != IDENT_TOK {
 
-			return nil, errors.New("expected identifier")
+			return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 		}
 
 		tableName := p.peek(0).value.(string)
@@ -1401,7 +1409,7 @@ func (p *Parser) parseShowStmt() (Node, error) {
 			p.consume() // Consume ON
 
 			if p.peek(0).tokenT != IDENT_TOK {
-				return nil, errors.New("expected identifier")
+				return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 			}
 
 			tableName := p.peek(0).value.(string)
@@ -1413,7 +1421,7 @@ func (p *Parser) parseShowStmt() (Node, error) {
 		return &ShowStmt{ShowType: SHOW_GRANTS}, nil
 	}
 
-	return nil, errors.New("expected DATABASES, TABLES, or USERS")
+	return nil, errors.New(ErrExpectedDatabases, "expected DATABASES, TABLES, or USERS", nil)
 
 }
 
@@ -1422,7 +1430,7 @@ func (p *Parser) parseRevokeStmt() (Node, error) {
 	p.consume() // Consume REVOKE
 
 	if p.peek(0).tokenT != KEYWORD_TOK {
-		return nil, errors.New("expected keyword")
+		return nil, errors.New(ErrExpectedKeyword, "expected keyword", nil)
 	}
 
 	switch p.peek(0).value {
@@ -1430,7 +1438,7 @@ func (p *Parser) parseRevokeStmt() (Node, error) {
 		return p.parsePrivilegeStmt(true)
 	}
 
-	return nil, errors.New("expected SELECT, INSERT, UPDATE, DELETE")
+	return nil, errors.New(ErrExpectedSelectInsert, "expected SELECT, INSERT, UPDATE, DELETE", nil)
 
 }
 
@@ -1440,7 +1448,7 @@ func (p *Parser) parseGrantStmt() (Node, error) {
 	p.consume() // Consume GRANT
 
 	if p.peek(0).tokenT != KEYWORD_TOK {
-		return nil, errors.New("expected keyword")
+		return nil, errors.New(ErrExpectedKeyword, "expected keyword", nil)
 	}
 
 	switch p.peek(0).value {
@@ -1448,7 +1456,7 @@ func (p *Parser) parseGrantStmt() (Node, error) {
 		return p.parsePrivilegeStmt(false)
 	}
 
-	return nil, errors.New("expected SELECT, INSERT, UPDATE, DELETE")
+	return nil, errors.New(ErrExpectedSelectInsert, "expected SELECT, INSERT, UPDATE, DELETE", nil)
 
 }
 
@@ -1579,7 +1587,7 @@ func (p *Parser) parsePrivilegeStmt(revoke bool) (Node, error) {
 				privilegeDefinition.Actions = append(privilegeDefinition.Actions, PRIV_EXIT)
 			}
 		default:
-			return nil, errors.New("expected privilege")
+			return nil, errors.New(ErrExpectedPrivilege, "expected privilege", nil)
 		}
 
 		p.consume()
@@ -1596,14 +1604,14 @@ func (p *Parser) parsePrivilegeStmt(revoke bool) (Node, error) {
 	if p.peek(0).value != "TO" {
 
 		if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "ON" {
-			return nil, errors.New("expected ON")
+			return nil, errors.New(ErrExpectedOn, "expected ON", nil)
 		}
 
 		p.consume() // Consume ON
 
 		if p.peek(0).tokenT != IDENT_TOK {
 			if p.peek(0).value != "*" {
-				return nil, errors.New("expected identifier or * ")
+				return nil, errors.New(ErrExpectedStarOrTable, "expected identifier or * ", nil)
 			}
 		}
 
@@ -1646,13 +1654,13 @@ func (p *Parser) parsePrivilegeStmt(revoke bool) (Node, error) {
 						privilegeDefinition.Object = &Identifier{Value: db.Value + "." + table.Value}
 						p.consume() // Consume table name
 					} else {
-						return nil, errors.New("expected * or table name after .")
+						return nil, errors.New(ErrExpectedStarOrTableAfterDot, "expected * or table name after .", nil)
 					}
 				} else {
-					return nil, errors.New("expected . after database name")
+					return nil, errors.New(ErrExpectedDotAfterDB, "expected . after database name", nil)
 				}
 			} else {
-				return nil, errors.New("expected database name or *")
+				return nil, errors.New(ErrExpectedDatabaseOrStar, "expected database name or *", nil)
 			}
 		}
 	}
@@ -1660,7 +1668,7 @@ func (p *Parser) parsePrivilegeStmt(revoke bool) (Node, error) {
 	p.consume() // Consume TO
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	user := p.peek(0).value.(string)
@@ -1703,7 +1711,7 @@ func (p *Parser) parseDeleteStmt() (Node, error) {
 	p.consume() // Consume DELETE
 
 	if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "FROM" {
-		return nil, errors.New("expected FROM")
+		return nil, errors.New(ErrExpectedFrom, "expected FROM", nil)
 	}
 
 	p.consume() // Consume FROM
@@ -1742,7 +1750,7 @@ func (p *Parser) parseUpdateStmt() (Node, error) {
 	}
 
 	if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "SET" {
-		return nil, errors.New("expected SET")
+		return nil, errors.New(ErrExpectedSet, "expected SET", nil)
 	}
 
 	p.consume() // Consume SET
@@ -1755,14 +1763,14 @@ func (p *Parser) parseUpdateStmt() (Node, error) {
 	for p.peek(0).value != "WHERE" {
 
 		if p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected identifier")
+			return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 		}
 
 		columnName := p.peek(0).value.(string)
 		p.consume() // Consume column name
 
 		if p.peek(0).tokenT != COMPARISON_TOK || p.peek(0).value != "=" {
-			return nil, errors.New("expected =")
+			return nil, errors.New(ErrExpectedEquals, "expected =", nil)
 		}
 
 		p.consume() // Consume =
@@ -1829,7 +1837,7 @@ func (p *Parser) parseDropStmt() (Node, error) {
 	p.consume() // Consume DROP
 
 	if p.peek(0).tokenT != KEYWORD_TOK {
-		return nil, errors.New("expected keyword")
+		return nil, errors.New(ErrExpectedKeyword, "expected keyword", nil)
 	}
 
 	switch p.peek(0).value {
@@ -1845,7 +1853,7 @@ func (p *Parser) parseDropStmt() (Node, error) {
 		return p.parseDropProcedureStmt()
 	}
 
-	return nil, errors.New("expected DATABASE or TABLE")
+	return nil, errors.New(ErrExpectedDatabaseOrTable, "expected DATABASE or TABLE", nil)
 
 }
 
@@ -1854,7 +1862,7 @@ func (p *Parser) parseDropProcedureStmt() (Node, error) {
 	p.consume() // Consume PROCEDURE
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	procedureName := p.peek(0).value.(string)
@@ -1871,7 +1879,7 @@ func (p *Parser) parseDropUserStmt() (Node, error) {
 	p.consume() // Consume USER
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	user := p.peek(0).value.(string)
@@ -1886,7 +1894,7 @@ func (p *Parser) parseDropUserStmt() (Node, error) {
 // parseTableIdentifier parses a table identifier that can be qualified (database.table) or unqualified (table)
 func (p *Parser) parseTableIdentifier() (*TableIdentifier, error) {
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	databaseName := p.peek(0).value.(string)
@@ -1897,7 +1905,7 @@ func (p *Parser) parseTableIdentifier() (*TableIdentifier, error) {
 		p.consume() // Consume dot
 
 		if p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected identifier after dot")
+			return nil, errors.New(ErrExpectedIdentifierAfterDot, "expected identifier after dot", nil)
 		}
 
 		tableName := p.peek(0).value.(string)
@@ -1905,10 +1913,10 @@ func (p *Parser) parseTableIdentifier() (*TableIdentifier, error) {
 
 		// Validate the identifiers
 		if databaseName == "" {
-			return nil, errors.New("database name cannot be empty")
+			return nil, errors.New(ErrDatabaseNameEmpty, "database name cannot be empty", nil)
 		}
 		if tableName == "" {
-			return nil, errors.New("table name cannot be empty")
+			return nil, errors.New(ErrTableNameEmpty, "table name cannot be empty", nil)
 		}
 
 		return &TableIdentifier{
@@ -1918,7 +1926,7 @@ func (p *Parser) parseTableIdentifier() (*TableIdentifier, error) {
 	} else {
 		// Simple table name (unqualified)
 		if databaseName == "" {
-			return nil, errors.New("table name cannot be empty")
+			return nil, errors.New(ErrTableNameEmpty, "table name cannot be empty", nil)
 		}
 
 		return &TableIdentifier{
@@ -1938,7 +1946,7 @@ func (p *Parser) parseDropTableStmt() (Node, error) {
 		p.consume() // Consume IF
 
 		if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "EXISTS" {
-			return nil, errors.New("expected EXISTS after IF")
+			return nil, errors.New(ErrExpectedExistsAfterIf, "expected EXISTS after IF", nil)
 		}
 		p.consume() // Consume EXISTS
 		ifExists = true
@@ -1961,14 +1969,14 @@ func (p *Parser) parseDropIndexStmt() (Node, error) {
 	p.consume() // Consume INDEX
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	indexName := p.peek(0).value.(string)
 	p.consume() // Consume identifier
 
 	if p.peek(0).value != "ON" {
-		return nil, errors.New("expected ON")
+		return nil, errors.New(ErrExpectedOn, "expected ON", nil)
 	}
 
 	p.consume() // Consume ON
@@ -1991,7 +1999,7 @@ func (p *Parser) parseDropDatabaseStmt() (Node, error) {
 	p.consume() // Consume DATABASE
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	name := p.peek(0).value.(string)
@@ -2012,14 +2020,14 @@ func (p *Parser) parseInsertStmt() (Node, error) {
 	p.consume()
 
 	if p.peek(0).value != "INTO" {
-		return nil, errors.New("expected INTO")
+		return nil, errors.New(ErrExpectedInto, "expected INTO", nil)
 	}
 
 	// Eat INTO
 	p.consume()
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	// Parse table identifier (can be qualified or unqualified)
@@ -2033,13 +2041,13 @@ func (p *Parser) parseInsertStmt() (Node, error) {
 	insertStmt.Values = make([][]interface{}, 0)
 
 	if p.peek(0).tokenT != LPAREN_TOK {
-		return nil, errors.New("expected (")
+		return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 	}
 
 	p.consume() // Consume (
 	for {
 		if p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected identifier")
+			return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 		}
 
 		columnName := p.peek(0).value.(string)
@@ -2052,7 +2060,7 @@ func (p *Parser) parseInsertStmt() (Node, error) {
 		}
 
 		if p.peek(0).tokenT != COMMA_TOK {
-			return nil, errors.New("expected ,")
+			return nil, errors.New(ErrExpectedComma, "expected ,", nil)
 		}
 
 		p.consume() // Consume ,
@@ -2060,7 +2068,7 @@ func (p *Parser) parseInsertStmt() (Node, error) {
 	}
 
 	if p.peek(0).tokenT != RPAREN_TOK {
-		return nil, errors.New("expected )")
+		return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 	}
 
 	p.consume() // Consume )
@@ -2068,18 +2076,18 @@ func (p *Parser) parseInsertStmt() (Node, error) {
 	// Look for VALUES
 
 	if p.peek(0).value != "VALUES" {
-		return nil, errors.New("expected VALUES")
+		return nil, errors.New(ErrExpectedValues, "expected VALUES", nil)
 	}
 
 	p.consume() // Consume VALUES
 
 	if p.peek(0).tokenT != LPAREN_TOK {
-		return nil, errors.New("expected (")
+		return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 	}
 
 	for {
 		if p.peek(0).tokenT != LPAREN_TOK {
-			return nil, errors.New("expected (")
+			return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 		}
 
 		p.consume() // Consume (
@@ -2093,7 +2101,7 @@ func (p *Parser) parseInsertStmt() (Node, error) {
 
 			if p.peek(0).tokenT != LITERAL_TOK && p.peek(0).value != "NULL" && p.peek(0).value != "SYS_DATE" && p.peek(0).value != "SYS_TIME" && p.peek(0).value != "SYS_TIMESTAMP" && p.peek(0).value != "GENERATE_UUID" {
 
-				return nil, errors.New("expected literal or NULL")
+				return nil, errors.New(ErrExpectedLiteralOrNull, "expected literal or NULL", nil)
 
 			}
 
@@ -2112,7 +2120,7 @@ func (p *Parser) parseInsertStmt() (Node, error) {
 			}
 
 			if p.peek(0).tokenT != COMMA_TOK {
-				return nil, errors.New("expected ,")
+				return nil, errors.New(ErrExpectedComma, "expected ,", nil)
 			}
 
 			p.consume() // Consume ,
@@ -2121,7 +2129,7 @@ func (p *Parser) parseInsertStmt() (Node, error) {
 		insertStmt.Values = append(insertStmt.Values, values)
 
 		if p.peek(0).tokenT != RPAREN_TOK {
-			return nil, errors.New("expected )")
+			return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 		}
 
 		p.consume() // Consume )
@@ -2131,7 +2139,7 @@ func (p *Parser) parseInsertStmt() (Node, error) {
 		}
 
 		if p.peek(0).tokenT != COMMA_TOK {
-			return nil, errors.New("expected ,")
+			return nil, errors.New(ErrExpectedComma, "expected ,", nil)
 		}
 
 		p.consume() // Consume ,
@@ -2145,7 +2153,7 @@ func (p *Parser) parseCreateStmt() (Node, error) {
 	p.consume() // Consume CREATE
 
 	if p.peek(0).tokenT != KEYWORD_TOK {
-		return nil, errors.New("expected keyword")
+		return nil, errors.New(ErrExpectedKeyword, "expected keyword", nil)
 	}
 
 	switch strings.ToUpper(p.peek(0).value.(string)) {
@@ -2173,7 +2181,7 @@ func (p *Parser) parseCreateStmt() (Node, error) {
 		return p.parseCreateProcedureStmt()
 	}
 
-	return nil, errors.New("expected DATABASE or TABLE or INDEX")
+	return nil, errors.New(ErrExpectedDatabaseOrTable, "expected DATABASE or TABLE or INDEX", nil)
 
 }
 
@@ -2182,14 +2190,14 @@ func (p *Parser) parseExecStmt() (Node, error) {
 	p.consume() // Consume EXEC
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	procedureName := p.peek(0).value.(string)
 	p.consume() // Consume procedure name
 
 	if p.peek(0).tokenT != LPAREN_TOK {
-		return nil, errors.New("expected (")
+		return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 	}
 
 	p.consume() // Consume (
@@ -2202,7 +2210,7 @@ func (p *Parser) parseExecStmt() (Node, error) {
 		}
 
 		if p.peek(0).tokenT != LITERAL_TOK && p.peek(0).value != "NULL" {
-			return nil, errors.New("expected literal or NULL")
+			return nil, errors.New(ErrExpectedLiteralOrNull, "expected literal or NULL", nil)
 		}
 
 		if p.peek(0).value == "NULL" {
@@ -2218,7 +2226,7 @@ func (p *Parser) parseExecStmt() (Node, error) {
 		}
 
 		if p.peek(0).tokenT != COMMA_TOK {
-			return nil, errors.New("expected ,")
+			return nil, errors.New(ErrExpectedComma, "expected ,", nil)
 		}
 
 		p.consume() // Consume ,
@@ -2238,7 +2246,7 @@ func (p *Parser) parseCreateProcedureStmt() (Node, error) {
 	p.consume() // Consume PROCEDURE
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	name := p.peek(0).value.(string)
@@ -2246,7 +2254,7 @@ func (p *Parser) parseCreateProcedureStmt() (Node, error) {
 	p.consume() // Consume name
 
 	if p.peek(0).tokenT != LPAREN_TOK {
-		return nil, errors.New("expected (")
+		return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 	}
 
 	p.consume() // Consume (
@@ -2263,13 +2271,13 @@ func (p *Parser) parseCreateProcedureStmt() (Node, error) {
 		// Check for @
 		if p.peek(0).value != "@" {
 
-			return nil, errors.New("expected @")
+			return nil, errors.New(ErrExpectedAtSymbol, "expected @", nil)
 		}
 
 		p.consume() // Consume @
 
 		if p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected identifier")
+			return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 		}
 
 		paramName := fmt.Sprintf("@%s", p.peek(0).value.(string))
@@ -2277,7 +2285,7 @@ func (p *Parser) parseCreateProcedureStmt() (Node, error) {
 		p.consume() // Consume name
 
 		if p.peek(0).tokenT != DATATYPE_TOK {
-			return nil, errors.New("expected datatype")
+			return nil, errors.New(ErrExpectedDataType, "expected datatype", nil)
 		}
 
 		dataType := p.peek(0).value.(string)
@@ -2291,7 +2299,7 @@ func (p *Parser) parseCreateProcedureStmt() (Node, error) {
 				p.consume() // Consume (
 
 				if p.peek(0).tokenT != LITERAL_TOK {
-					return nil, errors.New("expected literal")
+					return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 				}
 
 				length := p.peek(0).value.(uint64)
@@ -2299,7 +2307,7 @@ func (p *Parser) parseCreateProcedureStmt() (Node, error) {
 				p.consume() // Consume literal
 
 				if p.peek(0).tokenT != RPAREN_TOK {
-					return nil, errors.New("expected )")
+					return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 				}
 
 				p.consume() // Consume )
@@ -2314,7 +2322,7 @@ func (p *Parser) parseCreateProcedureStmt() (Node, error) {
 				p.consume() // Consume (
 
 				if p.peek(0).tokenT != LITERAL_TOK {
-					return nil, errors.New("expected literal")
+					return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 				}
 
 				precision := p.peek(0).value.(uint64)
@@ -2322,13 +2330,13 @@ func (p *Parser) parseCreateProcedureStmt() (Node, error) {
 				p.consume() // Consume literal
 
 				if p.peek(0).tokenT != COMMA_TOK {
-					return nil, errors.New("expected ,")
+					return nil, errors.New(ErrExpectedComma, "expected ,", nil)
 				}
 
 				p.consume() // Consume ,
 
 				if p.peek(0).tokenT != LITERAL_TOK {
-					return nil, errors.New("expected literal")
+					return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 				}
 
 				scale := p.peek(0).value.(uint64)
@@ -2336,7 +2344,7 @@ func (p *Parser) parseCreateProcedureStmt() (Node, error) {
 				p.consume() // Consume literal
 
 				if p.peek(0).tokenT != RPAREN_TOK {
-					return nil, errors.New("expected )")
+					return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 				}
 
 				p.consume() // Consume )
@@ -2360,7 +2368,7 @@ func (p *Parser) parseCreateProcedureStmt() (Node, error) {
 		}
 
 		if p.peek(0).tokenT != COMMA_TOK {
-			return nil, errors.New("expected ,")
+			return nil, errors.New(ErrExpectedComma, "expected ,", nil)
 		}
 
 		p.consume() // Consume ,
@@ -2368,7 +2376,7 @@ func (p *Parser) parseCreateProcedureStmt() (Node, error) {
 	}
 
 	if p.peek(0).tokenT != RPAREN_TOK {
-		return nil, errors.New("expected )")
+		return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 
 	}
 
@@ -2377,7 +2385,7 @@ func (p *Parser) parseCreateProcedureStmt() (Node, error) {
 	var block []interface{}
 
 	if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "BEGIN" {
-		return nil, errors.New("expected BEGIN")
+		return nil, errors.New(ErrExpectedBegin, "expected BEGIN", nil)
 	}
 
 	p.consume() // Consume BEGIN
@@ -2418,7 +2426,7 @@ func (p *Parser) parseCreateUserStmt() (Node, error) {
 	p.consume()
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	username := p.peek(0).value.(string)
@@ -2428,20 +2436,20 @@ func (p *Parser) parseCreateUserStmt() (Node, error) {
 
 	// Eat IDENTIFIED
 	if p.peek(0).value != "IDENTIFIED" {
-		return nil, errors.New("expected IDENTIFIED")
+		return nil, errors.New(ErrExpectedKeyword, "expected IDENTIFIED", nil)
 	}
 
 	p.consume() // Consume IDENTIFIED
 
 	// Eat BY
 	if p.peek(0).value != "BY" {
-		return nil, errors.New("expected BY")
+		return nil, errors.New(ErrExpectedKeyword, "expected BY", nil)
 	}
 
 	p.consume() // Consume BY
 
 	if p.peek(0).tokenT != LITERAL_TOK {
-		return nil, errors.New("expected literal")
+		return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 	}
 
 	password := p.peek(0).value.(string)
@@ -2471,7 +2479,7 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 	createTableStmt.IfNotExists = ifNotExists
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	// Parse table identifier (can be qualified or unqualified)
@@ -2486,27 +2494,22 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 	}
 
 	if p.peek(0).tokenT != LPAREN_TOK {
-		return nil, errors.New("expected (")
+		return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 	}
 
 	p.consume() // Consume (
 
-	// Fix the column parsing loop - parse until we hit the closing parenthesis
+	// Parse columns until we hit the closing parenthesis
 	for p.peek(0).tokenT != RPAREN_TOK && p.peek(0).tokenT != SEMICOLON_TOK {
 		if p.peek(0).tokenT != IDENT_TOK {
-			// Try to parse table-level constraints
-			err := p.parseTableConstraints(createTableStmt, "")
-			if err != nil {
-				return nil, err
-			}
-			break
+			break // Exit column parsing when we hit non-identifier
 		}
 
 		columnName := p.peek(0).value.(string)
 		p.consume() // Consume column name
 
 		if p.peek(0).tokenT != DATATYPE_TOK {
-			return nil, fmt.Errorf("expected data type, got token type %d with value %v", p.peek(0).tokenT, p.peek(0).value)
+			return nil, errors.Newf(ErrUnexpectedDataType, "expected data type, got token type %d with value %v", p.peek(0).tokenT, p.peek(0).value)
 		}
 
 		dataType := p.peek(0).value.(string)
@@ -2523,14 +2526,14 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 				p.consume() // Consume (
 
 				if p.peek(0).tokenT != LITERAL_TOK {
-					return nil, errors.New("expected literal")
+					return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 				}
 
 				length := p.peek(0).value.(uint64)
 				p.consume() // Consume literal
 
 				if p.peek(0).tokenT != RPAREN_TOK {
-					return nil, errors.New("expected )")
+					return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 				}
 
 				p.consume() // Consume )
@@ -2539,27 +2542,27 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 				p.consume() // Consume (
 
 				if p.peek(0).tokenT != LITERAL_TOK {
-					return nil, errors.New("expected literal")
+					return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 				}
 
 				precision := p.peek(0).value.(uint64)
 				p.consume() // Consume literal
 
 				if p.peek(0).tokenT != COMMA_TOK {
-					return nil, errors.New("expected ,")
+					return nil, errors.New(ErrExpectedComma, "expected ,", nil)
 				}
 
 				p.consume() // Consume ,
 
 				if p.peek(0).tokenT != LITERAL_TOK {
-					return nil, errors.New("expected literal")
+					return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 				}
 
 				scale := p.peek(0).value.(uint64)
 				p.consume() // Consume literal
 
 				if p.peek(0).tokenT != RPAREN_TOK {
-					return nil, errors.New("expected )")
+					return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 				}
 
 				p.consume() // Consume )
@@ -2584,28 +2587,44 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 	if p.peek(0).tokenT == RPAREN_TOK {
 		p.consume() // Consume )
 	} else {
-		return nil, errors.New("expected )")
+		return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 	}
 
-	// Check for ENGINE clause - ENGINE is MANDATORY
-	if p.peek(0).tokenT == KEYWORD_TOK && p.peek(0).value == "ENGINE" {
-		p.consume() // Consume ENGINE
-
-		if p.peek(0).tokenT != COMPARISON_TOK || p.peek(0).value != "=" {
-			return nil, errors.New("expected = after ENGINE")
-		}
-		p.consume() // Consume =
-
-		if p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected engine name after ENGINE =")
+	// Parse additional clauses (STORAGE, PARTITION BY, ORDER BY, SETTINGS, ENGINE)
+	// These are parsed after the column definitions
+	for {
+		// Check if we're at the end of the statement
+		if p.peek(0).tokenT == SEMICOLON_TOK || p.peek(0).tokenT == EOF_TOK {
+			break
 		}
 
-		engineName := p.peek(0).value.(string)
-		createTableStmt.Engine = &Identifier{Value: engineName}
-		p.consume() // Consume engine name
-	} else {
-		// ENGINE clause is mandatory
-		return nil, errors.New("ENGINE clause is required for CREATE TABLE statements")
+		// Try to parse a clause
+		clauseParsed, err := p.parseCreateTableClause(createTableStmt)
+		if err != nil {
+			return nil, err
+		}
+
+		// If no clause was parsed, break to avoid infinite loop
+		if !clauseParsed {
+			break
+		}
+	}
+
+	// Validate that we have either a storage engine or legacy engine
+	if createTableStmt.StorageEngine == nil {
+		return nil, errors.New(ErrTableNameRequired, "STORAGE clause is required for CREATE TABLE statements", nil)
+	}
+
+	// Validate storage engine if specified
+	if createTableStmt.StorageEngine != nil {
+		validEngines := map[string]bool{
+			"filesystem": true,
+			"memory":     true,
+			"s3":         true,
+		}
+		if !validEngines[strings.ToLower(createTableStmt.StorageEngine.Value)] {
+			return nil, errors.New(ErrExpectedIdentifier, fmt.Sprintf("invalid storage engine: %s", createTableStmt.StorageEngine.Value), nil)
+		}
 	}
 
 	return createTableStmt, nil
@@ -2620,7 +2639,7 @@ func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnN
 				p.consume() // Consume CHECK
 
 				if p.peek(0).tokenT != LPAREN_TOK {
-					return errors.New("expected (")
+					return errors.New(ErrExpectedLeftParen, "expected (", nil)
 				}
 
 				p.consume() // Consume (
@@ -2636,7 +2655,7 @@ func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnN
 				}
 
 				if p.peek(0).tokenT != RPAREN_TOK {
-					return errors.New("expected )")
+					return errors.New(ErrExpectedRightParen, "expected )", nil)
 				}
 
 				p.consume() // Consume )
@@ -2645,7 +2664,7 @@ func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnN
 				p.consume() // Consume DEFAULT
 
 				if p.peek(0).tokenT != LITERAL_TOK && p.peek(0).tokenT != KEYWORD_TOK {
-					return errors.New("expected literal or keyword")
+					return errors.New(ErrExpectedLiteral, "expected literal or keyword", nil)
 				}
 
 				defaultValue := p.peek(0).value
@@ -2667,7 +2686,7 @@ func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnN
 			case "PRIMARY":
 				p.consume() // Consume PRIMARY
 				if p.peek(0).value != "KEY" {
-					return errors.New("expected KEY")
+					return errors.New(ErrExpectedKeyword, "expected KEY", nil)
 				}
 
 				p.consume() // Consume KEY
@@ -2684,13 +2703,13 @@ func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnN
 				// FOREIGN KEY (1) REFERENCES Departments(2)
 				// 1, 2 should be the same column identifier
 				if p.peek(0).value != "KEY" {
-					return errors.New("expected KEY")
+					return errors.New(ErrExpectedKeyword, "expected KEY", nil)
 				}
 
 				p.consume() // Consume KEY
 
 				if p.peek(0).tokenT != LPAREN_TOK {
-					return errors.New("expected (")
+					return errors.New(ErrExpectedLeftParen, "expected (", nil)
 				}
 
 				p.consume() // Consume (
@@ -2698,7 +2717,7 @@ func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnN
 				refColumn := ""
 
 				if p.peek(0).tokenT != IDENT_TOK {
-					return errors.New("expected identifier")
+					return errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 				}
 
 				refColumn = p.peek(0).value.(string)
@@ -2706,20 +2725,20 @@ func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnN
 				p.consume() // Consume column name
 
 				if p.peek(0).tokenT != RPAREN_TOK {
-					return errors.New("expected )")
+					return errors.New(ErrExpectedRightParen, "expected )", nil)
 				}
 
 				p.consume() // Consume )
 
 				// Check for REFERENCES keyword
 				if p.peek(0).value != "REFERENCES" {
-					return errors.New("expected REFERENCES")
+					return errors.New(ErrExpectedKeyword, "expected REFERENCES", nil)
 				}
 
 				p.consume() // Consume REFERENCES
 
 				if p.peek(0).tokenT != IDENT_TOK {
-					return errors.New("expected identifier")
+					return errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 				}
 
 				refTable := p.peek(0).value.(string)
@@ -2732,25 +2751,25 @@ func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnN
 				}
 
 				if p.peek(0).tokenT != LPAREN_TOK {
-					return errors.New("expected (")
+					return errors.New(ErrExpectedLeftParen, "expected (", nil)
 				}
 
 				p.consume() // Consume (
 
 				if p.peek(0).tokenT != IDENT_TOK {
-					return errors.New("expected identifier")
+					return errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 				}
 
 				// Check if the column name is the same as the reference column name
 				if p.peek(0).value != refColumn {
-					return errors.New("expected column name to be the same as the reference column name")
+					return errors.New(ErrExpectedIdentifier, "expected column name to be the same as the reference column name", nil)
 				}
 
 			case "NOT":
 				p.consume() // Consume NOT
 
 				if p.peek(0).value != "NULL" {
-					return errors.New("expected NULL")
+					return errors.New(ErrExpectedKeyword, "expected NULL", nil)
 				}
 
 				p.consume() // Consume NULL
@@ -2772,7 +2791,7 @@ func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnN
 
 				// look for (
 				if p.peek(0).tokenT != LPAREN_TOK {
-					return errors.New("expected (")
+					return errors.New(ErrExpectedLeftParen, "expected (", nil)
 				}
 
 				p.consume()
@@ -2786,7 +2805,7 @@ func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnN
 
 				// look for )
 				if p.peek(0).tokenT != RPAREN_TOK {
-					return errors.New("expected )")
+					return errors.New(ErrExpectedRightParen, "expected )", nil)
 				}
 
 				p.consume() // Consume )
@@ -2795,7 +2814,7 @@ func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnN
 				p.consume() // Consume COMPRESS
 
 			default:
-				return errors.New("expected NOT NULL, UNIQUE, SEQUENCE, PRIMARY KEY, FOREIGN KEY, CHECK, DEFAULT, COMPRESS, ENCRYPT")
+				return errors.New(ErrExpectedKeyword, "expected NOT NULL, UNIQUE, SEQUENCE, PRIMARY KEY, FOREIGN KEY, CHECK, DEFAULT, COMPRESS, ENCRYPT", nil)
 			}
 
 		}
@@ -2816,14 +2835,14 @@ func (p *Parser) parseCreateIndexStmt() (Node, error) {
 	p.consume()
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	indexName := p.peek(0).value.(string)
 	p.consume() // Consume index name
 
 	if p.peek(0).value != "ON" {
-		return nil, errors.New("expected ON")
+		return nil, errors.New(ErrExpectedOn, "expected ON", nil)
 	}
 
 	p.consume() // Consume ON
@@ -2835,7 +2854,7 @@ func (p *Parser) parseCreateIndexStmt() (Node, error) {
 	}
 
 	if p.peek(0).tokenT != LPAREN_TOK {
-		return nil, errors.New("expected (")
+		return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 
 	}
 
@@ -2847,7 +2866,7 @@ func (p *Parser) parseCreateIndexStmt() (Node, error) {
 
 	for {
 		if p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected identifier")
+			return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 		}
 
 		columnName := p.peek(0).value.(string)
@@ -2860,7 +2879,7 @@ func (p *Parser) parseCreateIndexStmt() (Node, error) {
 		}
 
 		if p.peek(0).tokenT != COMMA_TOK {
-			return nil, errors.New("expected ,")
+			return nil, errors.New(ErrExpectedComma, "expected ,", nil)
 		}
 
 		p.consume() // Consume ,
@@ -2868,7 +2887,7 @@ func (p *Parser) parseCreateIndexStmt() (Node, error) {
 	}
 
 	if p.peek(0).tokenT != RPAREN_TOK {
-		return nil, errors.New("expected )")
+		return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 	}
 
 	p.consume() // Consume )
@@ -2888,7 +2907,7 @@ func (p *Parser) parseCreateDatabaseStmt() (Node, error) {
 	}
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	name := p.peek(0).value.(string)
@@ -2905,7 +2924,7 @@ func (p *Parser) parseUseStmt() (Node, error) {
 	p.consume() // Consume USE
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	name := p.peek(0).value.(string)
@@ -2964,7 +2983,7 @@ func (p *Parser) parseSelectStmt() (Node, error) {
 	// Look for GROUP BY
 	if p.peek(0).value == "GROUP" {
 		if p.peek(1).value != "BY" {
-			return nil, errors.New("expected BY")
+			return nil, errors.New(ErrExpectedKeyword, "expected BY", nil)
 
 		} else {
 			p.consume()
@@ -2993,7 +3012,7 @@ func (p *Parser) parseSelectStmt() (Node, error) {
 	// Look for ORDER BY
 	if p.peek(0).value == "ORDER" {
 		if p.peek(1).value != "BY" {
-			return nil, errors.New("expected BY")
+			return nil, errors.New(ErrExpectedKeyword, "expected BY", nil)
 
 		} else {
 
@@ -3046,7 +3065,7 @@ func (p *Parser) parseLimitClause() (*LimitClause, error) {
 	p.consume()
 
 	if p.peek(0).tokenT != LITERAL_TOK {
-		return nil, errors.New("expected literal")
+		return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 	}
 
 	count := p.peek(0).value.(uint64)
@@ -3058,7 +3077,7 @@ func (p *Parser) parseLimitClause() (*LimitClause, error) {
 		p.consume()
 
 		if p.peek(0).tokenT != LITERAL_TOK {
-			return nil, errors.New("expected literal")
+			return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 		}
 
 		offset := p.peek(0).value.(uint64)
@@ -3091,7 +3110,7 @@ func (p *Parser) parseOrderByList(orderByClause *OrderByClause) error {
 	p.consume() // Consume ORDER
 
 	if p.peek(0).value != "BY" {
-		return errors.New("expected BY")
+		return errors.New(ErrExpectedKeyword, "expected BY", nil)
 	}
 
 	p.consume() // Consume BY
@@ -3303,7 +3322,7 @@ func (p *Parser) parseSearchCondition() (interface{}, error) {
 						return nil, err
 					}
 				default:
-					return nil, errors.New("expected predicate or logical expression")
+					return nil, errors.New(ErrExpectedKeyword, "expected predicate or logical expression", nil)
 
 				}
 			}
@@ -3427,7 +3446,7 @@ func (p *Parser) parseSearchCondition() (interface{}, error) {
 
 		}
 	} else {
-		return nil, errors.New("expected predicate or logical expression")
+		return nil, errors.New(ErrExpectedKeyword, "expected predicate or logical expression", nil)
 	}
 
 	if p.peek(0).tokenT == KEYWORD_TOK {
@@ -3500,7 +3519,7 @@ func (p *Parser) parseIsExpr(left *ValueExpression) (*IsPredicate, error) {
 		p.consume()
 
 		if p.peek(0).value != "NULL" {
-			return nil, errors.New("expected NULL")
+			return nil, errors.New(ErrExpectedKeyword, "expected NULL", nil)
 		}
 
 		p.consume()
@@ -3512,7 +3531,7 @@ func (p *Parser) parseIsExpr(left *ValueExpression) (*IsPredicate, error) {
 
 	}
 
-	return nil, errors.New("expected NULL or NOT NULL")
+	return nil, errors.New(ErrExpectedKeyword, "expected NULL or NOT NULL", nil)
 
 }
 
@@ -4002,7 +4021,7 @@ func (p *Parser) parseValueExpression() (*ValueExpression, error) {
 				}, nil
 			}
 		default:
-			return nil, errors.New("expected keyword")
+			return nil, errors.New(ErrExpectedKeyword, "expected keyword", nil)
 		}
 
 	case AT_TOK:
@@ -4063,7 +4082,7 @@ func (p *Parser) parseValueExpression() (*ValueExpression, error) {
 		}, nil
 	default:
 
-		return nil, errors.New("expected column spec or aggregate function or subquery")
+		return nil, errors.New(ErrExpectedKeyword, "expected column spec or aggregate function or subquery", nil)
 	}
 
 }
@@ -4155,13 +4174,13 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 		p.consume() // Consume SUBSTRING
 
 		if p.peek(0).tokenT != LPAREN_TOK {
-			return nil, errors.New("expected (")
+			return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 		}
 
 		p.consume() // Consume (
 
 		if p.peek(0).tokenT != LITERAL_TOK && p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected literal or identifier")
+			return nil, errors.New(ErrExpectedLiteral, "expected literal or identifier", nil)
 		}
 
 		// Parse value expression
@@ -4174,13 +4193,13 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for ,
 		if p.peek(0).value != "," {
-			return nil, errors.New("expected ,")
+			return nil, errors.New(ErrExpectedComma, "expected ,", nil)
 		}
 
 		p.consume() // Consume ,
 
 		if p.peek(0).tokenT != LITERAL_TOK {
-			return nil, errors.New("expected literal")
+			return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 		}
 
 		// Parse literal
@@ -4191,13 +4210,13 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for ,
 		if p.peek(0).value != "," {
-			return nil, errors.New("expected ,")
+			return nil, errors.New(ErrExpectedComma, "expected ,", nil)
 		}
 
 		p.consume() // Consume ,
 
 		if p.peek(0).tokenT != LITERAL_TOK {
-			return nil, errors.New("expected literal")
+			return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 		}
 
 		leng, err := p.parseLiteral()
@@ -4221,7 +4240,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for LPAREN
 		if p.peek(0).tokenT != LPAREN_TOK {
-			return nil, errors.New("expected (")
+			return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 		}
 
 		// Consume LPAREN
@@ -4249,7 +4268,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for RPAREN
 		if p.peek(0).tokenT != RPAREN_TOK {
-			return nil, errors.New("expected )")
+			return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 		}
 
 		p.consume() // Consume RPAREN
@@ -4263,7 +4282,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for LPAREN
 		if p.peek(0).tokenT != LPAREN_TOK {
-			return nil, errors.New("expected (")
+			return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 		}
 
 		// Consume LPAREN
@@ -4271,7 +4290,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for literal or identifier
 		if p.peek(0).tokenT != LITERAL_TOK && p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected literal or identifier")
+			return nil, errors.New(ErrExpectedLiteral, "expected literal or identifier", nil)
 		}
 
 		// Parse literal or identifier
@@ -4283,14 +4302,14 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// look for IN
 		if p.peek(0).value != "IN" {
-			return nil, errors.New("expected IN")
+			return nil, errors.New(ErrExpectedKeyword, "expected IN", nil)
 
 		}
 
 		p.consume() // Consume IN
 
 		if p.peek(0).tokenT != LITERAL_TOK && p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected literal or identifier")
+			return nil, errors.New(ErrExpectedLiteral, "expected literal or identifier", nil)
 		}
 
 		inExpr, err := p.parseValueExpression()
@@ -4304,7 +4323,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for RPAREN
 		if p.peek(0).tokenT != RPAREN_TOK {
-			return nil, errors.New("expected )")
+			return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 		}
 
 		// Consume RPAREN
@@ -4318,7 +4337,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for LPAREN
 		if p.peek(0).tokenT != LPAREN_TOK {
-			return nil, errors.New("expected (")
+			return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 		}
 
 		// Consume LPAREN
@@ -4326,7 +4345,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for literal or identifier
 		if p.peek(0).tokenT != LITERAL_TOK && p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected literal or identifier")
+			return nil, errors.New(ErrExpectedLiteral, "expected literal or identifier", nil)
 		}
 
 		// Parse literal or identifier
@@ -4339,7 +4358,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for RPAREN
 		if p.peek(0).tokenT != RPAREN_TOK {
-			return nil, errors.New("expected )")
+			return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 		}
 
 		// Consume RPAREN
@@ -4353,7 +4372,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for LPAREN
 		if p.peek(0).tokenT != LPAREN_TOK {
-			return nil, errors.New("expected (")
+			return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 		}
 
 		// Consume LPAREN
@@ -4361,7 +4380,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for literal or identifier
 		if p.peek(0).tokenT != LITERAL_TOK && p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected literal or identifier")
+			return nil, errors.New(ErrExpectedLiteral, "expected literal or identifier", nil)
 		}
 
 		// Parse literal or identifier
@@ -4374,7 +4393,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for RPAREN
 		if p.peek(0).tokenT != RPAREN_TOK {
-			return nil, errors.New("expected )")
+			return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 		}
 
 		// Consume RPAREN
@@ -4388,7 +4407,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for LPAREN
 		if p.peek(0).tokenT != LPAREN_TOK {
-			return nil, errors.New("expected (")
+			return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 		}
 
 		// Consume LPAREN
@@ -4396,7 +4415,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for literal or identifier
 		if p.peek(0).tokenT != LITERAL_TOK && p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected literal or identifier")
+			return nil, errors.New(ErrExpectedLiteral, "expected literal or identifier", nil)
 		}
 
 		// Parse literal or identifier
@@ -4409,7 +4428,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for RPAREN
 		if p.peek(0).tokenT != RPAREN_TOK {
-			return nil, errors.New("expected )")
+			return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 		}
 
 		// Consume RPAREN
@@ -4423,7 +4442,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for LPAREN
 		if p.peek(0).tokenT != LPAREN_TOK {
-			return nil, errors.New("expected (")
+			return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 		}
 
 		// Consume LPAREN
@@ -4431,7 +4450,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for literal or identifier
 		if p.peek(0).tokenT != LITERAL_TOK && p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected literal or identifier")
+			return nil, errors.New(ErrExpectedLiteral, "expected literal or identifier", nil)
 		}
 
 		// Parse literal or identifier
@@ -4444,7 +4463,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for RPAREN
 		if p.peek(0).tokenT != RPAREN_TOK {
-			return nil, errors.New("expected )")
+			return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 		}
 
 		// Consume RPAREN
@@ -4458,7 +4477,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for LPAREN
 		if p.peek(0).tokenT != LPAREN_TOK {
-			return nil, errors.New("expected (")
+			return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 		}
 
 		// Consume LPAREN
@@ -4466,7 +4485,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for literal or identifier
 		if p.peek(0).tokenT != LITERAL_TOK && p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected literal or identifier")
+			return nil, errors.New(ErrExpectedLiteral, "expected literal or identifier", nil)
 		}
 
 		// Parse literal or identifier
@@ -4479,7 +4498,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for RPAREN
 		if p.peek(0).tokenT != RPAREN_TOK {
-			return nil, errors.New("expected )")
+			return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 		}
 
 		// Consume RPAREN
@@ -4493,7 +4512,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for LPAREN
 		if p.peek(0).tokenT != LPAREN_TOK {
-			return nil, errors.New("expected (")
+			return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 		}
 
 		// Consume LPAREN
@@ -4501,7 +4520,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for literal or identifier
 		if p.peek(0).tokenT != LITERAL_TOK && p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New("expected literal or identifier")
+			return nil, errors.New(ErrExpectedLiteral, "expected literal or identifier", nil)
 		}
 
 		// Parse literal or identifier
@@ -4514,7 +4533,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for RPAREN
 		if p.peek(0).tokenT != RPAREN_TOK {
-			return nil, errors.New("expected )")
+			return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 		}
 
 		// Consume RPAREN
@@ -4529,7 +4548,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for LPAREN
 		if p.peek(0).tokenT != LPAREN_TOK {
-			return nil, errors.New("expected (")
+			return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 		}
 
 		// Consume LPAREN
@@ -4546,14 +4565,14 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for AS
 		if p.peek(0).value != "AS" {
-			return nil, errors.New("expected AS")
+			return nil, errors.New(ErrExpectedKeyword, "expected AS", nil)
 
 		}
 
 		p.consume() // Consume AS
 
 		if p.peek(0).tokenT != DATATYPE_TOK {
-			return nil, errors.New("expected keyword")
+			return nil, errors.New(ErrExpectedKeyword, "expected keyword", nil)
 		}
 
 		castFunc.DataType = &Identifier{
@@ -4564,7 +4583,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 
 		// Look for RPAREN
 		if p.peek(0).tokenT != RPAREN_TOK {
-			return nil, errors.New("expected )")
+			return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 		}
 
 		p.consume() // Consume RPAREN
@@ -4576,7 +4595,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 		p.consume() // Consume COALESCE
 
 		if p.peek(0).tokenT != LPAREN_TOK {
-			return nil, errors.New("expected (")
+			return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 		}
 
 		p.consume() // Consume LPAREN
@@ -4613,7 +4632,7 @@ func (p *Parser) parseSystemFunc() (interface{}, error) {
 	case "GENERATE_UUID":
 		return &GenUUID{}, nil
 	default:
-		return nil, errors.New("expected system function")
+		return nil, errors.New(ErrExpectedKeyword, "expected system function", nil)
 
 	}
 }
@@ -4650,7 +4669,7 @@ func (p *Parser) parseColumnSpecification() (*ColumnSpecification, error) {
 // parseIdentifier parses an identifier
 func (p *Parser) parseIdentifier() (*Identifier, error) {
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New("expected identifier")
+		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
 	}
 
 	ident := &Identifier{
@@ -4671,7 +4690,7 @@ func (p *Parser) parseAggregateFunc() (*AggregateFunc, error) {
 	p.consume()
 
 	if p.peek(0).tokenT != LPAREN_TOK {
-		return nil, errors.New("expected (")
+		return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
 	}
 
 	p.consume() // Consume (
@@ -4690,7 +4709,7 @@ func (p *Parser) parseAggregateFunc() (*AggregateFunc, error) {
 
 				aggFunc.Args = append(aggFunc.Args, innerAggFunc)
 			default:
-				return nil, errors.New("expected aggregate function")
+				return nil, errors.New(ErrExpectedKeyword, "expected aggregate function", nil)
 			}
 		} else if p.peek(0).tokenT == LPAREN_TOK {
 			// Parse binary expression
@@ -4725,13 +4744,13 @@ func (p *Parser) parseAggregateFunc() (*AggregateFunc, error) {
 			p.consume()
 
 		} else {
-			return nil, errors.New("expected aggregate function, binary expression, or column spec")
+			return nil, errors.New(ErrExpectedKeyword, "expected aggregate function, binary expression, or column spec", nil)
 		}
 
 	}
 
 	if p.peek(0).tokenT != RPAREN_TOK {
-		return nil, errors.New("expected )")
+		return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 	}
 
 	p.consume()
@@ -4789,7 +4808,7 @@ func (p *Parser) parsePrimaryExpr() (interface{}, error) {
 		}
 
 		if p.peek(0).tokenT != RPAREN_TOK {
-			return nil, errors.New("expected )")
+			return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
 		}
 
 		p.consume()
@@ -4825,17 +4844,17 @@ func (p *Parser) parseUnaryExpr() (interface{}, error) {
 		case "AVG", "COUNT", "MAX", "MIN", "SUM":
 			return p.parseAggregateFunc()
 		default:
-			return nil, errors.New("expected aggregate function")
+			return nil, errors.New(ErrExpectedKeyword, "expected aggregate function", nil)
 		}
 	default:
-		return nil, errors.New("expected literal or column spec")
+		return nil, errors.New(ErrExpectedLiteral, "expected literal or column spec", nil)
 	}
 }
 
 // parseLiteral parses a literal
 func (p *Parser) parseLiteral() (interface{}, error) {
 	if p.peek(0).tokenT != LITERAL_TOK {
-		return nil, errors.New("expected literal")
+		return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
 	}
 
 	lit := p.peek(0).value
@@ -4877,4 +4896,239 @@ func (p *Parser) parseHavingClause() (*HavingClause, error) {
 	}
 
 	return havingClause, nil
+}
+
+// parseCreateTableClause parses additional clauses after the column definitions
+// Returns true if a clause was parsed, false if no clause was found, error if parsing failed
+func (p *Parser) parseCreateTableClause(createTableStmt *CreateTableStmt) (bool, error) {
+	if p.peek(0).tokenT != KEYWORD_TOK {
+		return false, nil // Not a keyword, end of clauses
+	}
+
+	clause := strings.ToUpper(p.peek(0).value.(string))
+
+	switch clause {
+	case "STORAGE":
+		return true, p.parseStorageClause(createTableStmt)
+	case "PARTITION":
+		return true, p.parsePartitionByClause(createTableStmt)
+	case "ORDER":
+		return true, p.parseCreateTableOrderByClause(createTableStmt)
+	case "SETTINGS":
+		return true, p.parseSettingsClause(createTableStmt)
+	default:
+		return false, nil // Unknown clause, end of parsing
+	}
+}
+
+// parseStorageClause parses the STORAGE clause
+func (p *Parser) parseStorageClause(createTableStmt *CreateTableStmt) error {
+	p.consume() // Consume STORAGE
+
+	if p.peek(0).tokenT != IDENT_TOK {
+		return errors.New(ErrExpectedIdentifier, "expected storage engine name after STORAGE", nil)
+	}
+
+	storageEngine := p.peek(0).value.(string)
+	createTableStmt.StorageEngine = &Identifier{Value: storageEngine}
+	p.consume() // Consume storage engine name
+
+	return nil
+}
+
+// parsePartitionByClause parses the PARTITION BY clause
+func (p *Parser) parsePartitionByClause(createTableStmt *CreateTableStmt) error {
+	p.consume() // Consume PARTITION
+
+	if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "BY" {
+		return errors.New(ErrExpectedKeyword, "expected BY after PARTITION", nil)
+	}
+
+	p.consume() // Consume BY
+
+	if p.peek(0).tokenT != LPAREN_TOK {
+		return errors.New(ErrExpectedLeftParen, "expected ( after PARTITION BY", nil)
+	}
+
+	p.consume() // Consume (
+
+	// Parse partition columns
+	var partitionColumns []*Identifier
+
+	for {
+		if p.peek(0).tokenT == RPAREN_TOK {
+			break
+		}
+
+		if p.peek(0).tokenT != IDENT_TOK {
+			return errors.New(ErrExpectedIdentifier, "expected column name in PARTITION BY", nil)
+		}
+
+		columnName := p.peek(0).value.(string)
+		partitionColumns = append(partitionColumns, &Identifier{Value: columnName})
+		p.consume() // Consume column name
+
+		if p.peek(0).tokenT == RPAREN_TOK {
+			break
+		}
+
+		if p.peek(0).tokenT != COMMA_TOK {
+			return errors.New(ErrExpectedComma, "expected , between partition columns", nil)
+		}
+
+		p.consume() // Consume comma
+	}
+
+	p.consume() // Consume )
+
+	createTableStmt.PartitionBy = partitionColumns
+	return nil
+}
+
+// parseCreateTableOrderByClause parses the ORDER BY clause for CREATE TABLE
+func (p *Parser) parseCreateTableOrderByClause(createTableStmt *CreateTableStmt) error {
+	p.consume() // Consume ORDER
+
+	if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "BY" {
+		return errors.New(ErrExpectedKeyword, "expected BY after ORDER", nil)
+	}
+
+	p.consume() // Consume BY
+
+	if p.peek(0).tokenT != LPAREN_TOK {
+		return errors.New(ErrExpectedLeftParen, "expected ( after ORDER BY", nil)
+	}
+
+	p.consume() // Consume (
+
+	// Parse order columns
+	var orderColumns []*Identifier
+
+	for {
+		if p.peek(0).tokenT == RPAREN_TOK {
+			break
+		}
+
+		if p.peek(0).tokenT != IDENT_TOK {
+			return errors.New(ErrExpectedIdentifier, "expected column name in ORDER BY", nil)
+		}
+
+		columnName := p.peek(0).value.(string)
+		orderColumns = append(orderColumns, &Identifier{Value: columnName})
+		p.consume() // Consume column name
+
+		if p.peek(0).tokenT == RPAREN_TOK {
+			break
+		}
+
+		if p.peek(0).tokenT != COMMA_TOK {
+			return errors.New(ErrExpectedComma, "expected , between order columns", nil)
+		}
+
+		p.consume() // Consume comma
+	}
+
+	p.consume() // Consume )
+
+	createTableStmt.OrderBy = orderColumns
+	return nil
+}
+
+// parseSettingsClause parses the SETTINGS clause
+func (p *Parser) parseSettingsClause(createTableStmt *CreateTableStmt) error {
+	p.consume() // Consume SETTINGS
+
+	// Initialize Settings map if not already done
+	if createTableStmt.Settings == nil {
+		createTableStmt.Settings = make(map[string]interface{})
+	}
+
+	// Parse settings as key=value pairs directly using tokens
+	// Format: key1=value1,key2=value2
+
+	for {
+		// Check for end of statement
+		if p.peek(0).tokenT == SEMICOLON_TOK || p.peek(0).tokenT == EOF_TOK {
+			break
+		}
+
+		// Check if this is the start of another clause
+		if p.peek(0).tokenT == KEYWORD_TOK {
+			nextKeyword := strings.ToUpper(p.peek(0).value.(string))
+			if nextKeyword == "STORAGE" || nextKeyword == "PARTITION" || nextKeyword == "ORDER" {
+				break
+			}
+		}
+
+		// Parse key=value pair
+		if p.peek(0).tokenT != IDENT_TOK {
+			break
+		}
+
+		key := p.peek(0).value.(string)
+		p.consume() // Consume key
+
+		if p.peek(0).tokenT != COMPARISON_TOK || p.peek(0).value != "=" {
+			return errors.New(ErrExpectedEquals, "expected = after setting key", nil)
+		}
+		p.consume() // Consume =
+
+		// Parse value (can be literal or identifier)
+		var value interface{}
+		if p.peek(0).tokenT == LITERAL_TOK {
+			rawValue := p.peek(0).value
+			// Convert uint64 to int for consistency
+			if uint64Val, ok := rawValue.(uint64); ok {
+				value = int(uint64Val)
+			} else {
+				value = rawValue
+			}
+		} else if p.peek(0).tokenT == IDENT_TOK {
+			valueStr := p.peek(0).value.(string)
+			// Try to convert to appropriate type
+			if parsedValue, err := p.parseSettingValue(valueStr); err == nil {
+				value = parsedValue
+			} else {
+				value = valueStr
+			}
+		} else {
+			return errors.New(ErrExpectedLiteral, "expected value after =", nil)
+		}
+		p.consume() // Consume value
+
+		createTableStmt.Settings[key] = value
+
+		// Check for comma separator
+		if p.peek(0).tokenT == COMMA_TOK {
+			p.consume() // Consume comma
+		} else {
+			break
+		}
+	}
+
+	return nil
+}
+
+// parseSettingValue converts a string value to appropriate type
+func (p *Parser) parseSettingValue(valueStr string) (any, error) {
+	// Try boolean
+	if valueStr == "true" {
+		return true, nil
+	}
+	if valueStr == "false" {
+		return false, nil
+	}
+
+	// Try integer
+	if intVal, err := strconv.Atoi(valueStr); err == nil {
+		return intVal, nil
+	}
+
+	// Try float
+	if floatVal, err := strconv.ParseFloat(valueStr, 64); err == nil {
+		return floatVal, nil
+	}
+
+	// Default to string
+	return valueStr, nil
 }

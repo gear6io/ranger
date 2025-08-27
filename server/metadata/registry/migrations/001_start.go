@@ -31,7 +31,7 @@ func (m *Migration001) Name() string {
 
 // Description returns the migration description
 func (m *Migration001) Description() string {
-	return "Initial production-ready schema with proper normalization and foreign keys"
+	return "Initial production-ready schema with enhanced TableMetadata and proper normalization"
 }
 
 // Up runs the migration
@@ -77,7 +77,7 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 
 	// Create table-related metadata tables
 
-	// Table metadata table (schema and engine info)
+	// Table metadata table (enhanced schema and engine info)
 	if _, err := tx.NewCreateTable().
 		Model((*regtypes.TableMetadata)(nil)).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
@@ -86,9 +86,13 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 		return errors.New(MigrationTableCreationFailed, "failed to create table_metadata table", err)
 	}
 
-	// Table metadata indexes
+	// Table metadata indexes (enhanced)
 	tableMetadataIndexes := []string{
 		`CREATE INDEX IF NOT EXISTS idx_table_metadata_table ON table_metadata(table_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_table_metadata_uuid ON table_metadata(table_uuid)`,
+		`CREATE INDEX IF NOT EXISTS idx_table_metadata_storage ON table_metadata(storage_engine)`,
+		`CREATE INDEX IF NOT EXISTS idx_table_metadata_partition ON table_metadata(partition_strategy)`,
+		`CREATE INDEX IF NOT EXISTS idx_table_metadata_validation ON table_metadata(strict_validation, strict_compliance)`,
 	}
 
 	// Table files table (file tracking)
@@ -121,7 +125,7 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_table_partitions_table ON table_partitions(table_id)`,
 	}
 
-	// Table columns table (column definitions)
+	// Table columns table (column definitions - will store schema)
 	if _, err := tx.NewCreateTable().
 		Model((*regtypes.TableColumn)(nil)).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
@@ -243,7 +247,7 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	if _, err := tx.ExecContext(ctx, `
 			INSERT OR IGNORE INTO schema_versions (version, name, description, applied_at, created_at)
 			VALUES (?, ?, ?, ?, ?)
-		`, 1, "production_schema_v1", "Initial production-ready schema with proper normalization and foreign keys", now, now); err != nil {
+		`, 1, "production_schema_v1_enhanced", "Initial production-ready schema with enhanced TableMetadata and proper normalization", now, now); err != nil {
 		return errors.New(MigrationDataInsertionFailed, "failed to insert schema version", err)
 	}
 

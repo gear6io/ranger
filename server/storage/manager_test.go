@@ -56,18 +56,23 @@ func TestStorageManagerCreateTableWithEngines(t *testing.T) {
 	t.Run("CreateDatabase", func(t *testing.T) {
 		// Create a test database using metadata manager with unique name
 		dbName := fmt.Sprintf("testdb_create_%d", timestamp)
-		err := storageMgr.GetMetadataManager().CreateDatabase(ctx, dbName)
-		assert.NoError(t, err, "Should create database successfully")
+		// Test database creation
+		err := storageMgr.CreateDatabase(ctx, dbName)
+		assert.NoError(t, err)
 
-		// Verify database was created
-		exists := storageMgr.GetMetadataManager().DatabaseExists(ctx, dbName)
-		assert.True(t, exists, "Database should exist after creation")
+		// Test database existence
+		exists := storageMgr.DatabaseExists(ctx, dbName)
+		assert.True(t, exists)
+
+		// Test duplicate database creation (should fail)
+		err = storageMgr.CreateDatabase(ctx, dbName)
+		assert.Error(t, err)
 	})
 
 	t.Run("CreateTableWithMemoryEngine", func(t *testing.T) {
 		// Create database first
 		dbName := fmt.Sprintf("testdb_memory_%d", timestamp)
-		err := storageMgr.GetMetadataManager().CreateDatabase(ctx, dbName)
+		err := storageMgr.CreateDatabase(ctx, dbName)
 		require.NoError(t, err, "Should create database successfully")
 
 		// Create table with MEMORY storage engine
@@ -78,15 +83,16 @@ func TestStorageManagerCreateTableWithEngines(t *testing.T) {
 		assert.NoError(t, err, "Should create table with MEMORY engine")
 
 		// Verify table was created
-		tables, err := storageMgr.GetMetadataManager().ListTables(ctx, dbName)
-		assert.NoError(t, err, "Should list tables successfully")
-		assert.Contains(t, tables, "my_memory_table", "Table should exist in metadata")
+		tables, err := storageMgr.ListTablesForDatabase(ctx, dbName)
+		assert.NoError(t, err)
+		assert.Len(t, tables, 1)
+		assert.Contains(t, tables, "my_memory_table")
 	})
 
 	t.Run("CreateTableWithFilesystemEngine", func(t *testing.T) {
 		// Create database first
 		dbName := fmt.Sprintf("testdb_filesystem_%d", timestamp)
-		err := storageMgr.GetMetadataManager().CreateDatabase(ctx, dbName)
+		err := storageMgr.CreateDatabase(ctx, dbName)
 		require.NoError(t, err, "Should create database successfully")
 
 		// Create table with FILESYSTEM storage engine
@@ -97,15 +103,16 @@ func TestStorageManagerCreateTableWithEngines(t *testing.T) {
 		assert.NoError(t, err, "Should create table with FILESYSTEM engine")
 
 		// Verify table was created
-		tables, err := storageMgr.GetMetadataManager().ListTables(ctx, dbName)
-		assert.NoError(t, err, "Should list tables successfully")
-		assert.Contains(t, tables, "my_filesystem_table", "Table should exist in metadata")
+		tables, err := storageMgr.ListTablesForDatabase(ctx, dbName)
+		assert.NoError(t, err)
+		assert.Len(t, tables, 1)
+		assert.Contains(t, tables, "my_filesystem_table")
 	})
 
 	t.Run("TestTableDataOperations", func(t *testing.T) {
 		// Create database and table for data operations test
 		dbName := fmt.Sprintf("testdb_data_%d", timestamp)
-		err := storageMgr.GetMetadataManager().CreateDatabase(ctx, dbName)
+		err := storageMgr.CreateDatabase(ctx, dbName)
 		require.NoError(t, err, "Should create database successfully")
 
 		// Create table with MEMORY storage engine for data ops test

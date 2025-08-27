@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/gear6io/ranger/server/protocols/native/middleware"
 	"github.com/gear6io/ranger/server/protocols/native/protocol"
 	"github.com/gear6io/ranger/server/protocols/native/protocol/signals"
@@ -215,10 +216,11 @@ func (h *ConnectionHandler) Handle() error {
 			}
 		default:
 			h.logger.Warn().Uint8("message_type", uint8(signal.Type())).Msg("Unknown message type")
-			if err := h.sendException(fmt.Sprintf("Unknown message type: %d", signal.Type())); err != nil {
+			if err := h.sendException(fmt.Errorf("Unknown message type: %d", signal.Type())); err != nil {
 				h.logger.Error().Err(err).Msg("Failed to send exception for unknown message type")
 				return err
 			}
+			return fmt.Errorf("unknown message type: %d", signal.Type())
 		}
 	}
 }
@@ -252,8 +254,8 @@ func (h *ConnectionHandler) processDataBlock(block *DataBlock) error {
 }
 
 // sendException sends exception response
-func (h *ConnectionHandler) sendException(errorMsg string) error {
-	return h.sendExceptionSignal(errorMsg)
+func (h *ConnectionHandler) sendException(err error) error {
+	return h.sendExceptionSignal(err)
 }
 
 // payloadReader is a helper to read from a byte slice
@@ -361,7 +363,7 @@ func (h *ConnectionHandler) handleClientQuerySignal(ctx context.Context, query *
 	result, err := h.queryEngine.ExecuteQuery(ctx, queryCtx)
 	if err != nil {
 		h.logger.Error().Err(err).Str("query", query.Query).Msg("Query execution failed")
-		return h.sendExceptionSignal(fmt.Sprintf("Query execution failed: %v", err))
+		return h.sendExceptionSignal(err)
 	}
 
 	// Send query results
@@ -398,7 +400,7 @@ func (h *ConnectionHandler) handleClientCancelSignal(cancel *signals.ClientCance
 	// Try to cancel the query using the query engine
 	if err := h.queryEngine.CancelQuery(cancel.QueryID); err != nil {
 		h.logger.Warn().Err(err).Str("query_id", cancel.QueryID).Msg("Failed to cancel query")
-		return h.sendSimpleAcknowledgment(fmt.Sprintf("Query %s cancellation failed: %v", cancel.QueryID, err))
+		return h.sendExceptionSignal(fmt.Errorf("Query %s cancellation failed: %v", cancel.QueryID, err))
 	}
 
 	// Send acknowledgment
@@ -418,8 +420,21 @@ func (h *ConnectionHandler) sendServerHelloSignal() error {
 }
 
 // sendExceptionSignal sends server exception using unified protocol
-func (h *ConnectionHandler) sendExceptionSignal(errorMsg string) error {
-	exception := signals.NewServerException(1001, errorMsg, "")
+func (h *ConnectionHandler) sendExceptionSignal(err error) error {
+	var errorCode string
+	var errorMessage string
+
+	// Extract error code from internal error
+	if rangerErr, ok := err.(*errors.Error); ok {
+		errorCode = rangerErr.Code.String()
+		errorMessage = rangerErr.Message
+	} else {
+		// Fallback for non-internal errors
+		errorCode = "common.internal"
+		errorMessage = err.Error()
+	}
+
+	exception := signals.NewServerException(errorCode, errorMessage, "")
 
 	message, err := h.codec.EncodeMessage(exception)
 	if err != nil {

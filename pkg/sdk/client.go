@@ -930,7 +930,7 @@ func (c *connection) query(ctx context.Context, queryStr string, args ...interfa
 		case protocol.ServerException:
 			// Handle exception signal
 			exception := signal.(*signals.ServerException)
-			return nil, fmt.Errorf("server exception [%d]: %s", exception.ErrorCode, exception.ErrorMessage)
+			return nil, fmt.Errorf("server exception [%s]: %s", exception.ErrorCode, exception.ErrorMessage)
 		case protocol.ServerData:
 			// Handle data signal - extract column information and data
 			serverData := signal.(*signals.ServerData)
@@ -1003,7 +1003,7 @@ func (c *connection) exec(ctx context.Context, queryStr string, args ...interfac
 		case protocol.ServerException:
 			// Handle exception signal
 			exception := signal.(*signals.ServerException)
-			return fmt.Errorf("server exception [%d]: %s", exception.ErrorCode, exception.ErrorMessage)
+			return fmt.Errorf("server exception [%s]: %s", exception.ErrorCode, exception.ErrorMessage)
 		case protocol.ServerData:
 			// Handle data signal - just continue reading for exec
 			continue

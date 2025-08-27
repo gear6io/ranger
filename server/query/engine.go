@@ -125,6 +125,16 @@ func (e *Engine) ExecuteQuery(ctx context.Context, queryCtx *types.QueryContext)
 		result, err = e.executeCreateDatabase(ctx, stmt)
 	case *parser.ShowStmt:
 		result, err = e.executeShowStmt(ctx, stmt, queryCtx)
+	case *parser.DropTableStmt:
+		result, err = e.executeDropTable(ctx, stmt, queryCtx)
+	case *parser.UpdateStmt:
+		result, err = e.executeUpdateQuery(ctx, queryCtx.Query, queryCtx)
+	case *parser.DeleteStmt:
+		result, err = e.executeDeleteQuery(ctx, queryCtx.Query, queryCtx)
+	case *parser.UseStmt:
+		result, err = e.executeUseStmt(ctx, stmt, queryCtx)
+	case *parser.ExplainStmt:
+		result, err = e.executeExplainStmt(ctx, stmt, queryCtx)
 	default:
 		err = errors.New(ErrUnsupportedStatementType, "unsupported statement type", nil).AddContext("statement_type", fmt.Sprintf("%T", stmt))
 	}
@@ -380,8 +390,8 @@ func (e *Engine) executeDDLQuery(ctx context.Context, query string, queryCtx *ty
 
 		// Determine storage engine
 		storageEngine := "default"
-		if stmt.Engine != nil {
-			storageEngine = stmt.Engine.Value
+		if stmt.StorageEngine != nil {
+			storageEngine = stmt.StorageEngine.Value
 		}
 
 		// Create table using our storage manager
@@ -411,6 +421,135 @@ func (e *Engine) executeDDLQuery(ctx context.Context, query string, queryCtx *ty
 			Message:  "OK",
 		}, nil
 	}
+}
+
+// executeDropTable handles DROP TABLE statements
+func (e *Engine) executeDropTable(ctx context.Context, stmt *parser.DropTableStmt, queryCtx *types.QueryContext) (*QueryResult, error) {
+	e.logger.Debug().
+		Str("table", stmt.TableName.Table.Value).
+		Bool("ifExists", stmt.IfExists).
+		Msg("Executing DROP TABLE")
+
+	// Determine which database to drop the table from
+	database := e.getDatabaseFromContext(queryCtx)
+
+	// Check if the table name is qualified (database.table)
+	if stmt.TableName.IsQualified() {
+		database = stmt.TableName.Database.Value
+	}
+
+	// Validate that the database exists
+	if err := e.validateDatabaseExists(ctx, database); err != nil {
+		return nil, err
+	}
+
+	// Check if table exists using metadata manager
+	if !e.storageMgr.TableExists(ctx, database, stmt.TableName.Table.Value) {
+		if stmt.IfExists {
+			// Table does not exist and IF EXISTS was specified - return success
+			return &QueryResult{
+				Data:     [][]interface{}{},
+				RowCount: 0,
+				Columns:  []string{},
+				Message:  fmt.Sprintf("Table %s.%s does not exist (IF EXISTS)", database, stmt.TableName.Table.Value),
+			}, nil
+		} else {
+			// Table does not exist and IF EXISTS was not specified - return error
+			return nil, errors.New(ErrTableNotFound, fmt.Sprintf("table '%s' does not exist", stmt.TableName.Table.Value), nil).AddContext("database", database)
+		}
+	}
+
+	// Drop table using metadata manager
+	if err := e.storageMgr.DropTable(ctx, database, stmt.TableName.Table.Value); err != nil {
+		return nil, errors.New(ErrTableDropFailed, "failed to drop table", err).AddContext("database", database).AddContext("table", stmt.TableName.Table.Value)
+	}
+
+	return &QueryResult{
+		Data:     [][]interface{}{},
+		RowCount: 0,
+		Columns:  []string{},
+		Message:  fmt.Sprintf("Table %s.%s dropped successfully", database, stmt.TableName.Table.Value),
+	}, nil
+}
+
+// executeUpdateQuery handles UPDATE statements
+func (e *Engine) executeUpdateQuery(ctx context.Context, query string, queryCtx *types.QueryContext) (*QueryResult, error) {
+	e.logger.Debug().Str("query", query).Msg("Executing UPDATE query")
+
+	// For now, route to DuckDB
+	// TODO: Integrate with Native Server's Update when available
+	result, err := e.duckdbEngine.ExecuteQuery(ctx, query)
+	if err != nil {
+		return nil, errors.New(ErrDuckDBExecutionFailed, "UPDATE execution failed", err)
+	}
+
+	return &QueryResult{
+		Data:     result.Rows,
+		RowCount: result.RowCount,
+		Columns:  result.Columns,
+		Message:  fmt.Sprintf("UPDATE %d", result.RowCount),
+	}, nil
+}
+
+// executeDeleteQuery handles DELETE statements
+func (e *Engine) executeDeleteQuery(ctx context.Context, query string, queryCtx *types.QueryContext) (*QueryResult, error) {
+	e.logger.Debug().Str("query", query).Msg("Executing DELETE query")
+
+	// For now, route to DuckDB
+	// TODO: Integrate with Native Server's Delete when available
+	result, err := e.duckdbEngine.ExecuteQuery(ctx, query)
+	if err != nil {
+		return nil, errors.New(ErrDuckDBExecutionFailed, "DELETE execution failed", err)
+	}
+
+	return &QueryResult{
+		Data:     result.Rows,
+		RowCount: result.RowCount,
+		Columns:  result.Columns,
+		Message:  fmt.Sprintf("DELETE %d", result.RowCount),
+	}, nil
+}
+
+// executeUseStmt handles USE statements
+func (e *Engine) executeUseStmt(ctx context.Context, stmt *parser.UseStmt, queryCtx *types.QueryContext) (*QueryResult, error) {
+	e.logger.Debug().
+		Str("database", stmt.DatabaseName.Value).
+		Msg("Executing USE statement")
+
+	// Validate that the database exists
+	if err := e.validateDatabaseExists(ctx, stmt.DatabaseName.Value); err != nil {
+		return nil, err
+	}
+
+	// Update the query context database
+	queryCtx.Database = stmt.DatabaseName.Value
+
+	return &QueryResult{
+		Data:     [][]interface{}{},
+		RowCount: 0,
+		Columns:  []string{},
+		Message:  fmt.Sprintf("Database changed to %s", stmt.DatabaseName.Value),
+	}, nil
+}
+
+// executeExplainStmt handles EXPLAIN statements
+func (e *Engine) executeExplainStmt(ctx context.Context, stmt *parser.ExplainStmt, queryCtx *types.QueryContext) (*QueryResult, error) {
+	e.logger.Debug().Msg("Executing EXPLAIN statement")
+
+	// For now, route to DuckDB for explanation
+	// TODO: Implement custom explanation logic
+	explainQuery := fmt.Sprintf("EXPLAIN %s", queryCtx.Query)
+	result, err := e.duckdbEngine.ExecuteQuery(ctx, explainQuery)
+	if err != nil {
+		return nil, errors.New(ErrDuckDBExecutionFailed, "EXPLAIN execution failed", err)
+	}
+
+	return &QueryResult{
+		Data:     result.Rows,
+		RowCount: result.RowCount,
+		Columns:  result.Columns,
+		Message:  "EXPLAIN completed",
+	}, nil
 }
 
 // CreateTable creates a new table with the given schema

@@ -127,38 +127,38 @@ func TestNewParserCreateTable(t *testing.T) {
 		description string
 	}{
 		{
-			name:        "BasicTableWithoutEngine",
+			name:        "BasicTableWithoutStorage",
 			statement:   `CREATE TABLE TEST (col1 INT, col2 CHAR(255), deci DECIMAL(10, 2));`,
 			shouldFail:  true,
-			expectedErr: "ENGINE clause is required for CREATE TABLE statements",
-			description: "Should fail because ENGINE clause is mandatory",
+			expectedErr: "STORAGE clause is required for CREATE TABLE statements",
+			description: "Should fail because STORAGE clause is mandatory",
 		},
 		{
-			name:        "TableWithConstraintsWithoutEngine",
+			name:        "TableWithConstraintsWithoutStorage",
 			statement:   `CREATE TABLE TEST (col1 INT SEQUENCE NOT NULL UNIQUE, col2 CHAR(255) UNIQUE, deci DECIMAL(10, 2));`,
 			shouldFail:  true,
-			expectedErr: "ENGINE clause is required for CREATE TABLE statements",
-			description: "Should fail because ENGINE clause is mandatory even with constraints",
+			expectedErr: "STORAGE clause is required for CREATE TABLE statements",
+			description: "Should fail because STORAGE clause is mandatory even with constraints",
 		},
 		{
-			name: "TableWithMemoryEngine",
+			name: "TableWithMemoryStorage",
 			statement: `CREATE TABLE testdb.my_memory_table (
 				id INT PRIMARY KEY,
 				name VARCHAR(255),
 				value DECIMAL(10, 2)
-			) ENGINE = MEMORY;`,
+			) STORAGE memory;`,
 			shouldFail:  false,
-			description: "Should pass with MEMORY engine",
+			description: "Should pass with MEMORY storage",
 		},
 		{
-			name: "TableWithFilesystemEngine",
+			name: "TableWithFilesystemStorage",
 			statement: `CREATE TABLE testdb.my_filesystem_table (
 				id INT PRIMARY KEY,
 				description TEXT,
 				amount DOUBLE
-			) ENGINE = FILESYSTEM;`,
+			) STORAGE filesystem;`,
 			shouldFail:  false,
-			description: "Should pass with FILESYSTEM engine",
+			description: "Should pass with FILESYSTEM storage",
 		},
 		{
 			name: "TableWithIfNotExists",
@@ -166,7 +166,7 @@ func TestNewParserCreateTable(t *testing.T) {
 				id INT PRIMARY KEY,
 				name VARCHAR(255),
 				value DECIMAL(10, 2)
-			) ENGINE = MEMORY;`,
+			) STORAGE memory;`,
 			shouldFail:  false,
 			description: "Should pass with IF NOT EXISTS clause",
 		},
@@ -175,7 +175,7 @@ func TestNewParserCreateTable(t *testing.T) {
 			statement: `CREATE TABLE IF NOT EXISTS simple_table (
 				id INT PRIMARY KEY,
 				name VARCHAR(255)
-			) ENGINE = MEMORY;`,
+			) STORAGE memory;`,
 			shouldFail:  false,
 			description: "Should pass with IF NOT EXISTS and simple table name",
 		},
@@ -219,37 +219,37 @@ func TestNewParserCreateTable(t *testing.T) {
 					t.Fatalf("expected *CreateTableStmt, got %T", stmt)
 				}
 
-				// Verify ENGINE clause is present
-				if createTableStmt.Engine == nil {
-					t.Fatal("expected ENGINE clause to be parsed")
+				// Verify STORAGE clause is present
+				if createTableStmt.StorageEngine == nil {
+					t.Fatal("expected STORAGE clause to be parsed")
 				}
 
-				// Verify table name and engine
-				if tt.name == "TableWithMemoryEngine" {
+				// Verify table name and storage engine
+				if tt.name == "TableWithMemoryStorage" {
 					if !createTableStmt.TableName.IsQualified() {
-						t.Fatalf("expected qualified table name for TableWithMemoryEngine")
+						t.Fatalf("expected qualified table name for TableWithMemoryStorage")
 					}
 					if createTableStmt.TableName.GetFullName() != "testdb.my_memory_table" {
 						t.Fatalf("expected testdb.my_memory_table, got %s", createTableStmt.TableName.GetFullName())
 					}
-					if createTableStmt.Engine.Value != "MEMORY" {
-						t.Fatalf("expected ENGINE = MEMORY, got ENGINE = %s", createTableStmt.Engine.Value)
+					if createTableStmt.StorageEngine.Value != "memory" {
+						t.Fatalf("expected STORAGE memory, got STORAGE %s", createTableStmt.StorageEngine.Value)
 					}
 					if createTableStmt.IfNotExists {
-						t.Fatalf("expected IfNotExists to be false for TableWithMemoryEngine")
+						t.Fatalf("expected IfNotExists to be false for TableWithMemoryStorage")
 					}
-				} else if tt.name == "TableWithFilesystemEngine" {
+				} else if tt.name == "TableWithFilesystemStorage" {
 					if !createTableStmt.TableName.IsQualified() {
-						t.Fatalf("expected qualified table name for TableWithFilesystemEngine")
+						t.Fatalf("expected qualified table name for TableWithFilesystemStorage")
 					}
 					if createTableStmt.TableName.GetFullName() != "testdb.my_filesystem_table" {
 						t.Fatalf("expected testdb.my_filesystem_table, got %s", createTableStmt.TableName.GetFullName())
 					}
-					if createTableStmt.Engine.Value != "FILESYSTEM" {
-						t.Fatalf("expected ENGINE = FILESYSTEM, got ENGINE = %s", createTableStmt.Engine.Value)
+					if createTableStmt.StorageEngine.Value != "filesystem" {
+						t.Fatalf("expected STORAGE filesystem, got STORAGE %s", createTableStmt.StorageEngine.Value)
 					}
 					if createTableStmt.IfNotExists {
-						t.Fatalf("expected IfNotExists to be false for TableWithFilesystemEngine")
+						t.Fatalf("expected IfNotExists to be false for TableWithFilesystemStorage")
 					}
 				} else if tt.name == "TableWithIfNotExists" {
 					if !createTableStmt.TableName.IsQualified() {
@@ -258,8 +258,8 @@ func TestNewParserCreateTable(t *testing.T) {
 					if createTableStmt.TableName.GetFullName() != "testdb.my_memory_table" {
 						t.Fatalf("expected testdb.my_memory_table, got %s", createTableStmt.TableName.GetFullName())
 					}
-					if createTableStmt.Engine.Value != "MEMORY" {
-						t.Fatalf("expected ENGINE = MEMORY, got ENGINE = %s", createTableStmt.Engine.Value)
+					if createTableStmt.StorageEngine.Value != "memory" {
+						t.Fatalf("expected STORAGE memory, got STORAGE %s", createTableStmt.StorageEngine.Value)
 					}
 					if !createTableStmt.IfNotExists {
 						t.Fatalf("expected IfNotExists to be true for TableWithIfExists")
@@ -271,8 +271,8 @@ func TestNewParserCreateTable(t *testing.T) {
 					if createTableStmt.TableName.Table.Value != "simple_table" {
 						t.Fatalf("expected simple_table, got %s", createTableStmt.TableName.Table.Value)
 					}
-					if createTableStmt.Engine.Value != "MEMORY" {
-						t.Fatalf("expected ENGINE = MEMORY, got ENGINE = %s", createTableStmt.Engine.Value)
+					if createTableStmt.StorageEngine.Value != "memory" {
+						t.Fatalf("expected STORAGE memory, got STORAGE %s", createTableStmt.StorageEngine.Value)
 					}
 					if !createTableStmt.IfNotExists {
 						t.Fatalf("expected IfNotExists to be true for TableWithIfNotExistsAndSimpleName")

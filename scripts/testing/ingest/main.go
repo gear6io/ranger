@@ -91,7 +91,7 @@ func createTable(client *sdk.Client, tableName string) error {
 	ctx := context.Background()
 
 	// Drop table if it exists (for testing purposes)
-	dropQuery := fmt.Sprintf("DROP TABLE %s;", tableName)
+	dropQuery := fmt.Sprintf("DROP TABLE IF EXISTS %s;", tableName)
 	if err := client.Exec(ctx, dropQuery); err != nil {
 		return fmt.Errorf("failed to drop existing table: %w", err)
 	}

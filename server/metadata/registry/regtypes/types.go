@@ -87,18 +87,51 @@ type Table struct {
 type TableMetadata struct {
 	bun.BaseModel `bun:"table:table_metadata"`
 
-	ID            int64     `bun:"id,pk,autoincrement" json:"id"`
-	TableID       int64     `bun:"table_id,notnull" json:"table_id"`
-	SchemaVersion int       `bun:"schema_version,notnull,default:1" json:"schema_version"`
-	Schema        []byte    `bun:"schema,type:blob" json:"schema"`
-	StorageEngine string    `bun:"storage_engine,notnull" json:"storage_engine"`
-	EngineConfig  string    `bun:"engine_config,default:'{}'" json:"engine_config"`
-	Format        string    `bun:"format" json:"format"`
-	Compression   string    `bun:"compression" json:"compression"`
-	PartitionBy   string    `bun:"partition_by" json:"partition_by"`
-	SortBy        string    `bun:"sort_by" json:"sort_by"`
-	Properties    string    `bun:"properties,default:'{}'" json:"properties"`
-	LastModified  time.Time `bun:"last_modified,notnull,default:current_timestamp" json:"last_modified"`
+	ID            int64  `bun:"id,pk,autoincrement" json:"id"`
+	TableID       int64  `bun:"table_id,notnull" json:"table_id"`
+	SchemaVersion int    `bun:"schema_version,notnull,default:1" json:"schema_version"`
+	StorageEngine string `bun:"storage_engine,notnull" json:"storage_engine"`
+	EngineConfig  string `bun:"engine_config,default:'{}'" json:"engine_config"`
+	Format        string `bun:"format" json:"format"`
+	Compression   string `bun:"compression" json:"compression"`
+	PartitionBy   string `bun:"partition_by" json:"partition_by"`
+	SortBy        string `bun:"sort_by" json:"sort_by"`
+	Settings      string `bun:"settings,default:'{}'" json:"settings"` // Renamed from Properties
+
+	// Table configuration (JSON)
+	TableConfig string `bun:"table_config,default:'{}'" json:"table_config"`
+
+	// Enhanced partitioning (JSON arrays instead of strings)
+	PartitionOrder    string `bun:"partition_order,default:'[]'" json:"partition_order"` // JSON array of partition columns
+	PartitionStrategy string `bun:"partition_strategy,default:'column'" json:"partition_strategy"`
+
+	// Enhanced sorting (JSON arrays instead of strings)
+	SortOrder    string `bun:"sort_order,default:'[]'" json:"sort_order"` // JSON array of sort columns
+	SortStrategy string `bun:"sort_strategy,default:'asc'" json:"sort_strategy"`
+
+	// Performance configuration
+	CacheEnabled       bool `bun:"cache_enabled,default:true" json:"cache_enabled"`
+	CacheSize          int  `bun:"cache_size,default:1000" json:"cache_size"`
+	BatchSize          int  `bun:"batch_size,default:10000" json:"batch_size"`
+	ParallelProcessing bool `bun:"parallel_processing,default:true" json:"parallel_processing"`
+
+	// Schema evolution configuration
+	StrictValidation    bool `bun:"strict_validation,default:true" json:"strict_validation"`
+	StrictCompliance    bool `bun:"strict_compliance,default:true" json:"strict_compliance"`
+	AllowTypePromotions bool `bun:"allow_type_promotions,default:false" json:"allow_type_promotions"`
+	MaxSchemaVersions   int  `bun:"max_schema_versions,default:1" json:"max_schema_versions"`
+
+	// Validation configuration
+	BatchValidationSize int `bun:"batch_validation_size,default:10000" json:"batch_validation_size"`
+	MaxValidationErrors int `bun:"max_validation_errors,default:100" json:"max_validation_errors"`
+
+	// Table metadata
+	TableUUID       string `bun:"table_uuid" json:"table_uuid"`
+	FormatVersion   int    `bun:"format_version,default:2" json:"format_version"`
+	LastColumnID    int    `bun:"last_column_id,default:0" json:"last_column_id"`
+	LastPartitionID int    `bun:"last_partition_id,default:999" json:"last_partition_id"`
+
+	LastModified time.Time `bun:"last_modified,notnull,default:current_timestamp" json:"last_modified"`
 
 	TimeAuditable
 

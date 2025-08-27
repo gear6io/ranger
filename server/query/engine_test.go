@@ -729,6 +729,66 @@ func TestDatabaseSelection(t *testing.T) {
 		assert.Nil(t, result, "Should not return result")
 		assert.Contains(t, err.Error(), nonExistentDB, "Error should mention the database name")
 	})
+
+	// Test DROP TABLE functionality
+	t.Run("DropTable", func(t *testing.T) {
+		// First create a table to drop
+		createQuery := "CREATE TABLE test_drop_table (id INT) ENGINE = MEMORY;"
+		createCtx := &types.QueryContext{
+			Query:      createQuery,
+			Database:   "test_database_1", // Use existing database
+			User:       "test",
+			ClientAddr: "127.0.0.1",
+		}
+
+		createResult, err := engine.ExecuteQuery(ctx, createCtx)
+		if err != nil {
+			t.Fatalf("Failed to create table for drop test: %v", err)
+		}
+		t.Logf("Table created successfully: %s", createResult.Message)
+
+		// Now test DROP TABLE
+		dropQuery := "DROP TABLE test_drop_table;"
+		dropCtx := &types.QueryContext{
+			Query:      dropQuery,
+			Database:   "test_database_1", // Use existing database
+			User:       "test",
+			ClientAddr: "127.0.0.1",
+		}
+
+		dropResult, err := engine.ExecuteQuery(ctx, dropCtx)
+		if err != nil {
+			t.Fatalf("DROP TABLE failed: %v", err)
+		}
+
+		if dropResult.Message != "Table test_database_1.test_drop_table dropped successfully" {
+			t.Errorf("Expected drop success message, got: %s", dropResult.Message)
+		}
+
+		t.Logf("Table dropped successfully: %s", dropResult.Message)
+	})
+
+	// Test DROP TABLE IF EXISTS with non-existent table
+	t.Run("DropTableIfExists", func(t *testing.T) {
+		dropQuery := "DROP TABLE IF EXISTS non_existent_table;"
+		dropCtx := &types.QueryContext{
+			Query:      dropQuery,
+			Database:   "default",
+			User:       "test",
+			ClientAddr: "127.0.0.1",
+		}
+
+		dropResult, err := engine.ExecuteQuery(ctx, dropCtx)
+		if err != nil {
+			t.Fatalf("DROP TABLE IF EXISTS failed: %v", err)
+		}
+
+		if !strings.Contains(dropResult.Message, "does not exist (IF EXISTS)") {
+			t.Errorf("Expected IF EXISTS message, got: %s", dropResult.Message)
+		}
+
+		t.Logf("DROP TABLE IF EXISTS handled correctly: %s", dropResult.Message)
+	})
 }
 
 // TestDatabaseSelectionHelpers tests the database selection helper functions in isolation

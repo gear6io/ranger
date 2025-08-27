@@ -33,4 +33,6 @@ var (
 	ErrQueryPanic                  = errors.MustNewCode("query.panic")
 	ErrQueryNotFound               = errors.MustNewCode("query.not_found")
 	ErrQueryNotRunning             = errors.MustNewCode("query.not_running")
+	ErrTableNotFound               = errors.MustNewCode("query.table_not_found")
+	ErrTableDropFailed             = errors.MustNewCode("query.table_drop_failed")
 )

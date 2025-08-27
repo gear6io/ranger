@@ -215,11 +215,6 @@ func (m *Manager) GetCatalog() catalog.CatalogInterface {
 	return m.catalog
 }
 
-// GetMetadataManager returns the metadata manager
-func (m *Manager) GetMetadataManager() *metadata.MetadataManager {
-	return m.meta
-}
-
 // GetPathManager returns the path manager
 func (m *Manager) GetPathManager() paths.PathManager {
 	return m.pathManager
@@ -656,6 +651,15 @@ func (m *Manager) DatabaseExists(ctx context.Context, dbName string) bool {
 // CreateDatabase creates a new database
 func (m *Manager) CreateDatabase(ctx context.Context, dbName string) error {
 	return m.meta.CreateDatabase(ctx, dbName)
+}
+
+// ============================================================================
+// ABSTRACTION METHODS (replacing direct metadata manager access)
+// ============================================================================
+
+// DropTable drops a table from the specified database
+func (m *Manager) DropTable(ctx context.Context, database, tableName string) error {
+	return m.meta.DropTable(ctx, database, tableName)
 }
 
 // createIcebergMetadata creates proper Iceberg metadata structure

@@ -603,11 +603,6 @@ func formatCreateTableStmt(stmt *CreateTableStmt) string {
 		parts = append(parts, ")")
 	}
 
-	if stmt.Engine != nil {
-		parts = append(parts, "ENGINE")
-		parts = append(parts, formatIdentifier(stmt.Engine))
-	}
-
 	if stmt.Compress {
 		parts = append(parts, "COMPRESS")
 	}

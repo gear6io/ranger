@@ -8,7 +8,7 @@ import (
 
 // ServerException represents a server exception/error message
 type ServerException struct {
-	ErrorCode    uint64
+	ErrorCode    string
 	ErrorMessage string
 	StackTrace   string
 }
@@ -24,12 +24,15 @@ func (e *ServerException) Pack() ([]byte, error) {
 	size := e.Size()
 	buf := make([]byte, 0, size)
 
-	// Pack error code (uvarint)
-	for e.ErrorCode >= 0x80 {
-		buf = append(buf, byte(e.ErrorCode)|0x80)
-		e.ErrorCode >>= 7
+	// Pack error code (uvarint length + string)
+	codeBytes := []byte(e.ErrorCode)
+	codeLen := uint64(len(codeBytes))
+	for codeLen >= 0x80 {
+		buf = append(buf, byte(codeLen)|0x80)
+		codeLen >>= 7
 	}
-	buf = append(buf, byte(e.ErrorCode))
+	buf = append(buf, byte(codeLen))
+	buf = append(buf, codeBytes...)
 
 	// Pack error message (uvarint length + string)
 	msgBytes := []byte(e.ErrorMessage)
@@ -62,13 +65,19 @@ func (e *ServerException) Unpack(data []byte) error {
 
 	pos := 0
 
-	// Read error code (uvarint)
-	errorCode, bytesRead := e.readUvarint(data[pos:])
+	// Read error code length (uvarint)
+	codeLen, bytesRead := e.readUvarint(data[pos:])
 	if bytesRead == 0 {
-		return fmt.Errorf("failed to read error code")
+		return fmt.Errorf("failed to read error code length")
 	}
-	e.ErrorCode = errorCode
 	pos += bytesRead
+
+	// Read error code
+	if pos+int(codeLen) > len(data) {
+		return fmt.Errorf("insufficient data for error code")
+	}
+	e.ErrorCode = string(data[pos : pos+int(codeLen)])
+	pos += int(codeLen)
 
 	// Read error message length (uvarint)
 	msgLen, bytesRead := e.readUvarint(data[pos:])
@@ -102,8 +111,8 @@ func (e *ServerException) Unpack(data []byte) error {
 
 // Size returns the estimated size of the packed message
 func (e *ServerException) Size() int {
-	// Error code (uvarint) + error message (uvarint length + string) + stack trace (uvarint length + string)
-	return 8 + 8 + len(e.ErrorMessage) + 8 + len(e.StackTrace)
+	// Error code (uvarint length + string) + error message (uvarint length + string) + stack trace (uvarint length + string)
+	return 8 + len(e.ErrorCode) + 8 + len(e.ErrorMessage) + 8 + len(e.StackTrace)
 }
 
 // readUvarint reads a variable-length integer from the beginning of data
@@ -126,7 +135,7 @@ func (e *ServerException) readUvarint(data []byte) (uint64, int) {
 }
 
 // NewServerException creates a new server exception message
-func NewServerException(errorCode uint64, errorMessage, stackTrace string) *ServerException {
+func NewServerException(errorCode string, errorMessage, stackTrace string) *ServerException {
 	return &ServerException{
 		ErrorCode:    errorCode,
 		ErrorMessage: errorMessage,
