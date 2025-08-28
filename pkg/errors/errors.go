@@ -6,6 +6,14 @@ import (
 	"time"
 )
 
+// InternalError interface for errors that can transform to internal error format
+// This interface allows custom error types to integrate with the internal error system
+// while maintaining their own structure and behavior.
+type InternalError interface {
+	error              // Standard Go error interface
+	Transform() *Error // Convert to internal error format
+}
+
 // Error - simplified structure
 type Error struct {
 	Code      Code

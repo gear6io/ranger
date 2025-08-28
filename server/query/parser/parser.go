@@ -24,17 +24,16 @@ import (
 	"strings"
 
 	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/types"
 )
 
-// Ranger-compatible data types - simplified version of SQL parser types
-var basicDataTypes = []string{
-	"INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT",
-	"VARCHAR", "CHAR", "TEXT", "STRING",
-	"BOOLEAN", "BOOL", "BIT",
-	"DECIMAL", "NUMERIC", "FLOAT", "DOUBLE", "REAL",
-	"DATE", "TIME", "TIMESTAMP", "DATETIME",
-	"BLOB", "BINARY", "VARBINARY",
-	"JSON", "UUID",
+// Iceberg data types - centralized from types package
+var icebergDataTypes = []string{
+	types.IcebergBoolean, types.IcebergInt32, types.IcebergInt64,
+	types.IcebergFloat32, types.IcebergFloat64, types.IcebergDecimal,
+	types.IcebergString, types.IcebergBinary, types.IcebergDate,
+	types.IcebergTime, types.IcebergTimestamp, types.IcebergTimestampTz,
+	types.IcebergUUID, types.IcebergList, types.IcebergMap, types.IcebergStruct,
 }
 
 var keywords = append([]string{
@@ -53,12 +52,12 @@ var keywords = append([]string{
 	"SQL", "SQLCODE", "SQLERROR", "SUM",
 	"TABLE", "TO", "UNION", "UNIQUE", "UPDATE", "USER",
 	"VALUES", "VIEW", "WHENEVER", "WHERE", "WITH", "WORK", "USE", "LIMIT", "OFFSET", "IDENTIFIED", "CONNECT", "REVOKE", "SHOW",
-	"PRIMARY", "FOREIGN", "KEY", "REFERENCES", "DATE", "TIME", "TIMESTAMP", "DATETIME", "UUID", "BINARY", "DEFAULT",
+	"PRIMARY", "FOREIGN", "KEY", "REFERENCES", "DEFAULT",
 	"UPPER", "LOWER", "CAST", "COALESCE", "REVERSE", "ROUND", "POSITION", "LENGTH", "REPLACE",
 	"CONCAT", "SUBSTRING", "TRIM", "GENERATE_UUID", "SYS_DATE", "SYS_TIME", "SYS_TIMESTAMP", "SYS_DATETIME",
 	"CASE", "WHEN", "THEN", "ELSE", "END", "IF", "ELSEIF", "DEALLOCATE", "NEXT", "WHILE", "PRINT", "EXPLAIN",
 	"COMPRESS", "ENCRYPT", "COLUMN", "IF NOT EXISTS", "STORAGE", "PARTITION", "SETTINGS",
-}, basicDataTypes...)
+}, icebergDataTypes...)
 
 // Ranger-compatible type definitions to replace SQL parser types
 
@@ -107,19 +106,27 @@ type TableSchema struct {
 	ColumnDefinitions map[string]*ColumnDefinition
 }
 
-// ColumnDefinition represents a column definition
+// ColumnDefinition represents a column definition with Iceberg type support
 type ColumnDefinition struct {
-	DataType   string
-	Length     int
-	Precision  int
-	Scale      int
-	Nullable   bool
-	Default    interface{}
-	References *Reference
-	Sequence   *string // For auto-increment/sequence columns
-	NotNull    bool    // NOT NULL constraint (alias for !Nullable)
-	Unique     bool    // UNIQUE constraint
-	Check      *string // CHECK constraint
+	Name         string     // Column name
+	DataType     string     // Must be valid Iceberg type
+	Length       int        // For fixed-length types
+	Precision    int        // For decimal types
+	Scale        int        // For decimal types
+	IsNullable   bool       // Nullable constraint (default true)
+	DefaultValue string     // Default value as string
+	References   *Reference // Foreign key reference
+	Sequence     *string    // For auto-increment/sequence columns
+	NotNull      bool       // NOT NULL constraint (alias for !IsNullable)
+	Unique       bool       // UNIQUE constraint
+	Check        *string    // CHECK constraint
+	// Iceberg-specific fields for complex types
+	ElementType string              // For list types
+	KeyType     string              // For map types
+	ValueType   string              // For map types
+	Fields      []*ColumnDefinition // For struct types
+	// Internal validation state
+	validated bool // Track validation state
 }
 
 // Reference represents a foreign key reference
@@ -128,15 +135,11 @@ type Reference struct {
 	ColumnName string
 }
 
-// IsValidDataType checks if a string is a valid SQL data type
+// IsValidDataType checks if a string is a valid Iceberg data type
 func IsValidDataType(dataType string) bool {
-	dataType = strings.ToUpper(strings.TrimSpace(dataType))
-	for _, dt := range basicDataTypes {
-		if dt == dataType {
-			return true
-		}
-	}
-	return false
+	dataType = strings.TrimSpace(dataType)
+	validator := types.NewIcebergTypeValidator()
+	return validator.IsValidType(dataType)
 }
 
 type TokenType int // Token type
@@ -164,21 +167,26 @@ const (
 
 // Parser is a parser for SQL
 type Parser struct {
-	lexer *Lexer
-	pos   int
+	lexer          *Lexer           // Enhanced lexer with position tracking
+	pos            int              // Current token position
+	tracker        *PositionTracker // Shared position tracker for enhanced error reporting
+	errorCollector *ErrorCollector  // Collects multiple parsing errors for recovery
+	recoveryMode   bool             // Whether parser is in error recovery mode
 }
 
 // Lexer is a lexer for SQL
 type Lexer struct {
-	input  []byte  // Input to be tokenized
-	pos    int     // Position in the input
-	tokens []Token // Tokens found
+	input   []byte           // Input to be tokenized
+	pos     int              // Position in the input
+	tokens  []Token          // Tokens found
+	tracker *PositionTracker // Position tracking for enhanced error reporting
 }
 
 // Token is a token found by the lexer
 type Token struct {
-	tokenT TokenType   // Type of token
-	value  interface{} // Value of token
+	tokenT   TokenType     // Type of token
+	value    interface{}   // Value of token
+	Position TokenPosition // Position information for enhanced error reporting
 }
 
 // NewLexer creates a new lexer
@@ -186,7 +194,8 @@ func NewLexer(input []byte) *Lexer {
 	//rewrites(&input)
 
 	return &Lexer{
-		input: input,
+		input:   input,
+		tracker: NewPositionTracker(input),
 	}
 }
 
@@ -260,6 +269,18 @@ func (l *Lexer) tryMatchMultiWordKeyword() string {
 	return ""
 }
 
+// createToken creates a token with position information
+func (l *Lexer) createToken(tokenType TokenType, value interface{}, startPos, endPos int) Token {
+	return Token{
+		tokenT: tokenType,
+		value:  value,
+		Position: TokenPosition{
+			Offset: startPos,
+			Length: endPos - startPos,
+		},
+	}
+}
+
 // nextToken returns the next token
 func (l *Lexer) nextToken() Token {
 	insideLiteral := false
@@ -268,7 +289,7 @@ func (l *Lexer) nextToken() Token {
 
 	for {
 		if l.pos >= len(l.input) {
-			return Token{tokenT: EOF_TOK}
+			return l.createToken(EOF_TOK, nil, l.pos, l.pos)
 		}
 
 		switch l.input[l.pos] {
@@ -276,6 +297,7 @@ func (l *Lexer) nextToken() Token {
 			if !insideLiteral {
 
 				if l.pos+1 < len(l.input) && l.input[l.pos+1] == '-' {
+					startPos := l.pos
 					l.pos += 2
 					comment := ""
 					for l.pos < len(l.input) && l.input[l.pos] != '\n' {
@@ -283,10 +305,11 @@ func (l *Lexer) nextToken() Token {
 						l.pos++
 					}
 
-					return Token{tokenT: COMMENT_TOK, value: comment}
+					return l.createToken(COMMENT_TOK, comment, startPos, l.pos)
 				}
+				startPos := l.pos
 				l.pos++
-				return Token{tokenT: MINUS_TOK, value: "-"}
+				return l.createToken(MINUS_TOK, "-", startPos, l.pos)
 
 			} else {
 				stringLiteral += string(l.input[l.pos])
@@ -318,8 +341,11 @@ func (l *Lexer) nextToken() Token {
 					// End of string literal
 					insideLiteral = false
 					stringLiteral += string(l.input[l.pos])
+					endPos := l.pos + 1
 					l.pos++
-					return Token{tokenT: LITERAL_TOK, value: stringLiteral}
+					// Calculate start position by working backwards from current position
+					startPos := endPos - len(stringLiteral)
+					return l.createToken(LITERAL_TOK, stringLiteral, startPos, endPos)
 				} else {
 					// Quote character inside string literal
 					stringLiteral += string(l.input[l.pos])
@@ -336,8 +362,9 @@ func (l *Lexer) nextToken() Token {
 			}
 		case '=':
 			if !insideLiteral {
+				startPos := l.pos
 				l.pos++
-				return Token{tokenT: COMPARISON_TOK, value: "="}
+				return l.createToken(COMPARISON_TOK, "=", startPos, l.pos)
 			} else {
 				stringLiteral += string(l.input[l.pos])
 				l.pos++
@@ -345,8 +372,9 @@ func (l *Lexer) nextToken() Token {
 			}
 		case '+':
 			if !insideLiteral {
+				startPos := l.pos
 				l.pos++
-				return Token{tokenT: PLUS_TOK, value: "+"}
+				return l.createToken(PLUS_TOK, "+", startPos, l.pos)
 			} else {
 				stringLiteral += string(l.input[l.pos])
 				l.pos++
@@ -355,6 +383,7 @@ func (l *Lexer) nextToken() Token {
 		case '/':
 			if !insideLiteral {
 				if l.input[l.pos+1] == '*' {
+					startPos := l.pos
 					l.pos += 2
 					comment := ""
 					for l.input[l.pos] != '*' && l.input[l.pos+1] != '/' {
@@ -362,10 +391,11 @@ func (l *Lexer) nextToken() Token {
 						l.pos++
 					}
 					l.pos += 2
-					return Token{tokenT: COMMENT_TOK, value: strings.TrimSpace(comment)}
+					return l.createToken(COMMENT_TOK, strings.TrimSpace(comment), startPos, l.pos)
 				}
+				startPos := l.pos
 				l.pos++
-				return Token{tokenT: DIVIDE_TOK, value: "/"}
+				return l.createToken(DIVIDE_TOK, "/", startPos, l.pos)
 			} else {
 				stringLiteral += string(l.input[l.pos])
 				l.pos++
@@ -373,8 +403,9 @@ func (l *Lexer) nextToken() Token {
 			}
 		case '%':
 			if !insideLiteral {
+				startPos := l.pos
 				l.pos++
-				return Token{tokenT: MODULUS_TOK, value: "%"}
+				return l.createToken(MODULUS_TOK, "%", startPos, l.pos)
 			} else {
 				stringLiteral += string(l.input[l.pos])
 				l.pos++
@@ -382,8 +413,9 @@ func (l *Lexer) nextToken() Token {
 			}
 		case '@':
 			if !insideLiteral {
+				startPos := l.pos
 				l.pos++
-				return Token{tokenT: AT_TOK, value: "@"}
+				return l.createToken(AT_TOK, "@", startPos, l.pos)
 			} else {
 				stringLiteral += string(l.input[l.pos])
 				l.pos++
@@ -391,8 +423,9 @@ func (l *Lexer) nextToken() Token {
 			}
 		case '.':
 			if !insideLiteral {
+				startPos := l.pos
 				l.pos++
-				return Token{tokenT: DOT_TOK, value: "."}
+				return l.createToken(DOT_TOK, ".", startPos, l.pos)
 			} else {
 				stringLiteral += string(l.input[l.pos])
 				l.pos++
@@ -400,16 +433,16 @@ func (l *Lexer) nextToken() Token {
 			}
 		case '<':
 			if !insideLiteral {
+				startPos := l.pos
 				if l.input[l.pos+1] == '>' {
 					l.pos += 2
-					return Token{tokenT: COMPARISON_TOK, value: "<>"}
+					return l.createToken(COMPARISON_TOK, "<>", startPos, l.pos)
 				} else if l.input[l.pos+1] == '=' {
-					l.pos++
-					l.pos++
-					return Token{tokenT: COMPARISON_TOK, value: "<="}
+					l.pos += 2
+					return l.createToken(COMPARISON_TOK, "<=", startPos, l.pos)
 				}
 				l.pos++
-				return Token{tokenT: COMPARISON_TOK, value: "<"}
+				return l.createToken(COMPARISON_TOK, "<", startPos, l.pos)
 			} else {
 				stringLiteral += string(l.input[l.pos])
 				l.pos++
@@ -417,13 +450,13 @@ func (l *Lexer) nextToken() Token {
 			}
 		case '>':
 			if !insideLiteral {
+				startPos := l.pos
 				if l.input[l.pos+1] == '=' {
-					l.pos++ // skip =
-					l.pos++ // skip >
-					return Token{tokenT: COMPARISON_TOK, value: ">="}
+					l.pos += 2
+					return l.createToken(COMPARISON_TOK, ">=", startPos, l.pos)
 				}
 				l.pos++
-				return Token{tokenT: COMPARISON_TOK, value: ">"}
+				return l.createToken(COMPARISON_TOK, ">", startPos, l.pos)
 			} else {
 				stringLiteral += string(l.input[l.pos])
 				l.pos++
@@ -431,8 +464,9 @@ func (l *Lexer) nextToken() Token {
 			}
 		case '*':
 			if !insideLiteral {
+				startPos := l.pos
 				l.pos++
-				return Token{tokenT: ASTERISK_TOK, value: "*"}
+				return l.createToken(ASTERISK_TOK, "*", startPos, l.pos)
 			} else {
 				stringLiteral += string(l.input[l.pos])
 				l.pos++
@@ -440,8 +474,9 @@ func (l *Lexer) nextToken() Token {
 			}
 		case ',':
 			if !insideLiteral {
+				startPos := l.pos
 				l.pos++
-				return Token{tokenT: COMMA_TOK, value: ","}
+				return l.createToken(COMMA_TOK, ",", startPos, l.pos)
 			} else {
 				stringLiteral += string(l.input[l.pos])
 				l.pos++
@@ -449,8 +484,9 @@ func (l *Lexer) nextToken() Token {
 			}
 		case '(':
 			if !insideLiteral {
+				startPos := l.pos
 				l.pos++
-				return Token{tokenT: LPAREN_TOK, value: "("}
+				return l.createToken(LPAREN_TOK, "(", startPos, l.pos)
 			} else {
 				stringLiteral += string(l.input[l.pos])
 				l.pos++
@@ -458,8 +494,9 @@ func (l *Lexer) nextToken() Token {
 			}
 		case ')':
 			if !insideLiteral {
+				startPos := l.pos
 				l.pos++
-				return Token{tokenT: RPAREN_TOK, value: ")"}
+				return l.createToken(RPAREN_TOK, ")", startPos, l.pos)
 			} else {
 				stringLiteral += string(l.input[l.pos])
 				l.pos++
@@ -481,8 +518,9 @@ func (l *Lexer) nextToken() Token {
 			continue
 		case ';':
 			if !insideLiteral {
+				startPos := l.pos
 				l.pos++
-				return Token{tokenT: SEMICOLON_TOK, value: ";"}
+				return l.createToken(SEMICOLON_TOK, ";", startPos, l.pos)
 			} else {
 				stringLiteral += string(l.input[l.pos])
 				l.pos++
@@ -499,8 +537,9 @@ func (l *Lexer) nextToken() Token {
 							if l.input[l.pos+1] == 'R' || l.input[l.pos+1] == 'r' {
 								if l.input[l.pos+2] == 'U' || l.input[l.pos+2] == 'u' {
 									if l.input[l.pos+3] == 'E' || l.input[l.pos+3] == 'e' {
+										startPos := l.pos
 										l.pos += 4
-										return Token{tokenT: LITERAL_TOK, value: true}
+										return l.createToken(LITERAL_TOK, true, startPos, l.pos)
 									}
 								}
 							}
@@ -512,8 +551,9 @@ func (l *Lexer) nextToken() Token {
 								if l.input[l.pos+2] == 'L' || l.input[l.pos+2] == 'l' {
 									if l.input[l.pos+3] == 'S' || l.input[l.pos+3] == 's' {
 										if l.input[l.pos+4] == 'E' || l.input[l.pos+4] == 'e' {
+											startPos := l.pos
 											l.pos += 5
-											return Token{tokenT: LITERAL_TOK, value: false}
+											return l.createToken(LITERAL_TOK, false, startPos, l.pos)
 										}
 									}
 								}
@@ -526,7 +566,7 @@ func (l *Lexer) nextToken() Token {
 					// First, try to match multi-word keywords (like "IF NOT EXISTS")
 					multiWordKeyword := l.tryMatchMultiWordKeyword()
 					if multiWordKeyword != "" {
-						return Token{tokenT: KEYWORD_TOK, value: multiWordKeyword}
+						return l.createToken(KEYWORD_TOK, multiWordKeyword, startPos, l.pos)
 					}
 
 					// If no multi-word keyword found, process as single word
@@ -537,29 +577,23 @@ func (l *Lexer) nextToken() Token {
 						}
 					}
 
-					if checkKeyword(string(l.input[startPos:l.pos])) {
-						word := string(l.input[startPos:l.pos])
+					word := string(l.input[startPos:l.pos])
 
-						// Special case: if it's a lowercase word that could be a data type,
-						// treat it as an identifier (column name) first
-						// This handles cases like "date DATE" where "date" should be a column name
-						if strings.ToLower(word) == word && IsValidDataType(word) {
-							return Token{tokenT: IDENT_TOK, value: word}
-						}
+					// Check if it's an Iceberg data type first (case-sensitive)
+					if IsValidDataType(word) {
+						return l.createToken(DATATYPE_TOK, word, startPos, l.pos)
+					}
 
-						if IsValidDataType(word) {
-							return Token{tokenT: DATATYPE_TOK, value: word}
-						} else {
-							return Token{tokenT: KEYWORD_TOK, value: strings.ToUpper(word)}
-						}
+					if checkKeyword(word) {
+						return l.createToken(KEYWORD_TOK, strings.ToUpper(word), startPos, l.pos)
 					} else {
 						parsedUInt, err := strconv.ParseUint(string(l.input[startPos:l.pos]), 10, 32) // convert string to uint
 						if err == nil {
 							// is parsable uint
-							return Token{tokenT: LITERAL_TOK, value: parsedUInt}
+							return l.createToken(LITERAL_TOK, parsedUInt, startPos, l.pos)
 
 						} else {
-							return Token{tokenT: IDENT_TOK, value: string(l.input[startPos:l.pos])}
+							return l.createToken(IDENT_TOK, string(l.input[startPos:l.pos]), startPos, l.pos)
 						}
 					}
 				} else {
@@ -569,6 +603,7 @@ func (l *Lexer) nextToken() Token {
 				}
 			} else if isDigit(rune(l.input[l.pos])) {
 				if !insideLiteral {
+					startPos := l.pos
 					n := ""
 
 					if l.pos+1 < len(l.input) {
@@ -581,13 +616,13 @@ func (l *Lexer) nextToken() Token {
 						parsedUInt, err := strconv.ParseUint(n, 10, 32) // convert string to uint
 						if err == nil {
 							// is parsable uint
-							return Token{tokenT: LITERAL_TOK, value: parsedUInt}
+							return l.createToken(LITERAL_TOK, parsedUInt, startPos, l.pos)
 
 						} else {
 							parsedFloat, err := strconv.ParseFloat(n, 64) // convert string to float
 							if err == nil {
 								// is parsable float
-								return Token{tokenT: LITERAL_TOK, value: parsedFloat}
+								return l.createToken(LITERAL_TOK, parsedFloat, startPos, l.pos)
 							}
 						}
 					}
@@ -626,7 +661,10 @@ func Parse(query string) (Node, error) {
 // NewParser creates a new parser
 func NewParser(lexer *Lexer) *Parser {
 	return &Parser{
-		lexer: lexer,
+		lexer:          lexer,
+		tracker:        lexer.tracker, // Share the position tracker with the lexer
+		errorCollector: NewErrorCollector(),
+		recoveryMode:   false,
 	}
 }
 
@@ -635,10 +673,333 @@ func (p *Parser) consume() {
 	p.pos++
 }
 
+// Enhanced error creation methods for better error reporting
+
+// newSyntaxError creates a new syntax error with enhanced context
+func (p *Parser) newSyntaxError(code errors.Code, message string, expected []string, found *Token) *ParseError {
+	var foundStr string
+	var position TokenPosition
+
+	if found != nil {
+		foundStr = fmt.Sprintf("%v", found.value)
+		position = found.Position
+	} else {
+		foundStr = "end of input"
+		// Use position at end of input for EOF errors
+		position = TokenPosition{
+			Offset: len(p.lexer.input),
+			Length: 0,
+		}
+	}
+
+	return &ParseError{
+		Code:     code,
+		Message:  message,
+		Position: position,
+		Token:    found,
+		Expected: expected,
+		Found:    foundStr,
+		Category: SyntaxError,
+		tracker:  p.tracker,
+	}
+}
+
+// newTypeError creates a new type validation error with enhanced context
+func (p *Parser) newTypeError(code errors.Code, message string, token *Token, suggestions []string) *ParseError {
+	var foundStr string
+	var position TokenPosition
+
+	if token != nil {
+		foundStr = fmt.Sprintf("%v", token.value)
+		position = token.Position
+	} else {
+		foundStr = "unknown type"
+		position = TokenPosition{
+			Offset: len(p.lexer.input),
+			Length: 0,
+		}
+	}
+
+	return &ParseError{
+		Code:     code,
+		Message:  message,
+		Position: position,
+		Token:    token,
+		Expected: suggestions,
+		Found:    foundStr,
+		Category: TypeError,
+		tracker:  p.tracker,
+	}
+}
+
+// newValidationError creates a new semantic validation error with enhanced context
+func (p *Parser) newValidationError(code errors.Code, message string, token *Token, context []string) *ParseError {
+	var foundStr string
+	var position TokenPosition
+
+	if token != nil {
+		foundStr = fmt.Sprintf("%v", token.value)
+		position = token.Position
+	} else {
+		foundStr = "validation context"
+		position = TokenPosition{
+			Offset: len(p.lexer.input),
+			Length: 0,
+		}
+	}
+
+	return &ParseError{
+		Code:     code,
+		Message:  message,
+		Position: position,
+		Token:    token,
+		Expected: context,
+		Found:    foundStr,
+		Category: ValidationError,
+		tracker:  p.tracker,
+	}
+}
+
+// Helper methods for common error patterns
+
+// expectToken creates a syntax error for unexpected tokens
+func (p *Parser) expectToken(expected []string, found *Token) *ParseError {
+	var message string
+	if len(expected) == 1 {
+		message = fmt.Sprintf("expected %s", expected[0])
+	} else {
+		message = fmt.Sprintf("expected one of: %s", strings.Join(expected, ", "))
+	}
+
+	return p.newSyntaxError(ErrExpectedKeyword, message, expected, found)
+}
+
+// expectKeyword creates a syntax error for missing keywords
+func (p *Parser) expectKeyword(keyword string, found *Token) *ParseError {
+	message := fmt.Sprintf("expected keyword '%s'", keyword)
+	return p.newSyntaxError(ErrExpectedKeyword, message, []string{keyword}, found)
+}
+
+// expectIdentifier creates a syntax error for missing identifiers
+func (p *Parser) expectIdentifier(found *Token) *ParseError {
+	return p.newSyntaxError(ErrExpectedIdentifier, "expected identifier", []string{"identifier"}, found)
+}
+
+// expectDataType creates a type error for invalid data types with Iceberg suggestions
+func (p *Parser) expectDataType(found *Token) *ParseError {
+	// Provide common Iceberg type suggestions
+	suggestions := []string{
+		"boolean", "int32", "int64", "float32", "float64",
+		"decimal", "string", "binary", "date", "time",
+		"timestamp", "timestamptz", "uuid",
+	}
+
+	message := "expected valid Iceberg data type"
+	return p.newTypeError(ErrInvalidIcebergType, message, found, suggestions)
+}
+
+// expectLiteral creates a syntax error for missing literals
+func (p *Parser) expectLiteral(found *Token) *ParseError {
+	return p.newSyntaxError(ErrExpectedLiteral, "expected literal value", []string{"literal"}, found)
+}
+
+// expectPunctuation creates a syntax error for missing punctuation
+func (p *Parser) expectPunctuation(punctuation string, found *Token) *ParseError {
+	var code errors.Code
+	switch punctuation {
+	case "(":
+		code = ErrExpectedLeftParen
+	case ")":
+		code = ErrExpectedRightParen
+	case ",":
+		code = ErrExpectedComma
+	case ";":
+		code = ErrMissingSemicolon
+	default:
+		code = ErrExpectedKeyword
+	}
+
+	message := fmt.Sprintf("expected '%s'", punctuation)
+	return p.newSyntaxError(code, message, []string{punctuation}, found)
+}
+
+// Error recovery methods for multi-error reporting
+
+// addError adds an error to the collector and determines if parsing should continue
+// Returns true if parsing should continue (error recovery), false if it should stop
+func (p *Parser) addError(err *ParseError) bool {
+	if !p.errorCollector.AddError(err) {
+		// Error limit reached, stop parsing
+		return false
+	}
+
+	p.recoveryMode = true
+	p.errorCollector.SetRecovered()
+	return true
+}
+
+// recoverFromError attempts to recover from a parsing error by finding a safe synchronization point
+// Returns true if recovery was successful and parsing can continue
+func (p *Parser) recoverFromError(err *ParseError) bool {
+	if !p.addError(err) {
+		return false
+	}
+
+	// Try different recovery strategies based on error type and context
+	return p.synchronizeToSafePoint()
+}
+
+// synchronizeToSafePoint finds a safe point to resume parsing after an error
+// Looks for statement boundaries, keywords, or other synchronization tokens
+func (p *Parser) synchronizeToSafePoint() bool {
+	// Define synchronization tokens - points where we can safely resume parsing
+	syncTokens := map[TokenType]bool{
+		SEMICOLON_TOK: true, // End of statement
+		EOF_TOK:       true, // End of input
+	}
+
+	syncKeywords := map[string]bool{
+		"CREATE":   true,
+		"DROP":     true,
+		"SELECT":   true,
+		"INSERT":   true,
+		"UPDATE":   true,
+		"DELETE":   true,
+		"BEGIN":    true,
+		"COMMIT":   true,
+		"ROLLBACK": true,
+		"GRANT":    true,
+		"REVOKE":   true,
+		"SHOW":     true,
+		"ALTER":    true,
+		"USE":      true,
+	}
+
+	// Skip tokens until we find a synchronization point
+	maxSkip := 50 // Prevent infinite loops
+	skipped := 0
+
+	for skipped < maxSkip && p.pos < len(p.lexer.tokens) {
+		currentToken := p.peek(0)
+
+		// Check for synchronization tokens
+		if syncTokens[currentToken.tokenT] {
+			if currentToken.tokenT == SEMICOLON_TOK {
+				p.consume() // Consume the semicolon
+			}
+			return true
+		}
+
+		// Check for synchronization keywords
+		if currentToken.tokenT == KEYWORD_TOK {
+			if keyword, ok := currentToken.value.(string); ok {
+				if syncKeywords[keyword] {
+					return true
+				}
+			}
+		}
+
+		p.consume()
+		skipped++
+	}
+
+	// If we've reached the end or skipped too many tokens, stop recovery
+	return false
+}
+
+// tryRecoverFromMissingToken attempts to recover from missing token errors
+// Returns true if recovery was successful
+func (p *Parser) tryRecoverFromMissingToken(expected string) bool {
+	// For certain missing tokens, we can continue parsing
+	switch expected {
+	case ",":
+		// Missing comma in lists - continue parsing the next item
+		return true
+	case ")":
+		// Missing closing parenthesis - try to find the next one
+		return p.skipToToken(RPAREN_TOK, 10)
+	case "(":
+		// Missing opening parenthesis - less recoverable
+		return false
+	default:
+		return false
+	}
+}
+
+// skipToToken skips tokens until finding the specified token type
+// Returns true if the token was found within maxSkip tokens
+func (p *Parser) skipToToken(tokenType TokenType, maxSkip int) bool {
+	skipped := 0
+	for skipped < maxSkip && p.pos < len(p.lexer.tokens) {
+		if p.peek(0).tokenT == tokenType {
+			return true
+		}
+		p.consume()
+		skipped++
+	}
+	return false
+}
+
+// isRecoverableError determines if an error is recoverable based on its type and context
+func (p *Parser) isRecoverableError(err *ParseError) bool {
+	// Some errors are more recoverable than others
+	switch err.Code {
+	case ErrExpectedComma, ErrExpectedRightParen, ErrExpectedLeftParen:
+		return true
+	case ErrExpectedKeyword:
+		// Keyword errors might be recoverable depending on context
+		return len(err.Expected) == 1
+	case ErrExpectedIdentifier, ErrExpectedLiteral:
+		return true
+	case ErrMissingSemicolon:
+		// Missing semicolon is usually recoverable
+		return true
+	default:
+		return false
+	}
+}
+
+// handleParsingError processes a parsing error with recovery logic
+// Returns the error to return (nil if recovered) and whether to continue parsing
+func (p *Parser) handleParsingError(err *ParseError) (error, bool) {
+	if !p.isRecoverableError(err) {
+		// Non-recoverable error, add to collector and stop
+		p.addError(err)
+		return p.errorCollector.CreateMultiError(), false
+	}
+
+	// Try to recover from the error
+	if p.recoverFromError(err) {
+		// Recovery successful, continue parsing
+		return nil, true
+	}
+
+	// Recovery failed, return collected errors
+	return p.errorCollector.CreateMultiError(), false
+}
+
+// finalizeErrors returns the appropriate error(s) at the end of parsing
+func (p *Parser) finalizeErrors() error {
+	if !p.errorCollector.HasErrors() {
+		return nil
+	}
+
+	return p.errorCollector.CreateMultiError()
+}
+
+// peekToken returns a pointer to the token at the given offset
+func (p *Parser) peekToken(offset int) *Token {
+	if p.pos+offset >= len(p.lexer.tokens) {
+		eofToken := Token{tokenT: EOF_TOK, Position: TokenPosition{Offset: len(p.lexer.input), Length: 0}}
+		return &eofToken
+	}
+	return &p.lexer.tokens[p.pos+offset]
+}
+
 // peek returns the next token
 func (p *Parser) peek(i int) Token {
 	if p.pos+i >= len(p.lexer.tokens) {
-		return Token{tokenT: EOF_TOK}
+		return Token{tokenT: EOF_TOK, Position: TokenPosition{Offset: len(p.lexer.input), Length: 0}}
 	}
 	return p.lexer.tokens[p.pos+i]
 }
@@ -657,7 +1018,7 @@ func (p *Parser) rewind(i int) {
 // peekBack returns the previous token
 func (p *Parser) peekBack(i int) Token {
 	if p.pos-i < len(p.lexer.tokens) || p.pos-i > len(p.lexer.tokens) {
-		return Token{tokenT: EOF_TOK}
+		return Token{tokenT: EOF_TOK, Position: TokenPosition{Offset: len(p.lexer.input), Length: 0}}
 	}
 	return p.lexer.tokens[p.pos-i]
 }
@@ -748,6 +1109,403 @@ func (p *Parser) Parse() (Node, error) {
 
 	return nil, errors.New(ErrExpectedKeyword, "expected keyword", nil)
 
+}
+
+// ParseWithRecovery parses the input with error recovery and multi-error reporting
+// This is a separate method that can be used when you specifically want error recovery
+func (p *Parser) ParseWithRecovery() (Node, error) {
+	p.lexer.tokenize()      // Tokenize the input
+	p.lexer.stripComments() // Strip comments
+
+	// Check if statement is empty
+	if len(p.lexer.tokens) == 0 {
+		emptyErr := p.newSyntaxError(ErrEmptyStatement, "empty statement", []string{"SQL statement"}, nil)
+		p.addError(emptyErr)
+		return nil, p.finalizeErrors()
+	}
+
+	if len(p.lexer.tokens) < 1 {
+		invalidErr := p.newSyntaxError(ErrInvalidStatement, "invalid statement", []string{"valid SQL"}, nil)
+		p.addError(invalidErr)
+		return nil, p.finalizeErrors()
+	}
+
+	// Check if statement ends with a semicolon
+	if p.lexer.tokens[len(p.lexer.tokens)-1].tokenT != SEMICOLON_TOK {
+		lastToken := &p.lexer.tokens[len(p.lexer.tokens)-1]
+		semicolonErr := p.expectPunctuation(";", lastToken)
+
+		// Missing semicolon is recoverable - try to continue parsing
+		if err, shouldContinue := p.handleParsingError(semicolonErr); !shouldContinue {
+			return nil, err
+		}
+	}
+
+	// Parse the main statement with error recovery
+	node, err := p.parseMainStatementWithRecovery()
+
+	// If we have parsing errors, return them along with any successfully parsed node
+	if p.errorCollector.HasErrors() {
+		if err != nil {
+			// Add the final error to the collection
+			if parseErr, ok := IsParseError(err); ok {
+				p.addError(parseErr)
+			}
+		}
+		return node, p.finalizeErrors()
+	}
+
+	return node, err
+}
+
+// parseMainStatementWithRecovery parses the main SQL statement with error recovery
+func (p *Parser) parseMainStatementWithRecovery() (Node, error) {
+	// Check if statement starts with a keyword
+	if p.peek(0).tokenT != KEYWORD_TOK {
+		expectedErr := p.expectKeyword("SQL keyword", p.peekToken(0))
+		if err, shouldContinue := p.handleParsingError(expectedErr); !shouldContinue {
+			return nil, err
+		}
+
+		// Try to recover by finding the next keyword
+		if !p.synchronizeToSafePoint() {
+			return nil, p.finalizeErrors()
+		}
+	}
+
+	// Parse based on the keyword
+	switch p.peek(0).value {
+	case "CREATE":
+		return p.parseCreateStmtWithRecovery()
+	case "DROP":
+		return p.parseDropStmtWithRecovery()
+	case "USE":
+		return p.parseUseStmtWithRecovery()
+	case "INSERT":
+		return p.parseInsertStmtWithRecovery()
+	case "SELECT":
+		return p.parseSelectStmtWithRecovery()
+	case "UPDATE":
+		return p.parseUpdateStmtWithRecovery()
+	case "DELETE":
+		return p.parseDeleteStmtWithRecovery()
+	case "BEGIN":
+		return p.parseBeginStmt()
+	case "COMMIT":
+		return p.parseCommitStmt()
+	case "ROLLBACK":
+		return p.parseRollbackStmt()
+	case "GRANT":
+		return p.parseGrantStmtWithRecovery()
+	case "REVOKE":
+		return p.parseRevokeStmtWithRecovery()
+	case "SHOW":
+		return p.parseShowStmtWithRecovery()
+	case "ALTER":
+		return p.parseAlterStmtWithRecovery()
+	case "DECLARE":
+		return p.parseDeclareStmtWithRecovery()
+	case "OPEN":
+		return p.parseOpenStmt()
+	case "CLOSE":
+		return p.parseCloseStmt()
+	case "DEALLOCATE":
+		return p.parseDeallocateStmt()
+	case "FETCH":
+		return p.parseFetchStmt()
+	case "WHILE":
+		return p.parseWhileStmtWithRecovery()
+	case "PRINT":
+		return p.parsePrintStmt()
+	case "EXEC":
+		return p.parseExecStmtWithRecovery()
+	case "EXPLAIN":
+		return p.parseExplainStmtWithRecovery()
+	default:
+		unknownErr := p.newSyntaxError(ErrExpectedKeyword,
+			fmt.Sprintf("unknown keyword '%v'", p.peek(0).value),
+			[]string{"CREATE", "DROP", "SELECT", "INSERT", "UPDATE", "DELETE"},
+			p.peekToken(0))
+		return nil, unknownErr
+	}
+}
+
+// Wrapper methods for parsing with error recovery
+// These methods wrap the original parsing methods with error recovery logic
+
+// parseCreateStmtWithRecovery wraps parseCreateStmt with error recovery
+func (p *Parser) parseCreateStmtWithRecovery() (Node, error) {
+	node, err := p.parseCreateStmt()
+	if err != nil {
+		if parseErr, ok := IsParseError(err); ok {
+			if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+				return node, recoveryErr
+			}
+			// Error was recovered, continue with partial result
+			return node, nil
+		}
+		// Non-ParseError, convert and handle
+		parseErr := p.newSyntaxError(ErrInvalidStatement, err.Error(), []string{"valid CREATE statement"}, p.peekToken(0))
+		if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+			return node, recoveryErr
+		}
+	}
+	return node, err
+}
+
+// parseSelectStmtWithRecovery wraps parseSelectStmt with error recovery
+func (p *Parser) parseSelectStmtWithRecovery() (Node, error) {
+	node, err := p.parseSelectStmt()
+	if err != nil {
+		if parseErr, ok := IsParseError(err); ok {
+			if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+				return node, recoveryErr
+			}
+			return node, nil
+		}
+		parseErr := p.newSyntaxError(ErrInvalidStatement, err.Error(), []string{"valid SELECT statement"}, p.peekToken(0))
+		if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+			return node, recoveryErr
+		}
+	}
+	return node, err
+}
+
+// parseInsertStmtWithRecovery wraps parseInsertStmt with error recovery
+func (p *Parser) parseInsertStmtWithRecovery() (Node, error) {
+	node, err := p.parseInsertStmt()
+	if err != nil {
+		if parseErr, ok := IsParseError(err); ok {
+			if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+				return node, recoveryErr
+			}
+			return node, nil
+		}
+		parseErr := p.newSyntaxError(ErrInvalidStatement, err.Error(), []string{"valid INSERT statement"}, p.peekToken(0))
+		if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+			return node, recoveryErr
+		}
+	}
+	return node, err
+}
+
+// parseUpdateStmtWithRecovery wraps parseUpdateStmt with error recovery
+func (p *Parser) parseUpdateStmtWithRecovery() (Node, error) {
+	node, err := p.parseUpdateStmt()
+	if err != nil {
+		if parseErr, ok := IsParseError(err); ok {
+			if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+				return node, recoveryErr
+			}
+			return node, nil
+		}
+		parseErr := p.newSyntaxError(ErrInvalidStatement, err.Error(), []string{"valid UPDATE statement"}, p.peekToken(0))
+		if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+			return node, recoveryErr
+		}
+	}
+	return node, err
+}
+
+// parseDeleteStmtWithRecovery wraps parseDeleteStmt with error recovery
+func (p *Parser) parseDeleteStmtWithRecovery() (Node, error) {
+	node, err := p.parseDeleteStmt()
+	if err != nil {
+		if parseErr, ok := IsParseError(err); ok {
+			if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+				return node, recoveryErr
+			}
+			return node, nil
+		}
+		parseErr := p.newSyntaxError(ErrInvalidStatement, err.Error(), []string{"valid DELETE statement"}, p.peekToken(0))
+		if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+			return node, recoveryErr
+		}
+	}
+	return node, err
+}
+
+// Additional recovery wrapper methods for other statement types
+// (Similar pattern for DROP, USE, GRANT, REVOKE, SHOW, ALTER, etc.)
+
+// parseDropStmtWithRecovery wraps parseDropStmt with error recovery
+func (p *Parser) parseDropStmtWithRecovery() (Node, error) {
+	node, err := p.parseDropStmt()
+	if err != nil {
+		if parseErr, ok := IsParseError(err); ok {
+			if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+				return node, recoveryErr
+			}
+			return node, nil
+		}
+		parseErr := p.newSyntaxError(ErrInvalidStatement, err.Error(), []string{"valid DROP statement"}, p.peekToken(0))
+		if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+			return node, recoveryErr
+		}
+	}
+	return node, err
+}
+
+// parseUseStmtWithRecovery wraps parseUseStmt with error recovery
+func (p *Parser) parseUseStmtWithRecovery() (Node, error) {
+	node, err := p.parseUseStmt()
+	if err != nil {
+		if parseErr, ok := IsParseError(err); ok {
+			if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+				return node, recoveryErr
+			}
+			return node, nil
+		}
+		parseErr := p.newSyntaxError(ErrInvalidStatement, err.Error(), []string{"valid USE statement"}, p.peekToken(0))
+		if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+			return node, recoveryErr
+		}
+	}
+	return node, err
+}
+
+// parseGrantStmtWithRecovery wraps parseGrantStmt with error recovery
+func (p *Parser) parseGrantStmtWithRecovery() (Node, error) {
+	node, err := p.parseGrantStmt()
+	if err != nil {
+		if parseErr, ok := IsParseError(err); ok {
+			if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+				return node, recoveryErr
+			}
+			return node, nil
+		}
+		parseErr := p.newSyntaxError(ErrInvalidStatement, err.Error(), []string{"valid GRANT statement"}, p.peekToken(0))
+		if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+			return node, recoveryErr
+		}
+	}
+	return node, err
+}
+
+// parseRevokeStmtWithRecovery wraps parseRevokeStmt with error recovery
+func (p *Parser) parseRevokeStmtWithRecovery() (Node, error) {
+	node, err := p.parseRevokeStmt()
+	if err != nil {
+		if parseErr, ok := IsParseError(err); ok {
+			if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+				return node, recoveryErr
+			}
+			return node, nil
+		}
+		parseErr := p.newSyntaxError(ErrInvalidStatement, err.Error(), []string{"valid REVOKE statement"}, p.peekToken(0))
+		if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+			return node, recoveryErr
+		}
+	}
+	return node, err
+}
+
+// parseShowStmtWithRecovery wraps parseShowStmt with error recovery
+func (p *Parser) parseShowStmtWithRecovery() (Node, error) {
+	node, err := p.parseShowStmt()
+	if err != nil {
+		if parseErr, ok := IsParseError(err); ok {
+			if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+				return node, recoveryErr
+			}
+			return node, nil
+		}
+		parseErr := p.newSyntaxError(ErrInvalidStatement, err.Error(), []string{"valid SHOW statement"}, p.peekToken(0))
+		if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+			return node, recoveryErr
+		}
+	}
+	return node, err
+}
+
+// parseAlterStmtWithRecovery wraps parseAlterStmt with error recovery
+func (p *Parser) parseAlterStmtWithRecovery() (Node, error) {
+	node, err := p.parseAlterStmt()
+	if err != nil {
+		if parseErr, ok := IsParseError(err); ok {
+			if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+				return node, recoveryErr
+			}
+			return node, nil
+		}
+		parseErr := p.newSyntaxError(ErrInvalidStatement, err.Error(), []string{"valid ALTER statement"}, p.peekToken(0))
+		if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+			return node, recoveryErr
+		}
+	}
+	return node, err
+}
+
+// parseDeclareStmtWithRecovery wraps parseDeclareStmt with error recovery
+func (p *Parser) parseDeclareStmtWithRecovery() (Node, error) {
+	node, err := p.parseDeclareStmt()
+	if err != nil {
+		if parseErr, ok := IsParseError(err); ok {
+			if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+				return node, recoveryErr
+			}
+			return node, nil
+		}
+		parseErr := p.newSyntaxError(ErrInvalidStatement, err.Error(), []string{"valid DECLARE statement"}, p.peekToken(0))
+		if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+			return node, recoveryErr
+		}
+	}
+	return node, err
+}
+
+// parseWhileStmtWithRecovery wraps parseWhileStmt with error recovery
+func (p *Parser) parseWhileStmtWithRecovery() (Node, error) {
+	node, err := p.parseWhileStmt()
+	if err != nil {
+		if parseErr, ok := IsParseError(err); ok {
+			if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+				return node, recoveryErr
+			}
+			return node, nil
+		}
+		parseErr := p.newSyntaxError(ErrInvalidStatement, err.Error(), []string{"valid WHILE statement"}, p.peekToken(0))
+		if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+			return node, recoveryErr
+		}
+	}
+	return node, err
+}
+
+// parseExecStmtWithRecovery wraps parseExecStmt with error recovery
+func (p *Parser) parseExecStmtWithRecovery() (Node, error) {
+	node, err := p.parseExecStmt()
+	if err != nil {
+		if parseErr, ok := IsParseError(err); ok {
+			if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+				return node, recoveryErr
+			}
+			return node, nil
+		}
+		parseErr := p.newSyntaxError(ErrInvalidStatement, err.Error(), []string{"valid EXEC statement"}, p.peekToken(0))
+		if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+			return node, recoveryErr
+		}
+	}
+	return node, err
+}
+
+// parseExplainStmtWithRecovery wraps parseExplainStmt with error recovery
+func (p *Parser) parseExplainStmtWithRecovery() (Node, error) {
+	node, err := p.parseExplainStmt()
+	if err != nil {
+		if parseErr, ok := IsParseError(err); ok {
+			if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+				return node, recoveryErr
+			}
+			return node, nil
+		}
+		parseErr := p.newSyntaxError(ErrInvalidStatement, err.Error(), []string{"valid EXPLAIN statement"}, p.peekToken(0))
+		if recoveryErr, shouldContinue := p.handleParsingError(parseErr); !shouldContinue {
+			return node, recoveryErr
+		}
+	}
+	return node, err
 }
 
 // parseExplainStmt parses an EXPLAIN statement
@@ -1778,7 +2536,7 @@ func (p *Parser) parseDeleteStmt() (Node, error) {
 	p.consume() // Consume DELETE
 
 	if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "FROM" {
-		return nil, errors.New(ErrExpectedFrom, "expected FROM", nil)
+		return nil, p.expectKeyword("FROM", p.peekToken(0))
 	}
 
 	p.consume() // Consume FROM
@@ -1817,7 +2575,7 @@ func (p *Parser) parseUpdateStmt() (Node, error) {
 	}
 
 	if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "SET" {
-		return nil, errors.New(ErrExpectedSet, "expected SET", nil)
+		return nil, p.expectKeyword("SET", p.peekToken(0))
 	}
 
 	p.consume() // Consume SET
@@ -1830,14 +2588,14 @@ func (p *Parser) parseUpdateStmt() (Node, error) {
 	for p.peek(0).value != "WHERE" {
 
 		if p.peek(0).tokenT != IDENT_TOK {
-			return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
+			return nil, p.expectIdentifier(p.peekToken(0))
 		}
 
 		columnName := p.peek(0).value.(string)
 		p.consume() // Consume column name
 
 		if p.peek(0).tokenT != COMPARISON_TOK || p.peek(0).value != "=" {
-			return nil, errors.New(ErrExpectedEquals, "expected =", nil)
+			return nil, p.expectPunctuation("=", p.peekToken(0))
 		}
 
 		p.consume() // Consume =
@@ -2087,14 +2845,14 @@ func (p *Parser) parseInsertStmt() (Node, error) {
 	p.consume()
 
 	if p.peek(0).value != "INTO" {
-		return nil, errors.New(ErrExpectedInto, "expected INTO", nil)
+		return nil, p.expectKeyword("INTO", p.peekToken(0))
 	}
 
 	// Eat INTO
 	p.consume()
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
+		return nil, p.expectIdentifier(p.peekToken(0))
 	}
 
 	// Parse table identifier (can be qualified or unqualified)
@@ -2143,7 +2901,7 @@ func (p *Parser) parseInsertStmt() (Node, error) {
 	// Look for VALUES
 
 	if p.peek(0).value != "VALUES" {
-		return nil, errors.New(ErrExpectedValues, "expected VALUES", nil)
+		return nil, p.expectKeyword("VALUES", p.peekToken(0))
 	}
 
 	p.consume() // Consume VALUES
@@ -2168,7 +2926,8 @@ func (p *Parser) parseInsertStmt() (Node, error) {
 
 			if p.peek(0).tokenT != LITERAL_TOK && p.peek(0).value != "NULL" && p.peek(0).value != "SYS_DATE" && p.peek(0).value != "SYS_TIME" && p.peek(0).value != "SYS_TIMESTAMP" && p.peek(0).value != "GENERATE_UUID" {
 
-				return nil, errors.New(ErrExpectedLiteralOrNull, "expected literal or NULL", nil)
+				return nil, p.newSyntaxError(ErrExpectedLiteralOrNull, "expected literal, NULL, or system function",
+					[]string{"literal", "NULL", "SYS_DATE", "SYS_TIME", "SYS_TIMESTAMP", "GENERATE_UUID"}, p.peekToken(0))
 
 			}
 
@@ -2220,7 +2979,7 @@ func (p *Parser) parseCreateStmt() (Node, error) {
 	p.consume() // Consume CREATE
 
 	if p.peek(0).tokenT != KEYWORD_TOK {
-		return nil, errors.New(ErrExpectedKeyword, "expected keyword", nil)
+		return nil, p.expectToken([]string{"DATABASE", "TABLE", "INDEX", "USER", "PROCEDURE"}, p.peekToken(0))
 	}
 
 	switch strings.ToUpper(p.peek(0).value.(string)) {
@@ -2248,7 +3007,7 @@ func (p *Parser) parseCreateStmt() (Node, error) {
 		return p.parseCreateProcedureStmt()
 	}
 
-	return nil, errors.New(ErrExpectedDatabaseOrTable, "expected DATABASE or TABLE or INDEX", nil)
+	return nil, p.expectToken([]string{"DATABASE", "TABLE", "INDEX", "USER", "PROCEDURE"}, p.peekToken(0))
 
 }
 
@@ -2546,7 +3305,7 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 	createTableStmt.IfNotExists = ifNotExists
 
 	if p.peek(0).tokenT != IDENT_TOK {
-		return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
+		return nil, p.expectIdentifier(p.peekToken(0))
 	}
 
 	// Parse table identifier (can be qualified or unqualified)
@@ -2561,7 +3320,7 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 	}
 
 	if p.peek(0).tokenT != LPAREN_TOK {
-		return nil, errors.New(ErrExpectedLeftParen, "expected (", nil)
+		return nil, p.expectPunctuation("(", p.peekToken(0))
 	}
 
 	p.consume() // Consume (
@@ -2575,66 +3334,97 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 		columnName := p.peek(0).value.(string)
 		p.consume() // Consume column name
 
-		if p.peek(0).tokenT != DATATYPE_TOK {
-			return nil, errors.Newf(ErrUnexpectedDataType, "expected data type, got token type %d with value %v", p.peek(0).tokenT, p.peek(0).value)
+		// Check for duplicate column names during parsing
+		if _, exists := createTableStmt.TableSchema.ColumnDefinitions[columnName]; exists {
+			return nil, p.newValidationError(ErrDuplicateColumnName,
+				fmt.Sprintf("duplicate column name '%s'", columnName),
+				&p.lexer.tokens[p.pos-1], // Previous token was the column name
+				[]string{"unique column name"})
 		}
 
-		dataType := p.peek(0).value.(string)
+		// Parse Iceberg data type (can be DATATYPE_TOK, IDENT_TOK, or KEYWORD_TOK for legacy types)
+		var dataType string
+		if p.peek(0).tokenT == DATATYPE_TOK {
+			dataType = p.peek(0).value.(string)
+			p.consume() // Consume data type
+		} else if p.peek(0).tokenT == IDENT_TOK {
+			// Handle identifiers that might be Iceberg types or legacy SQL types
+			dataType = p.peek(0).value.(string)
+			p.consume() // Consume the identifier
+		} else if p.peek(0).tokenT == KEYWORD_TOK {
+			// Handle legacy SQL types that come through as keywords
+			dataType = p.peek(0).value.(string)
+			p.consume() // Consume the keyword
+
+			// Skip any parameters for legacy SQL types (e.g., VARCHAR(255))
+			if p.peek(0).tokenT == LPAREN_TOK {
+				p.consume() // Consume (
+				// Skip until we find the closing parenthesis
+				depth := 1
+				for depth > 0 && p.peek(0).tokenT != EOF_TOK {
+					if p.peek(0).tokenT == LPAREN_TOK {
+						depth++
+					} else if p.peek(0).tokenT == RPAREN_TOK {
+						depth--
+					}
+					p.consume()
+				}
+			}
+		} else {
+			return nil, p.expectDataType(p.peekToken(0))
+		}
+
+		// Validate Iceberg type immediately during parsing
+		if err := p.validateIcebergType(dataType); err != nil {
+			return nil, err
+		}
+
+		// Create column definition (always create it here to ensure consistency)
 		createTableStmt.TableSchema.ColumnDefinitions[columnName] = &ColumnDefinition{
-			DataType: dataType,
+			Name:       columnName,
+			DataType:   dataType,
+			IsNullable: true, // Default to nullable
 		}
 
-		p.consume() // Consume data type
+		// Handle decimal(precision,scale) format for Iceberg decimal types
+		if p.peek(0).tokenT == LPAREN_TOK && dataType == types.IcebergDecimal {
+			p.consume() // Consume (
 
-		// check for DATATYPE(LEN) or DATATYPE(PRECISION, SCALE)
-		if p.peek(0).tokenT == LPAREN_TOK {
-			switch dataType {
-			case "CHAR", "CHARACTER", "BINARY", "VARCHAR":
-				p.consume() // Consume (
+			if p.peek(0).tokenT != LITERAL_TOK {
+				return nil, p.expectLiteral(p.peekToken(0))
+			}
 
-				if p.peek(0).tokenT != LITERAL_TOK {
-					return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
-				}
+			precision := p.peek(0).value.(uint64)
+			p.consume() // Consume precision literal
 
-				length := p.peek(0).value.(uint64)
-				p.consume() // Consume literal
+			if p.peek(0).tokenT != COMMA_TOK {
+				return nil, p.expectPunctuation(",", p.peekToken(0))
+			}
 
-				if p.peek(0).tokenT != RPAREN_TOK {
-					return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
-				}
+			p.consume() // Consume ,
 
-				p.consume() // Consume )
-				createTableStmt.TableSchema.ColumnDefinitions[columnName].Length = int(length)
-			case "DEC", "DECIMAL", "NUMERIC", "REAL", "FLOAT", "DOUBLE":
-				p.consume() // Consume (
+			if p.peek(0).tokenT != LITERAL_TOK {
+				return nil, p.expectLiteral(p.peekToken(0))
+			}
 
-				if p.peek(0).tokenT != LITERAL_TOK {
-					return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
-				}
+			scale := p.peek(0).value.(uint64)
+			p.consume() // Consume scale literal
 
-				precision := p.peek(0).value.(uint64)
-				p.consume() // Consume literal
+			if p.peek(0).tokenT != RPAREN_TOK {
+				return nil, p.expectPunctuation(")", p.peekToken(0))
+			}
 
-				if p.peek(0).tokenT != COMMA_TOK {
-					return nil, errors.New(ErrExpectedComma, "expected ,", nil)
-				}
+			p.consume() // Consume )
 
-				p.consume() // Consume ,
+			// Update the data type to include precision and scale
+			dataType = fmt.Sprintf("decimal(%d,%d)", precision, scale)
+			createTableStmt.TableSchema.ColumnDefinitions[columnName].DataType = dataType
+			createTableStmt.TableSchema.ColumnDefinitions[columnName].Precision = int(precision)
+			createTableStmt.TableSchema.ColumnDefinitions[columnName].Scale = int(scale)
 
-				if p.peek(0).tokenT != LITERAL_TOK {
-					return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
-				}
-
-				scale := p.peek(0).value.(uint64)
-				p.consume() // Consume literal
-
-				if p.peek(0).tokenT != RPAREN_TOK {
-					return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
-				}
-
-				p.consume() // Consume )
-				createTableStmt.TableSchema.ColumnDefinitions[columnName].Precision = int(precision)
-				createTableStmt.TableSchema.ColumnDefinitions[columnName].Scale = int(scale)
+			// Validate the decimal type
+			if err := p.validateIcebergType(dataType); err != nil {
+				return nil, err
 			}
 		}
 
@@ -2654,7 +3444,7 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 	if p.peek(0).tokenT == RPAREN_TOK {
 		p.consume() // Consume )
 	} else {
-		return nil, errors.New(ErrExpectedRightParen, "expected )", nil)
+		return nil, p.expectPunctuation(")", p.peekToken(0))
 	}
 
 	// Parse additional clauses (STORAGE, PARTITION BY, ORDER BY, SETTINGS, ENGINE)
@@ -2694,7 +3484,114 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 		}
 	}
 
+	// Validate the complete CREATE TABLE statement with Iceberg types
+	if err := createTableStmt.Validate(); err != nil {
+		return nil, err
+	}
+
 	return createTableStmt, nil
+}
+
+// validateIcebergType validates an Iceberg type string during parsing
+func (p *Parser) validateIcebergType(typeStr string) error {
+	validator := types.NewIcebergTypeValidator()
+	if !validator.IsValidType(typeStr) {
+		// Get the current token for error context
+		currentToken := &p.lexer.tokens[p.pos-1] // Previous token was the type
+
+		// Check if it's a legacy SQL type and provide migration suggestion
+		if suggestion, err := validator.GetMigrationSuggestion(strings.ToUpper(typeStr)); err == nil {
+			message := fmt.Sprintf("unsupported SQL type '%s'. Use Iceberg type '%s' instead", typeStr, suggestion)
+			return p.newTypeError(ErrUnsupportedSQLType, message, currentToken, []string{suggestion})
+		}
+
+		// Provide common Iceberg type suggestions
+		suggestions := []string{
+			"boolean", "int32", "int64", "float32", "float64",
+			"decimal", "string", "binary", "date", "time",
+			"timestamp", "timestamptz", "uuid",
+		}
+
+		message := fmt.Sprintf("invalid Iceberg type '%s'", typeStr)
+		return p.newTypeError(ErrInvalidIcebergType, message, currentToken, suggestions)
+	}
+	return nil
+}
+
+// parseComplexIcebergType parses complex Iceberg types like list<string>, map<string,int32>, struct<name:string,age:int32>
+func (p *Parser) parseComplexIcebergType() (string, error) {
+	var typeStr strings.Builder
+	depth := 0
+
+	// Parse the complete type string including nested brackets
+	for {
+		if p.peek(0).tokenT == EOF_TOK {
+			break
+		}
+
+		token := p.peek(0)
+		switch token.tokenT {
+		case IDENT_TOK:
+			typeStr.WriteString(token.value.(string))
+			p.consume()
+		case COMPARISON_TOK:
+			if token.value == "<" {
+				typeStr.WriteString("<")
+				depth++
+				p.consume()
+			} else if token.value == ">" {
+				typeStr.WriteString(">")
+				depth--
+				p.consume()
+				if depth == 0 {
+					// Finished parsing the complex type
+					return typeStr.String(), nil
+				}
+			} else {
+				return "", errors.New(ErrComplexTypeParseError,
+					fmt.Sprintf("unexpected comparison operator '%s' in type definition", token.value), nil)
+			}
+		case COMMA_TOK:
+			if depth > 0 {
+				typeStr.WriteString(",")
+				p.consume()
+			} else {
+				// End of type definition, comma separates columns
+				return typeStr.String(), nil
+			}
+		case LPAREN_TOK:
+			typeStr.WriteString("(")
+			p.consume()
+		case RPAREN_TOK:
+			if depth > 0 {
+				typeStr.WriteString(")")
+				p.consume()
+			} else {
+				// End of column definitions
+				return typeStr.String(), nil
+			}
+		case LITERAL_TOK:
+			typeStr.WriteString(fmt.Sprintf("%v", token.value))
+			p.consume()
+		case DOT_TOK:
+			typeStr.WriteString(":") // Convert dot to colon for struct field separator
+			p.consume()
+		default:
+			// Stop parsing if we hit an unexpected token
+			if depth == 0 {
+				return typeStr.String(), nil
+			}
+			return "", errors.New(ErrComplexTypeParseError,
+				fmt.Sprintf("unexpected token in complex type: %v", token.value), nil)
+		}
+	}
+
+	if depth > 0 {
+		return "", errors.New(ErrComplexTypeParseError,
+			"unclosed angle brackets in complex type definition", nil)
+	}
+
+	return typeStr.String(), nil
 }
 
 func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnName string) error {
@@ -2736,16 +3633,22 @@ func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnN
 
 				defaultValue := p.peek(0).value
 
+				// Store default value as string for Iceberg compatibility
 				if defaultValue == "SYS_DATE" {
-					createTableStmt.TableSchema.ColumnDefinitions[columnName].Default = &SysDate{}
+					createTableStmt.TableSchema.ColumnDefinitions[columnName].DefaultValue = "SYS_DATE"
 				} else if defaultValue == "SYS_TIME" {
-					createTableStmt.TableSchema.ColumnDefinitions[columnName].Default = &SysTimestamp{}
+					createTableStmt.TableSchema.ColumnDefinitions[columnName].DefaultValue = "SYS_TIME"
 				} else if defaultValue == "SYS_TIMESTAMP" {
-					createTableStmt.TableSchema.ColumnDefinitions[columnName].Default = &SysTimestamp{}
+					createTableStmt.TableSchema.ColumnDefinitions[columnName].DefaultValue = "SYS_TIMESTAMP"
 				} else if defaultValue == "GENERATE_UUID" {
-					createTableStmt.TableSchema.ColumnDefinitions[columnName].Default = &GenUUID{}
+					createTableStmt.TableSchema.ColumnDefinitions[columnName].DefaultValue = "GENERATE_UUID"
 				} else {
-					createTableStmt.TableSchema.ColumnDefinitions[columnName].Default = &Literal{Value: defaultValue}
+					// Remove quotes from string literals
+					defaultStr := fmt.Sprintf("%v", defaultValue)
+					if len(defaultStr) >= 2 && defaultStr[0] == '\'' && defaultStr[len(defaultStr)-1] == '\'' {
+						defaultStr = defaultStr[1 : len(defaultStr)-1] // Remove surrounding quotes
+					}
+					createTableStmt.TableSchema.ColumnDefinitions[columnName].DefaultValue = defaultStr
 				}
 
 				p.consume() // Consume literal or keyword
@@ -2842,6 +3745,7 @@ func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnN
 				p.consume() // Consume NULL
 
 				createTableStmt.TableSchema.ColumnDefinitions[columnName].NotNull = true
+				createTableStmt.TableSchema.ColumnDefinitions[columnName].IsNullable = false
 			case "UNIQUE":
 				createTableStmt.TableSchema.ColumnDefinitions[columnName].Unique = true
 
@@ -3050,7 +3954,7 @@ func (p *Parser) parseSelectStmt() (Node, error) {
 	// Look for GROUP BY
 	if p.peek(0).value == "GROUP" {
 		if p.peek(1).value != "BY" {
-			return nil, errors.New(ErrExpectedKeyword, "expected BY", nil)
+			return nil, p.expectKeyword("BY", p.peekToken(1))
 
 		} else {
 			p.consume()
@@ -3079,7 +3983,7 @@ func (p *Parser) parseSelectStmt() (Node, error) {
 	// Look for ORDER BY
 	if p.peek(0).value == "ORDER" {
 		if p.peek(1).value != "BY" {
-			return nil, errors.New(ErrExpectedKeyword, "expected BY", nil)
+			return nil, p.expectKeyword("BY", p.peekToken(1))
 
 		} else {
 
@@ -3132,7 +4036,7 @@ func (p *Parser) parseLimitClause() (*LimitClause, error) {
 	p.consume()
 
 	if p.peek(0).tokenT != LITERAL_TOK {
-		return nil, errors.New(ErrExpectedLiteral, "expected literal", nil)
+		return nil, p.expectLiteral(p.peekToken(0))
 	}
 
 	count := p.peek(0).value.(uint64)

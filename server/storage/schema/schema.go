@@ -25,6 +25,82 @@ var (
 	ParquetSchemaTypeMismatch           = errors.MustNewCode("parquet.schema_type_mismatch")
 )
 
+// DetailedValidationError represents a detailed validation error with context
+// This implements Requirement 4.1, 4.2, 4.3 for detailed error information
+type DetailedValidationError struct {
+	RowIndex     int         `json:"row_index"`
+	ColumnIndex  int         `json:"column_index"`
+	ColumnName   string      `json:"column_name"`
+	ExpectedType string      `json:"expected_type"`
+	ActualType   string      `json:"actual_type"`
+	Value        interface{} `json:"value"`
+	Message      string      `json:"message"`
+	TableName    string      `json:"table_name"`
+	Database     string      `json:"database"`
+}
+
+// Error implements the error interface
+func (ve DetailedValidationError) Error() string {
+	return ve.Message
+}
+
+// NewDetailedValidationError creates a new validation error with comprehensive context
+// Requirement 4.1, 4.2, 4.3: Include specific validation failure reason, row/column info, and type information
+func NewDetailedValidationError(rowIndex, columnIndex int, columnName, expectedType, actualType string, value interface{}, database, tableName string) *DetailedValidationError {
+	message := fmt.Sprintf("validation failed at row %d, column %d (%s): expected %s but got %s (value: %v)",
+		rowIndex, columnIndex, columnName, expectedType, actualType, value)
+
+	return &DetailedValidationError{
+		RowIndex:     rowIndex,
+		ColumnIndex:  columnIndex,
+		ColumnName:   columnName,
+		ExpectedType: expectedType,
+		ActualType:   actualType,
+		Value:        value,
+		Message:      message,
+		TableName:    tableName,
+		Database:     database,
+	}
+}
+
+// NewColumnCountValidationError creates a validation error for column count mismatches
+// Requirement 4.1, 4.2: Include specific validation failure reason and row information
+func NewColumnCountValidationError(rowIndex, actualColumns, expectedColumns int, database, tableName string) *DetailedValidationError {
+	message := fmt.Sprintf("validation failed at row %d: expected %d columns but got %d columns",
+		rowIndex, expectedColumns, actualColumns)
+
+	return &DetailedValidationError{
+		RowIndex:     rowIndex,
+		ColumnIndex:  -1, // Not applicable for column count errors
+		ColumnName:   "",
+		ExpectedType: fmt.Sprintf("%d columns", expectedColumns),
+		ActualType:   fmt.Sprintf("%d columns", actualColumns),
+		Value:        actualColumns,
+		Message:      message,
+		TableName:    tableName,
+		Database:     database,
+	}
+}
+
+// NewNullValueValidationError creates a validation error for null value violations
+// Requirement 4.1, 4.2, 4.3: Include specific validation failure reason, row/column info, and field requirements
+func NewNullValueValidationError(rowIndex, columnIndex int, columnName, database, tableName string) *DetailedValidationError {
+	message := fmt.Sprintf("validation failed at row %d, column %d (%s): field cannot be null",
+		rowIndex, columnIndex, columnName)
+
+	return &DetailedValidationError{
+		RowIndex:     rowIndex,
+		ColumnIndex:  columnIndex,
+		ColumnName:   columnName,
+		ExpectedType: "non-null value",
+		ActualType:   "null",
+		Value:        nil,
+		Message:      message,
+		TableName:    tableName,
+		Database:     database,
+	}
+}
+
 // Manager handles schema conversion and validation
 type Manager struct {
 	config *ParquetConfig
@@ -157,6 +233,8 @@ func (sm *Manager) convertStructType(st *iceberg.StructType) (arrow.DataType, er
 }
 
 // ValidateData validates data against a given schema
+// Requirement 3.4: Return immediately on first validation failure (fail-fast)
+// Requirement 4.1, 4.2, 4.3: Return detailed error information including row and column details
 func (sm *Manager) ValidateData(data [][]interface{}, schema *arrow.Schema) error {
 	if len(data) == 0 {
 		return nil // Empty data is valid
@@ -170,10 +248,49 @@ func (sm *Manager) ValidateData(data [][]interface{}, schema *arrow.Schema) erro
 
 	for rowIndex, row := range data {
 		if len(row) != expectedColumns {
-			return errors.New(ParquetSchemaColumnMismatch, "row has incorrect number of columns", nil).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("actual_columns", fmt.Sprintf("%d", len(row))).AddContext("expected_columns", fmt.Sprintf("%d", expectedColumns))
+			return errors.New(ParquetSchemaColumnMismatch, "row has incorrect number of columns", nil).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("actual_columns", fmt.Sprintf("%d", len(row))).
+				AddContext("expected_columns", fmt.Sprintf("%d", expectedColumns)).
+				AddContext("validation_type", "column_count_mismatch")
 		}
 
+		// Validate each field in the row - fail fast on first error (Requirement 3.4)
 		if err := sm.validateRow(row, schema, rowIndex); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// ValidateDataWithContext validates data against a schema with table context for enhanced error reporting
+// Requirement 4.1, 4.2, 4.3: Include database and table context in validation errors
+func (sm *Manager) ValidateDataWithContext(data [][]interface{}, schema *arrow.Schema, database, tableName string) error {
+	if len(data) == 0 {
+		return nil // Empty data is valid
+	}
+
+	if schema == nil {
+		return errors.New(ParquetSchemaNilSchema, "schema cannot be nil", nil).
+			AddContext("database", database).
+			AddContext("table", tableName)
+	}
+
+	expectedColumns := len(schema.Fields())
+
+	for rowIndex, row := range data {
+		if len(row) != expectedColumns {
+			// Create detailed column count validation error
+			validationErr := NewColumnCountValidationError(rowIndex, len(row), expectedColumns, database, tableName)
+			return errors.New(ParquetSchemaColumnMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "column_count_mismatch")
+		}
+
+		// Validate each field in the row - fail fast on first error (Requirement 3.4)
+		if err := sm.validateRowWithContext(row, schema, rowIndex, database, tableName); err != nil {
 			return err
 		}
 	}
@@ -194,12 +311,29 @@ func (sm *Manager) validateRow(row []interface{}, schema *arrow.Schema, rowIndex
 	return nil
 }
 
+// validateRowWithContext validates a single row against the schema with table context
+// Requirement 4.1, 4.2, 4.3: Include database and table context in validation errors
+func (sm *Manager) validateRowWithContext(row []interface{}, schema *arrow.Schema, rowIndex int, database, tableName string) error {
+	for colIndex, value := range row {
+		field := schema.Field(colIndex)
+
+		if err := sm.validateValueWithContext(value, field, rowIndex, colIndex, database, tableName); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // validateValue validates a single value against a field
 func (sm *Manager) validateValue(value interface{}, field arrow.Field, rowIndex, colIndex int) error {
 	// Handle null values
 	if value == nil {
 		if !field.Nullable {
-			return errors.New(ParquetSchemaFieldCannotBeNull, "field cannot be null", nil).AddContext("field_name", field.Name).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+			return errors.New(ParquetSchemaFieldCannotBeNull, "field cannot be null", nil).
+				AddContext("field_name", field.Name).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 		return nil
 	}
@@ -212,44 +346,190 @@ func (sm *Manager) validateValue(value interface{}, field arrow.Field, rowIndex,
 	return nil
 }
 
+// validateValueWithContext validates a single value against a field with table context
+// Requirement 4.1, 4.2, 4.3: Include detailed validation context including database and table
+func (sm *Manager) validateValueWithContext(value interface{}, field arrow.Field, rowIndex, colIndex int, database, tableName string) error {
+	// Handle null values
+	if value == nil {
+		if !field.Nullable {
+			// Create detailed null value validation error
+			validationErr := NewNullValueValidationError(rowIndex, colIndex, field.Name, database, tableName)
+			return errors.New(ParquetSchemaFieldCannotBeNull, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "null_constraint_violation")
+		}
+		return nil
+	}
+
+	// Validate type compatibility with enhanced error context
+	if err := sm.validateTypeWithContext(value, field.Type, field.Name, rowIndex, colIndex, database, tableName); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // validateType validates that a value is compatible with an Arrow type
 func (sm *Manager) validateType(value interface{}, arrowType arrow.DataType, fieldName string, rowIndex, colIndex int) error {
 	switch arrowType.(type) {
 	case *arrow.BooleanType:
 		if _, ok := value.(bool); !ok {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects boolean", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+			return errors.New(ParquetSchemaTypeMismatch, "field expects boolean", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Int32Type:
 		if !sm.isInt32Compatible(value) {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects int32", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+			return errors.New(ParquetSchemaTypeMismatch, "field expects int32", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Int64Type:
 		if !sm.isInt64Compatible(value) {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects int64", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+			return errors.New(ParquetSchemaTypeMismatch, "field expects int64", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Float32Type:
 		if !sm.isFloat32Compatible(value) {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects float32", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+			return errors.New(ParquetSchemaTypeMismatch, "field expects float32", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Float64Type:
 		if !sm.isFloat64Compatible(value) {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects float64", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+			return errors.New(ParquetSchemaTypeMismatch, "field expects float64", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.StringType:
 		if _, ok := value.(string); !ok {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects string", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+			return errors.New(ParquetSchemaTypeMismatch, "field expects string", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.BinaryType:
 		if _, ok := value.([]byte); !ok {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects []byte", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+			return errors.New(ParquetSchemaTypeMismatch, "field expects []byte", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Date32Type:
 		if !sm.isDateCompatible(value) {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects date", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+			return errors.New(ParquetSchemaTypeMismatch, "field expects date", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.TimestampType:
 		if !sm.isTimestampCompatible(value) {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects timestamp", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+			return errors.New(ParquetSchemaTypeMismatch, "field expects timestamp", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
+		}
+	default:
+		// For complex types, we'll do basic validation
+		return nil
+	}
+
+	return nil
+}
+
+// validateTypeWithContext validates that a value is compatible with an Arrow type with enhanced error context
+// Requirement 4.1, 4.2, 4.3: Include detailed validation context with expected vs actual types
+func (sm *Manager) validateTypeWithContext(value interface{}, arrowType arrow.DataType, fieldName string, rowIndex, colIndex int, database, tableName string) error {
+	actualType := fmt.Sprintf("%T", value)
+
+	switch arrowType.(type) {
+	case *arrow.BooleanType:
+		if _, ok := value.(bool); !ok {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "boolean", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
+		}
+	case *arrow.Int32Type:
+		if !sm.isInt32Compatible(value) {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "int32", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
+		}
+	case *arrow.Int64Type:
+		if !sm.isInt64Compatible(value) {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "int64", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
+		}
+	case *arrow.Float32Type:
+		if !sm.isFloat32Compatible(value) {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "float32", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
+		}
+	case *arrow.Float64Type:
+		if !sm.isFloat64Compatible(value) {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "float64", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
+		}
+	case *arrow.StringType:
+		if _, ok := value.(string); !ok {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "string", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
+		}
+	case *arrow.BinaryType:
+		if _, ok := value.([]byte); !ok {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "[]byte", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
+		}
+	case *arrow.Date32Type:
+		if !sm.isDateCompatible(value) {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "date", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
+		}
+	case *arrow.TimestampType:
+		if !sm.isTimestampCompatible(value) {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "timestamp", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
 		}
 	default:
 		// For complex types, we'll do basic validation

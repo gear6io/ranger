@@ -18,8 +18,10 @@ package parser
 import (
 	// External parser packages commented out - Ranger compatibility
 	"encoding/json"
+	"fmt"
 
 	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/types"
 )
 
 // Node represents an AST node
@@ -100,7 +102,7 @@ type DropIndexStmt struct {
 	IndexName *Identifier
 }
 
-// CreateTableStmt represents a CREATE TABLE statement
+// CreateTableStmt represents a CREATE TABLE statement with Iceberg type support
 type CreateTableStmt struct {
 	TableName   *TableIdentifier
 	TableSchema *TableSchema
@@ -121,6 +123,68 @@ type CreateTableStmt struct {
 
 	// Table settings (raw parsed values from SETTINGS clause)
 	Settings map[string]interface{} // SETTINGS clause
+
+	// Internal validation state
+	validated bool // Track validation state
+}
+
+// Validate validates the CREATE TABLE statement with Iceberg type checking
+func (stmt *CreateTableStmt) Validate() error {
+	if stmt.validated {
+		return nil // Already validated
+	}
+
+	if stmt.TableName == nil {
+		return errors.New(ErrTableNameRequired, "table name is required", nil)
+	}
+
+	if err := stmt.TableName.Validate(); err != nil {
+		return err
+	}
+
+	if stmt.TableSchema == nil || len(stmt.TableSchema.ColumnDefinitions) == 0 {
+		return errors.New(ErrNoColumnsSpecified, "table must have at least one column", nil)
+	}
+
+	// Validate each column definition
+	columnNames := make(map[string]bool)
+	validator := types.NewIcebergTypeValidator()
+
+	for columnName, colDef := range stmt.TableSchema.ColumnDefinitions {
+		if columnName == "" {
+			return errors.New(ErrEmptyColumnName, "column name cannot be empty", nil)
+		}
+
+		if columnNames[columnName] {
+			return errors.New(ErrDuplicateColumnName, fmt.Sprintf("duplicate column name '%s'", columnName), nil)
+		}
+		columnNames[columnName] = true
+
+		// Validate Iceberg type
+		if !validator.IsValidType(colDef.DataType) {
+			supportedTypes := validator.GetSupportedTypes()
+
+			// Check if it's a legacy SQL type and provide migration suggestion
+			if suggestion, err := validator.GetMigrationSuggestion(colDef.DataType); err == nil {
+				return errors.New(ErrUnsupportedSQLType,
+					fmt.Sprintf("column '%s': unsupported SQL type '%s'. Use Iceberg type '%s' instead. No legacy SQL types are supported",
+						columnName, colDef.DataType, suggestion), nil)
+			}
+
+			return errors.New(ErrInvalidIcebergType,
+				fmt.Sprintf("column '%s': invalid Iceberg type '%s'. Supported types: %v",
+					columnName, colDef.DataType, supportedTypes), nil)
+		}
+
+		// Validate complex types
+		if err := validator.ValidateComplexType(colDef.DataType); err != nil {
+			return errors.New(ErrComplexTypeParseError,
+				fmt.Sprintf("column '%s': complex type validation failed: %v", columnName, err), nil)
+		}
+	}
+
+	stmt.validated = true
+	return nil
 }
 
 // DropTableStmt represents a DROP TABLE statement

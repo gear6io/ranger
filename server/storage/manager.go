@@ -20,6 +20,8 @@ import (
 	"github.com/gear6io/ranger/server/storage/filesystem"
 	"github.com/gear6io/ranger/server/storage/memory"
 	"github.com/gear6io/ranger/server/storage/s3"
+	"github.com/gear6io/ranger/server/storage/schema"
+	"github.com/gear6io/ranger/server/storage/schema_manager"
 	"github.com/rs/zerolog"
 )
 
@@ -48,6 +50,7 @@ type Manager struct {
 	meta           *metadata.MetadataManager
 	pathManager    paths.PathManager
 	catalog        catalog.CatalogInterface
+	schemaManager  schema_manager.SchemaManager
 }
 
 // Config holds data storage configuration
@@ -114,6 +117,11 @@ func NewManager(cfg *config.Config, logger zerolog.Logger, meta *metadata.Metada
 		return nil, err
 	}
 
+	// Initialize schema manager
+	if err := manager.initializeSchemaManager(cfg); err != nil {
+		return nil, err
+	}
+
 	return manager, nil
 }
 
@@ -151,6 +159,35 @@ func (m *Manager) initializeStorageEngines(cfg *config.Config) error {
 	return nil
 }
 
+// initializeSchemaManager initializes the schema manager with proper configuration
+func (m *Manager) initializeSchemaManager(cfg *config.Config) error {
+	// Convert config to schema manager config
+	schemaConfig := convertToSchemaManagerConfig(cfg.GetSchemaManagerConfig())
+
+	// Create schema manager
+	m.schemaManager = schema_manager.NewManager(m.meta, schemaConfig, m.logger)
+
+	m.logger.Info().
+		Int("cache_ttl_minutes", int(schemaConfig.CacheTTL/time.Minute)).
+		Int("max_cache_size", schemaConfig.MaxCacheSize).
+		Bool("enable_metrics", schemaConfig.EnableMetrics).
+		Bool("enable_lru", schemaConfig.EnableLRU).
+		Msg("Schema manager initialized successfully")
+
+	return nil
+}
+
+// convertToSchemaManagerConfig converts server config to schema manager config
+func convertToSchemaManagerConfig(cfg config.SchemaManagerConfig) *schema_manager.SchemaManagerConfig {
+	return &schema_manager.SchemaManagerConfig{
+		CacheTTL:      time.Duration(cfg.CacheTTLMinutes) * time.Minute,
+		MaxCacheSize:  cfg.MaxCacheSize,
+		StatsInterval: time.Duration(cfg.StatsIntervalSecs) * time.Second,
+		EnableMetrics: cfg.EnableMetrics,
+		EnableLRU:     cfg.EnableLRU,
+	}
+}
+
 // Initialize initializes the data storage
 func (m *Manager) Initialize(ctx context.Context) error {
 	m.logger.Info().Msg("Initializing data storage with multi-engine support")
@@ -174,6 +211,12 @@ func (m *Manager) GetType() string {
 // Shutdown gracefully shuts down the storage manager
 func (m *Manager) Shutdown(ctx context.Context) error {
 	m.logger.Info().Msg("Shutting down storage manager")
+
+	// Shutdown schema manager first
+	if m.schemaManager != nil {
+		m.schemaManager.Shutdown()
+		m.logger.Info().Msg("Schema manager shut down successfully")
+	}
 
 	// Close storage manager
 	if err := m.Close(); err != nil {
@@ -207,6 +250,19 @@ func (m *Manager) GetStatus() map[string]interface{} {
 		status[k] = v
 	}
 
+	// Add schema manager status
+	if m.schemaManager != nil {
+		schemaStats := m.schemaManager.GetCacheStats()
+		status["schema_cache"] = map[string]interface{}{
+			"hit_count":    schemaStats.HitCount,
+			"miss_count":   schemaStats.MissCount,
+			"hit_ratio":    schemaStats.HitRatio,
+			"cache_size":   schemaStats.CacheSize,
+			"evict_count":  schemaStats.EvictCount,
+			"last_updated": schemaStats.LastUpdated,
+		}
+	}
+
 	return status
 }
 
@@ -223,6 +279,11 @@ func (m *Manager) GetPathManager() paths.PathManager {
 // GetEngineRegistry returns the engine registry for external use
 func (m *Manager) GetEngineRegistry() *StorageEngineRegistry {
 	return m.engineRegistry
+}
+
+// GetSchemaManager returns the schema manager for external use
+func (m *Manager) GetSchemaManager() schema_manager.SchemaManager {
+	return m.schemaManager
 }
 
 // GetFileSystem returns the default filesystem (for backward compatibility)
@@ -327,6 +388,38 @@ func (m *Manager) InsertData(ctx context.Context, database, tableName string, da
 	// Check if table exists in metadata
 	if !m.meta.TableExists(ctx, database, tableName) {
 		return errors.New(errors.CommonNotFound, "table does not exist", nil).AddContext("database", database).AddContext("tableName", tableName)
+	}
+
+	// Step 1: Retrieve schema before processing data (Requirement 3.1)
+	icebergSchema, err := m.schemaManager.GetSchema(ctx, database, tableName)
+	if err != nil {
+		return errors.New(StorageManagerMetadataFailed, "failed to retrieve table schema", err).AddContext("database", database).AddContext("tableName", tableName)
+	}
+
+	// Step 2: Convert Iceberg schema to Arrow schema for validation (Requirement 3.2)
+	schemaValidator := schema.NewManager(schema.DefaultParquetConfig())
+	arrowSchema, err := schemaValidator.ConvertIcebergToArrowSchema(icebergSchema)
+	if err != nil {
+		return errors.New(StorageManagerMetadataFailed, "failed to convert schema for validation", err).AddContext("database", database).AddContext("tableName", tableName)
+	}
+
+	// Step 3: Validate data against schema before any storage operations (Requirement 3.3, 3.4, 6.3)
+	// Use enhanced validation with context for detailed error reporting (Requirement 4.1, 4.2, 4.3, 4.6)
+	if err := schemaValidator.ValidateDataWithContext(data, arrowSchema, database, tableName); err != nil {
+		// Log validation failure with appropriate severity (Requirement 4.7)
+		m.logger.Error().
+			Err(err).
+			Str("database", database).
+			Str("table", tableName).
+			Int("batch_size", len(data)).
+			Msg("Data validation failed - entire batch rejected")
+
+		// Return detailed validation error - entire batch is rejected (Requirement 3.4, 3.5, 4.6)
+		return errors.New(StorageManagerWriteFailed, "data validation failed - batch rejected", err).
+			AddContext("database", database).
+			AddContext("tableName", tableName).
+			AddContext("batch_size", fmt.Sprintf("%d", len(data))).
+			AddContext("validation_type", "batch_rejection")
 	}
 
 	// Get table metadata to determine storage engine

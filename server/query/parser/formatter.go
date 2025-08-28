@@ -668,9 +668,9 @@ func formatColumnDefinition(colName string, col *ColumnDefinition) string {
 		parts = append(parts, "NOT NULL")
 	}
 
-	if col.Default != nil {
+	if col.DefaultValue != "" {
 		parts = append(parts, "DEFAULT")
-		parts = append(parts, formatExpression(col.Default))
+		parts = append(parts, col.DefaultValue)
 	}
 
 	return strings.Join(parts, " ")

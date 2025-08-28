@@ -424,15 +424,10 @@ func (h *ConnectionHandler) sendExceptionSignal(err error) error {
 	var errorCode string
 	var errorMessage string
 
-	// Extract error code from internal error
-	if rangerErr, ok := err.(*errors.Error); ok {
-		errorCode = rangerErr.Code.String()
-		errorMessage = rangerErr.Message
-	} else {
-		// Fallback for non-internal errors
-		errorCode = "common.internal"
-		errorMessage = err.Error()
-	}
+	// Extract error code from internal error using AsError for consistent handling
+	rangerErr := errors.AsError(err)
+	errorCode = rangerErr.Code.String()
+	errorMessage = rangerErr.Message
 
 	exception := signals.NewServerException(errorCode, errorMessage, "")
 

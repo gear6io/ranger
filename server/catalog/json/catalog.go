@@ -992,7 +992,9 @@ func (c *Catalog) writeCatalogDataAtomic(data *CatalogData, expectedETag string)
 
 		if err := c.writeCatalogDataOnce(data, expectedETag); err != nil {
 			lastErr = err
-			if rangerErr, ok := err.(*errors.Error); ok && rangerErr.Code.Equals(shared.CatalogConcurrentMod) {
+			// Use AsError for consistent error handling
+			rangerErr := errors.AsError(err)
+			if rangerErr.Code.Equals(shared.CatalogConcurrentMod) {
 				continue // Retry on concurrent modification
 			}
 			return err // Don't retry on other errors

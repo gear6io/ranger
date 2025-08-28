@@ -28,13 +28,23 @@ type LogConfig struct {
 
 // StorageConfig represents storage configuration
 type StorageConfig struct {
-	DataPath string        `yaml:"data_path"`
-	Catalog  CatalogConfig `yaml:"catalog"`
+	DataPath string              `yaml:"data_path"`
+	Catalog  CatalogConfig       `yaml:"catalog"`
+	Schema   SchemaManagerConfig `yaml:"schema"`
 }
 
 // CatalogConfig represents catalog configuration
 type CatalogConfig struct {
 	Type string `yaml:"type"`
+}
+
+// SchemaManagerConfig represents schema manager configuration
+type SchemaManagerConfig struct {
+	CacheTTLMinutes   int  `yaml:"cache_ttl_minutes"`   // Default: 5 minutes
+	MaxCacheSize      int  `yaml:"max_cache_size"`      // Default: 1000 schemas
+	StatsIntervalSecs int  `yaml:"stats_interval_secs"` // Default: 60 seconds
+	EnableMetrics     bool `yaml:"enable_metrics"`      // Default: true
+	EnableLRU         bool `yaml:"enable_lru"`          // Default: true
 }
 
 // DataConfig represents data storage configuration
@@ -61,6 +71,13 @@ func LoadDefaultConfig() *Config {
 			DataPath: "./data", // Default data path
 			Catalog: CatalogConfig{
 				Type: "json",
+			},
+			Schema: SchemaManagerConfig{
+				CacheTTLMinutes:   5,    // 5 minutes
+				MaxCacheSize:      1000, // 1000 schemas
+				StatsIntervalSecs: 60,   // 1 minute
+				EnableMetrics:     true, // Enable metrics
+				EnableLRU:         true, // Enable LRU eviction
 			},
 		},
 	}
@@ -219,4 +236,9 @@ func (c *Config) GetStoragePath() string {
 // GetCatalogType returns the catalog type
 func (c *Config) GetCatalogType() string {
 	return c.Storage.Catalog.Type
+}
+
+// GetSchemaManagerConfig returns the schema manager configuration
+func (c *Config) GetSchemaManagerConfig() SchemaManagerConfig {
+	return c.Storage.Schema
 }
