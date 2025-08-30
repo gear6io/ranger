@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/types"
 )
 
 // ErrorCategory represents the type of parsing error
@@ -670,4 +671,173 @@ func IsParseError(err error) (*ParseError, bool) {
 		return pe, true
 	}
 	return nil, false
+}
+
+// CREATE TABLE specific error creation functions
+
+// NewCreateTableParseError creates a comprehensive CREATE TABLE parsing error
+func NewCreateTableParseError(message string, tableName string, position int, cause error) *types.CreateTableError {
+	return types.NewCreateTableParseError(message, tableName, cause).
+		AddContext("position", position).
+		AddSuggestion("Check CREATE TABLE syntax documentation").
+		AddSuggestion("Verify all required keywords are present")
+}
+
+// NewCreateTableTypeError creates a comprehensive type validation error
+func NewCreateTableTypeError(message string, tableName string, invalidTypes []string, position int, cause error) *types.CreateTableError {
+	return types.NewCreateTableTypeValidationError(message, tableName, invalidTypes, cause).
+		AddContext("position", position).
+		AddSuggestion("Use only supported Iceberg data types").
+		AddSuggestion("Check the Iceberg type system documentation")
+}
+
+// NewCreateTableColumnError creates a comprehensive column validation error
+func NewCreateTableColumnError(message string, tableName string, failedColumns []string, cause error) *types.CreateTableError {
+	return types.NewCreateTableColumnValidationError(message, tableName, failedColumns, cause).
+		AddSuggestion("Ensure all column names are unique").
+		AddSuggestion("Check for reserved keywords in column names")
+}
+
+// Enhanced error creation with detailed context
+func (p *Parser) createDetailedParseError(category ErrorCategory, code errors.Code, message string, position int, suggestions []string) *ParseError {
+	parseErr := &ParseError{
+		Category:    category,
+		Code:        code,
+		Message:     message,
+		Position:    position,
+		Suggestions: suggestions,
+	}
+
+	// Add context based on current parsing state
+	if p.currentToken != nil {
+		parseErr.Context = map[string]interface{}{
+			"current_token": p.currentToken.Value,
+			"token_type":    p.currentToken.Type,
+		}
+	}
+
+	return parseErr
+}
+
+// Helper function to create type validation errors with migration suggestions
+func (p *Parser) createTypeValidationError(invalidType string, position int) *ParseError {
+	validator := types.NewIcebergTypeValidator()
+	suggestions := []string{
+		fmt.Sprintf("'%s' is not a valid Iceberg type", invalidType),
+	}
+
+	// Add migration suggestion if available
+	if migrationSuggestion, err := validator.GetMigrationSuggestion(invalidType); err == nil {
+		suggestions = append(suggestions, fmt.Sprintf("Consider using '%s' instead", migrationSuggestion))
+	}
+
+	// Add supported types
+	supportedTypes := validator.GetSupportedTypes()
+	suggestions = append(suggestions, fmt.Sprintf("Supported types: %s", strings.Join(supportedTypes, ", ")))
+
+	return p.createDetailedParseError(
+		TypeError,
+		ErrInvalidDataType,
+		fmt.Sprintf("invalid data type: %s", invalidType),
+		position,
+		suggestions,
+	)
+}
+
+// Helper function to create column validation errors
+func (p *Parser) createColumnValidationError(columnName string, issue string, position int) *ParseError {
+	suggestions := []string{
+		fmt.Sprintf("Column '%s' has issue: %s", columnName, issue),
+		"Check column definition syntax",
+		"Ensure column names are unique within the table",
+	}
+
+	return p.createDetailedParseError(
+		ValidationError,
+		ErrDuplicateColumn,
+		fmt.Sprintf("column validation failed for '%s': %s", columnName, issue),
+		position,
+		suggestions,
+	)
+}
+
+// Enhanced error recovery suggestions
+func getErrorRecoverySuggestions(category ErrorCategory, code errors.Code) []string {
+	switch category {
+	case SyntaxError:
+		return []string{
+			"Check SQL syntax for missing keywords, commas, or parentheses",
+			"Verify the CREATE TABLE statement structure",
+			"Ensure proper use of SQL keywords and identifiers",
+		}
+	case TypeError:
+		return []string{
+			"Use only supported Iceberg data types",
+			"Check complex type syntax: list<type>, map<key,value>, struct<field:type>",
+			"Verify decimal precision and scale: decimal(precision,scale)",
+		}
+	case ValidationError:
+		return []string{
+			"Ensure all column names are unique",
+			"Check for reserved keywords used as identifiers",
+			"Verify constraint syntax and semantics",
+		}
+	case LexicalError:
+		return []string{
+			"Check for unterminated strings or comments",
+			"Verify character encoding and special characters",
+			"Ensure proper escaping of identifiers",
+		}
+	default:
+		return []string{
+			"Review the CREATE TABLE statement for syntax errors",
+			"Check the documentation for proper syntax",
+		}
+	}
+}
+
+// Error propagation utilities
+
+// PropagateParseError converts a parser error to a CREATE TABLE error
+func PropagateParseError(parseErr *ParseError, tableName string) *types.CreateTableError {
+	var invalidTypes []string
+	var failedColumns []string
+
+	// Extract specific error details based on category
+	switch parseErr.Category {
+	case TypeError:
+		if parseErr.Context != nil {
+			if invalidType, ok := parseErr.Context["invalid_type"].(string); ok {
+				invalidTypes = append(invalidTypes, invalidType)
+			}
+		}
+		return types.NewCreateTableTypeValidationError(parseErr.Message, tableName, invalidTypes, parseErr)
+
+	case ValidationError:
+		if parseErr.Context != nil {
+			if columnName, ok := parseErr.Context["column_name"].(string); ok {
+				failedColumns = append(failedColumns, columnName)
+			}
+		}
+		return types.NewCreateTableColumnValidationError(parseErr.Message, tableName, failedColumns, parseErr)
+
+	default:
+		return types.NewCreateTableParseError(parseErr.Message, tableName, parseErr).
+			AddContext("parse_category", string(parseErr.Category)).
+			AddContext("parse_position", parseErr.Position)
+	}
+}
+
+// Error context enhancement
+func EnhanceErrorWithContext(err error, context map[string]interface{}) error {
+	if createTableErr, ok := err.(*types.CreateTableError); ok {
+		for key, value := range context {
+			createTableErr.AddContext(key, value)
+		}
+		return createTableErr
+	}
+
+	// For other error types, wrap in a generic CREATE TABLE error
+	return types.NewCreateTableParseError(err.Error(), "", err).
+		AddContext("enhanced_context", context)
 }

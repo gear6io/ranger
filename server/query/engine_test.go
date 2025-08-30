@@ -254,17 +254,20 @@ func TestQueryEngineStreaming(t *testing.T) {
 	schema := &parser.TableSchema{
 		ColumnDefinitions: map[string]*parser.ColumnDefinition{
 			"id": {
-				DataType: "INT",
-				Nullable: false,
+				Name:       "id",
+				DataType:   "INT",
+				IsNullable: false,
 			},
 			"name": {
-				DataType: "VARCHAR",
-				Length:   255,
-				Nullable: true,
+				Name:       "name",
+				DataType:   "VARCHAR",
+				Length:     255,
+				IsNullable: true,
 			},
 			"value": {
-				DataType: "DECIMAL",
-				Nullable: true,
+				Name:       "value",
+				DataType:   "DECIMAL",
+				IsNullable: true,
 			},
 		},
 	}
@@ -401,17 +404,20 @@ func TestQueryEngineStreamingPerformance(t *testing.T) {
 	schema := &parser.TableSchema{
 		ColumnDefinitions: map[string]*parser.ColumnDefinition{
 			"id": {
-				DataType: "INT",
-				Nullable: false,
+				Name:       "id",
+				DataType:   "INT",
+				IsNullable: false,
 			},
 			"name": {
-				DataType: "VARCHAR",
-				Length:   255,
-				Nullable: true,
+				Name:       "name",
+				DataType:   "VARCHAR",
+				Length:     255,
+				IsNullable: true,
 			},
 			"value": {
-				DataType: "DECIMAL",
-				Nullable: true,
+				Name:       "value",
+				DataType:   "DECIMAL",
+				IsNullable: true,
 			},
 		},
 	}
@@ -510,13 +516,15 @@ func TestDatabaseSelection(t *testing.T) {
 	schema := &parser.TableSchema{
 		ColumnDefinitions: map[string]*parser.ColumnDefinition{
 			"id": {
-				DataType: "INT",
-				Nullable: false,
+				Name:       "id",
+				DataType:   "INT",
+				IsNullable: false,
 			},
 			"name": {
-				DataType: "VARCHAR",
-				Length:   255,
-				Nullable: true,
+				Name:       "name",
+				DataType:   "VARCHAR",
+				Length:     255,
+				IsNullable: true,
 			},
 		},
 	}

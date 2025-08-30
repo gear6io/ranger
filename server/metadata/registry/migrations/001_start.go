@@ -73,6 +73,7 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 		`CREATE INDEX IF NOT EXISTS idx_tables_database ON tables(database_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_tables_name ON tables(name)`,
 		`CREATE INDEX IF NOT EXISTS idx_tables_type ON tables(table_type)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_tables_database_name_unique ON tables(database_id, name)`,
 	}
 
 	// Create table-related metadata tables

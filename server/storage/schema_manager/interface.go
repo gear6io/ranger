@@ -5,9 +5,10 @@ import (
 	"time"
 
 	"github.com/apache/iceberg-go"
+	"github.com/gear6io/ranger/server/astha"
 )
 
-// SchemaManager defines the interface for managing table schemas with caching
+// SchemaManager defines the interface for managing table schemas with enhanced caching lifecycle
 type SchemaManager interface {
 	// GetSchema retrieves schema from cache or database
 	GetSchema(ctx context.Context, database, tableName string) (*iceberg.Schema, error)
@@ -20,6 +21,20 @@ type SchemaManager interface {
 
 	// GetCacheStats returns cache performance metrics
 	GetCacheStats() CacheStats
+
+	// Enhanced lifecycle management methods
+
+	// CacheNewTableSchema automatically caches schema for new tables with high priority
+	CacheNewTableSchema(ctx context.Context, database, tableName string, tableID int64) error
+
+	// InvalidateAndRefreshSchema invalidates and refreshes cached schema
+	InvalidateAndRefreshSchema(ctx context.Context, database, tableName string) error
+
+	// CleanupDeletedTable removes schema from cache for deleted tables
+	CleanupDeletedTable(database, tableName string)
+
+	// GetCacheMetrics returns detailed cache metrics
+	GetCacheMetrics() *CacheMetrics
 
 	// Shutdown gracefully shuts down the schema manager
 	Shutdown()
@@ -59,4 +74,9 @@ func DefaultSchemaManagerConfig() *SchemaManagerConfig {
 		EnableLRU:       true,
 		EnableMemoryLRU: true,
 	}
+}
+
+// AsthaInterface defines the interface for Astha integration
+type AsthaInterface interface {
+	RegisterComponentWithInstance(info astha.ComponentInfo, instance astha.Subscriber[any]) error
 }

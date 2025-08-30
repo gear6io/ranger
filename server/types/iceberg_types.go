@@ -206,13 +206,11 @@ type IcebergTypeValidator interface {
 	ParseType(typeStr string) (IcebergType, error)
 	ValidateComplexType(typeStr string) error
 	GetSupportedTypes() []string
-	GetMigrationSuggestion(sqlType string) (string, error)
 }
 
 // DefaultIcebergTypeValidator implements IcebergTypeValidator
 type DefaultIcebergTypeValidator struct {
 	primitiveTypes map[string]bool
-	sqlMigrations  map[string]string
 }
 
 // NewIcebergTypeValidator creates a new type validator instance
@@ -236,35 +234,8 @@ func NewIcebergTypeValidator() IcebergTypeValidator {
 		IcebergStruct:      true,
 	}
 
-	// SQL to Iceberg type migration suggestions
-	sqlMigrations := map[string]string{
-		"VARCHAR":   IcebergString,
-		"CHAR":      IcebergString,
-		"TEXT":      IcebergString,
-		"INT":       IcebergInt32,
-		"INTEGER":   IcebergInt32,
-		"BIGINT":    IcebergInt64,
-		"SMALLINT":  IcebergInt32,
-		"TINYINT":   IcebergInt32,
-		"FLOAT":     IcebergFloat32,
-		"DOUBLE":    IcebergFloat64,
-		"REAL":      IcebergFloat32,
-		"NUMERIC":   IcebergDecimal,
-		"DECIMAL":   IcebergDecimal,
-		"BOOL":      IcebergBoolean,
-		"BOOLEAN":   IcebergBoolean,
-		"TIMESTAMP": IcebergTimestamp,
-		"DATETIME":  IcebergTimestamp,
-		"DATE":      IcebergDate,
-		"TIME":      IcebergTime,
-		"BLOB":      IcebergBinary,
-		"BINARY":    IcebergBinary,
-		"VARBINARY": IcebergBinary,
-	}
-
 	return &DefaultIcebergTypeValidator{
 		primitiveTypes: primitiveTypes,
-		sqlMigrations:  sqlMigrations,
 	}
 }
 
@@ -341,16 +312,6 @@ func (v *DefaultIcebergTypeValidator) GetSupportedTypes() []string {
 		types = append(types, typeName)
 	}
 	return types
-}
-
-func (v *DefaultIcebergTypeValidator) GetMigrationSuggestion(sqlType string) (string, error) {
-	sqlType = strings.ToUpper(strings.TrimSpace(sqlType))
-
-	if icebergType, exists := v.sqlMigrations[sqlType]; exists {
-		return icebergType, nil
-	}
-
-	return "", fmt.Errorf("no migration suggestion available for SQL type: %s", sqlType)
 }
 
 // Helper functions for type validation and parsing

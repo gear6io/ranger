@@ -165,6 +165,21 @@ func (e *Engine) getDatabaseFromContext(queryCtx *types.QueryContext) string {
 	return "default"
 }
 
+// getDefaultStorageEngine returns the default storage engine for CREATE TABLE operations
+func (e *Engine) getDefaultStorageEngine() string {
+	// Default to iceberg storage engine
+	return "iceberg"
+}
+
+// getDefaultEngineConfig returns the default engine configuration for CREATE TABLE operations
+func (e *Engine) getDefaultEngineConfig() map[string]interface{} {
+	return map[string]interface{}{
+		"format":       "parquet",
+		"compression":  "snappy",
+		"partitioning": "auto",
+	}
+}
+
 // validateDatabaseExists checks if the specified database exists
 func (e *Engine) validateDatabaseExists(ctx context.Context, database string) error {
 	// Skip validation for "default" database as it should always exist
@@ -301,6 +316,112 @@ func (e *Engine) executeShowTables(ctx context.Context, stmt *parser.ShowStmt, q
 	}, nil
 }
 
+// executeCreateTable handles CREATE TABLE statements using new Storage Manager interface
+func (e *Engine) executeCreateTable(ctx context.Context, stmt *parser.CreateTableStmt, queryCtx *types.QueryContext) (*QueryResult, error) {
+	// Generate request ID for tracking
+	requestID := fmt.Sprintf("create_table_%d", time.Now().UnixNano())
+
+	// Extract database and table name from TableIdentifier
+	database := e.getDatabaseFromContext(queryCtx)
+	tableName := stmt.TableName.Table.Value
+
+	// Check if table name is qualified (database.table)
+	if stmt.TableName.IsQualified() {
+		database = stmt.TableName.Database.Value
+		tableName = stmt.TableName.Table.Value
+	}
+
+	// Validate that the database exists
+	if err := e.validateDatabaseExists(ctx, database); err != nil {
+		return nil, err
+	}
+
+	e.logger.Debug().
+		Str("database", database).
+		Str("table", tableName).
+		Bool("ifNotExists", stmt.IfNotExists).
+		Str("request_id", requestID).
+		Msg("Processing CREATE TABLE statement")
+
+	// Check if table already exists using storage manager
+	if e.storageMgr.TableExists(ctx, database, tableName) {
+		if stmt.IfNotExists {
+			// Table exists and IF NOT EXISTS was specified - return success
+			return &QueryResult{
+				Data:     [][]interface{}{},
+				RowCount: 0,
+				Columns:  []string{},
+				Message:  fmt.Sprintf("Table %s.%s already exists (IF NOT EXISTS)", database, tableName),
+			}, nil
+		} else {
+			// Table exists but IF NOT EXISTS was not specified - return error
+			return nil, errors.New(ErrTableAlreadyExists, "table already exists", nil).AddContext("database", database).AddContext("table", tableName)
+		}
+	}
+
+	// Create user context for the request
+	userCtx := &types.UserContext{
+		UserID:   0, // Default user ID - would be set by authentication layer
+		Username: queryCtx.User,
+		Database: database,
+		IsAdmin:  false, // Default to non-admin - would be set by authentication layer
+	}
+
+	// Determine storage engine
+	storageEngine := e.getDefaultStorageEngine()
+	if stmt.StorageEngine != nil {
+		storageEngine = stmt.StorageEngine.Value
+	}
+
+	// Create Storage Manager request
+	req := &types.CreateTableRequest{
+		Statement:     stmt,
+		Database:      database,
+		RequestID:     requestID,
+		UserContext:   userCtx,
+		StorageEngine: storageEngine,
+		EngineConfig:  e.getDefaultEngineConfig(),
+	}
+
+	// Delegate to Storage Manager (proper abstraction)
+	response, err := e.storageMgr.CreateTable(ctx, req)
+	if err != nil {
+		e.logger.Error().Err(err).
+			Str("request_id", requestID).
+			Str("table_name", tableName).
+			Str("database", database).
+			Msg("CREATE TABLE execution failed")
+
+		return nil, fmt.Errorf("failed to create table '%s': %w", tableName, err)
+	}
+
+	// Handle unsuccessful response
+	if !response.Success {
+		return &QueryResult{
+			Data:     [][]interface{}{},
+			RowCount: 0,
+			Columns:  []string{},
+			Message:  fmt.Sprintf("CREATE TABLE failed for table %s", tableName),
+		}, nil
+	}
+
+	// Success response
+	e.logger.Info().
+		Str("request_id", requestID).
+		Str("table_name", tableName).
+		Str("database", database).
+		Int64("table_id", response.TableID).
+		Msg("CREATE TABLE executed successfully")
+
+	return &QueryResult{
+		Data:     [][]interface{}{},
+		RowCount: 0,
+		Columns:  []string{},
+		Message: fmt.Sprintf("Table %s created successfully with %s engine (%d columns)",
+			tableName, response.Metadata.StorageEngine, response.Metadata.ColumnCount),
+	}, nil
+}
+
 // executeCreateDatabase handles CREATE DATABASE statements
 func (e *Engine) executeCreateDatabase(ctx context.Context, stmt *parser.CreateDatabaseStmt) (*QueryResult, error) {
 	e.logger.Debug().
@@ -351,61 +472,7 @@ func (e *Engine) executeDDLQuery(ctx context.Context, query string, queryCtx *ty
 	// Handle different DDL statement types
 	switch stmt := stmt.(type) {
 	case *parser.CreateTableStmt:
-		// Extract database and table name from TableIdentifier
-		database := e.getDatabaseFromContext(queryCtx)
-		tableName := stmt.TableName.Table.Value
-
-		// Check if table name is qualified (database.table)
-		if stmt.TableName.IsQualified() {
-			database = stmt.TableName.Database.Value
-			tableName = stmt.TableName.Table.Value
-		}
-
-		// Validate that the database exists
-		if err := e.validateDatabaseExists(ctx, database); err != nil {
-			return nil, err
-		}
-
-		e.logger.Debug().
-			Str("database", database).
-			Str("table", tableName).
-			Bool("ifNotExists", stmt.IfNotExists).
-			Msg("Processing CREATE TABLE statement")
-
-		// Check if table already exists using storage manager
-		if e.storageMgr.TableExists(ctx, database, tableName) {
-			if stmt.IfNotExists {
-				// Table exists and IF NOT EXISTS was specified - return success
-				return &QueryResult{
-					Data:     [][]interface{}{},
-					RowCount: 0,
-					Columns:  []string{},
-					Message:  fmt.Sprintf("Table %s.%s already exists (IF NOT EXISTS)", database, tableName),
-				}, nil
-			} else {
-				// Table exists but IF NOT EXISTS was not specified - return error
-				return nil, errors.New(ErrTableAlreadyExists, "table already exists", nil).AddContext("database", database).AddContext("table", tableName)
-			}
-		}
-
-		// Determine storage engine
-		storageEngine := "default"
-		if stmt.StorageEngine != nil {
-			storageEngine = stmt.StorageEngine.Value
-		}
-
-		// Create table using our storage manager
-		schemaData := e.serializeTableSchema(stmt.TableSchema)
-		if err := e.storageMgr.CreateTable(ctx, database, tableName, schemaData, storageEngine, nil); err != nil {
-			return nil, err
-		}
-
-		return &QueryResult{
-			Data:     [][]interface{}{},
-			RowCount: 0,
-			Columns:  []string{},
-			Message:  fmt.Sprintf("Table %s created successfully with %s engine", tableName, storageEngine),
-		}, nil
+		return e.executeCreateTable(ctx, stmt, queryCtx)
 
 	default:
 		// For other DDL operations, route to DuckDB for now
@@ -552,13 +619,13 @@ func (e *Engine) executeExplainStmt(ctx context.Context, stmt *parser.ExplainStm
 	}, nil
 }
 
-// CreateTable creates a new table with the given schema
+// CreateTable creates a new table with the given schema (legacy method for backward compatibility)
 func (e *Engine) CreateTable(ctx context.Context, database, tableName, storageEngine string, schema *parser.TableSchema) error {
-	e.logger.Info().Str("database", database).Str("table", tableName).Str("engine", storageEngine).Msg("Creating table")
+	e.logger.Info().Str("database", database).Str("table", tableName).Str("engine", storageEngine).Msg("Creating table (legacy method)")
 
-	// Store table schema in storage using Storage Manager
+	// Store table schema in storage using Storage Manager legacy method
 	schemaData := e.serializeTableSchema(schema)
-	if err := e.storageMgr.CreateTable(ctx, database, tableName, schemaData, storageEngine, nil); err != nil {
+	if err := e.storageMgr.CreateTableLegacy(ctx, database, tableName, schemaData, storageEngine, nil); err != nil {
 		return err
 	}
 
@@ -700,7 +767,7 @@ func (e *Engine) buildCreateTableSQL(tableName string, schema *parser.TableSchem
 			colSQL += fmt.Sprintf("(%d,%d)", colDef.Precision, colDef.Scale)
 		}
 
-		if !colDef.Nullable {
+		if !colDef.IsNullable || colDef.NotNull {
 			colSQL += " NOT NULL"
 		}
 
@@ -708,8 +775,8 @@ func (e *Engine) buildCreateTableSQL(tableName string, schema *parser.TableSchem
 			colSQL += " UNIQUE"
 		}
 
-		if colDef.Default != nil {
-			colSQL += fmt.Sprintf(" DEFAULT %v", colDef.Default)
+		if colDef.DefaultValue != "" {
+			colSQL += fmt.Sprintf(" DEFAULT %s", colDef.DefaultValue)
 		}
 
 		columns = append(columns, colSQL)
@@ -788,12 +855,33 @@ func (e *Engine) serializeTableSchema(schema *parser.TableSchema) []byte {
 		field := map[string]interface{}{
 			"name":     colName,
 			"type":     colDef.DataType,
-			"nullable": colDef.Nullable,
+			"nullable": colDef.IsNullable,
 		}
 
 		// Add length if specified
 		if colDef.Length > 0 {
 			field["length"] = colDef.Length
+		}
+
+		// Add precision and scale for decimal types
+		if colDef.Precision > 0 {
+			field["precision"] = colDef.Precision
+		}
+		if colDef.Scale > 0 {
+			field["scale"] = colDef.Scale
+		}
+
+		// Add default value if specified
+		if colDef.DefaultValue != "" {
+			field["default"] = colDef.DefaultValue
+		}
+
+		// Add constraints
+		if colDef.NotNull || !colDef.IsNullable {
+			field["not_null"] = true
+		}
+		if colDef.Unique {
+			field["unique"] = true
 		}
 
 		schemaData["fields"] = append(schemaData["fields"].([]map[string]interface{}), field)
@@ -812,26 +900,94 @@ func (e *Engine) serializeTableSchema(schema *parser.TableSchema) []byte {
 
 // deserializeTableSchema converts JSON bytes to TableSchema
 func (e *Engine) deserializeTableSchema(data []byte) (*parser.TableSchema, error) {
-	// For now, return the original schema that was passed to CreateTable
-	// In a real implementation, this would parse the JSON and reconstruct the schema
-	// Since we're just testing, we'll return a basic schema
-	return &parser.TableSchema{
-		ColumnDefinitions: map[string]*parser.ColumnDefinition{
-			"id": {
-				DataType: "INTEGER",
-				Nullable: false,
+	// Parse the JSON schema data
+	var schemaData map[string]interface{}
+	if err := json.Unmarshal(data, &schemaData); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal schema data: %w", err)
+	}
+
+	// Create TableSchema
+	schema := &parser.TableSchema{
+		ColumnDefinitions: make(map[string]*parser.ColumnDefinition),
+	}
+
+	// Extract fields
+	fields, ok := schemaData["fields"].([]interface{})
+	if !ok {
+		// Fallback to basic schema if fields not found
+		return &parser.TableSchema{
+			ColumnDefinitions: map[string]*parser.ColumnDefinition{
+				"id": {
+					Name:       "id",
+					DataType:   "int32",
+					IsNullable: false,
+				},
 			},
-			"name": {
-				DataType: "VARCHAR",
-				Length:   100,
-				Nullable: true,
-			},
-			"age": {
-				DataType: "INTEGER",
-				Nullable: true,
-			},
-		},
-	}, nil
+		}, nil
+	}
+
+	// Parse each field
+	for _, fieldInterface := range fields {
+		field, ok := fieldInterface.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		name, ok := field["name"].(string)
+		if !ok {
+			continue
+		}
+
+		dataType, ok := field["type"].(string)
+		if !ok {
+			continue
+		}
+
+		colDef := &parser.ColumnDefinition{
+			Name:       name,
+			DataType:   dataType,
+			IsNullable: true, // Default to nullable
+		}
+
+		// Parse nullable
+		if nullable, ok := field["nullable"].(bool); ok {
+			colDef.IsNullable = nullable
+		}
+
+		// Parse length
+		if length, ok := field["length"].(float64); ok {
+			colDef.Length = int(length)
+		}
+
+		// Parse precision
+		if precision, ok := field["precision"].(float64); ok {
+			colDef.Precision = int(precision)
+		}
+
+		// Parse scale
+		if scale, ok := field["scale"].(float64); ok {
+			colDef.Scale = int(scale)
+		}
+
+		// Parse default value
+		if defaultValue, ok := field["default"].(string); ok {
+			colDef.DefaultValue = defaultValue
+		}
+
+		// Parse constraints
+		if notNull, ok := field["not_null"].(bool); ok && notNull {
+			colDef.NotNull = true
+			colDef.IsNullable = false
+		}
+
+		if unique, ok := field["unique"].(bool); ok {
+			colDef.Unique = unique
+		}
+
+		schema.ColumnDefinitions[name] = colDef
+	}
+
+	return schema, nil
 }
 
 // convertDuckDBSchemaToTableSchema converts DuckDB schema to TableSchema

@@ -261,8 +261,8 @@ func (sm *Store) CreateTable(ctx context.Context, database, tableName string, sc
 		engineConfigJSON = string(engineConfigBytes)
 	}
 
-	insertMetadataSQL := `INSERT INTO table_metadata (table_id, schema_version, schema, storage_engine, engine_config, format, compression, last_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err = tx.ExecContext(ctx, insertMetadataSQL, tableID, 1, schema, storageEngine, engineConfigJSON, "parquet", "snappy", now, now, now)
+	insertMetadataSQL := `INSERT INTO table_metadata (table_id, schema_version, storage_engine, engine_config, format, compression, last_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err = tx.ExecContext(ctx, insertMetadataSQL, tableID, 1, storageEngine, engineConfigJSON, "parquet", "snappy", now, now, now)
 	if err != nil {
 		return nil, errors.New(errors.CommonInternal, "failed to create table metadata", err).AddContext("table", tableName)
 	}
@@ -309,6 +309,95 @@ func (sm *Store) CreateTable(ctx context.Context, database, tableName string, sc
 	}
 
 	return tableMetadata, nil
+}
+
+// CreateTableWithColumns creates a table with columns in a single transaction
+func (sm *Store) CreateTableWithColumns(ctx context.Context, databaseName string, table *regtypes.Table, columns []*regtypes.TableColumn) (int64, error) {
+	// Check if database exists
+	if !sm.DatabaseExists(ctx, databaseName) {
+		return 0, errors.New(RegistryDatabaseNotFound, "database does not exist", nil).AddContext("database", databaseName)
+	}
+
+	// Get database ID
+	var dbID int64
+	query := `SELECT id FROM databases WHERE name = ?`
+	err := sm.db.QueryRowContext(ctx, query, databaseName).Scan(&dbID)
+	if err != nil {
+		return 0, errors.New(errors.CommonInternal, "failed to get database ID", err).AddContext("database", databaseName)
+	}
+
+	// Begin transaction
+	tx, err := sm.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, errors.New(RegistryTransactionFailed, "failed to begin transaction", err)
+	}
+	defer tx.Rollback()
+
+	// Create table record
+	now := time.Now().UTC().Format(time.RFC3339)
+	insertTableSQL := `INSERT INTO tables (database_id, name, display_name, description, table_type, is_temporary, is_external, row_count, file_count, total_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	result, err := tx.ExecContext(ctx, insertTableSQL, dbID, table.Name, table.DisplayName, table.Description, table.TableType, table.IsTemporary, table.IsExternal, table.RowCount, table.FileCount, table.TotalSize, now, now)
+	if err != nil {
+		return 0, errors.New(errors.CommonInternal, "failed to create table", err).AddContext("table", table.Name)
+	}
+
+	tableID, err := result.LastInsertId()
+	if err != nil {
+		return 0, errors.New(errors.CommonInternal, "failed to get table ID", err)
+	}
+
+	// Create column records
+	insertColumnSQL := `INSERT INTO table_columns (table_id, column_name, display_name, data_type, is_nullable, is_primary, is_unique, default_value, description, ordinal_position, max_length, precision, scale, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	for _, column := range columns {
+		_, err = tx.ExecContext(ctx, insertColumnSQL,
+			tableID,
+			column.ColumnName,
+			column.DisplayName,
+			column.DataType,
+			column.IsNullable,
+			column.IsPrimary,
+			column.IsUnique,
+			column.DefaultValue,
+			column.Description,
+			column.OrdinalPosition,
+			column.MaxLength,
+			column.Precision,
+			column.Scale,
+			now,
+			now)
+		if err != nil {
+			return 0, errors.New(errors.CommonInternal, "failed to create table column", err).
+				AddContext("table", table.Name).
+				AddContext("column", column.ColumnName)
+		}
+	}
+
+	// Create table metadata record with default values
+	insertMetadataSQL := `INSERT INTO table_metadata (table_id, schema_version, storage_engine, engine_config, format, compression, last_modified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err = tx.ExecContext(ctx, insertMetadataSQL, tableID, 1, "iceberg", "{}", "parquet", "snappy", now, now, now)
+	if err != nil {
+		return 0, errors.New(errors.CommonInternal, "failed to create table metadata", err).AddContext("table", table.Name)
+	}
+
+	// Update database table count
+	updateDBSQL := `UPDATE databases SET table_count = table_count + 1, updated_at = ? WHERE id = ?`
+	_, err = tx.ExecContext(ctx, updateDBSQL, now, dbID)
+	if err != nil {
+		return 0, errors.New(errors.CommonInternal, "failed to update database table count", err).AddContext("database", databaseName)
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		return 0, errors.New(RegistryTransactionFailed, "failed to commit transaction", err)
+	}
+
+	// Create table directory
+	tablePath := filepath.Join(sm.basePath, "databases", databaseName, table.Name)
+	if err := os.MkdirAll(tablePath, 0755); err != nil {
+		return 0, errors.New(RegistryFileOperationFailed, "failed to create table directory", err).AddContext("path", tablePath)
+	}
+
+	return tableID, nil
 }
 
 // DropTable drops a table from the specified database

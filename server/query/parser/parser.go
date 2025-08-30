@@ -28,13 +28,8 @@ import (
 )
 
 // Iceberg data types - centralized from types package
-var icebergDataTypes = []string{
-	types.IcebergBoolean, types.IcebergInt32, types.IcebergInt64,
-	types.IcebergFloat32, types.IcebergFloat64, types.IcebergDecimal,
-	types.IcebergString, types.IcebergBinary, types.IcebergDate,
-	types.IcebergTime, types.IcebergTimestamp, types.IcebergTimestampTz,
-	types.IcebergUUID, types.IcebergList, types.IcebergMap, types.IcebergStruct,
-}
+// Replace basicDataTypes array with centralized Iceberg types from new package
+var icebergDataTypes = types.GetAllSupportedTypes()
 
 var keywords = append([]string{
 	"ALL", "AND", "ANY", "AS", "ASC", "AUTHORIZATION", "AVG", "ALTER",
@@ -106,7 +101,7 @@ type TableSchema struct {
 	ColumnDefinitions map[string]*ColumnDefinition
 }
 
-// ColumnDefinition represents a column definition with Iceberg type support
+// ColumnDefinition represents a column definition with validated Iceberg types
 type ColumnDefinition struct {
 	Name         string     // Column name
 	DataType     string     // Must be valid Iceberg type
@@ -126,7 +121,41 @@ type ColumnDefinition struct {
 	ValueType   string              // For map types
 	Fields      []*ColumnDefinition // For struct types
 	// Internal validation state
-	validated bool // Track validation state
+	validated bool // Track validation state to avoid repeated validation
+}
+
+// Validate validates the column definition with Iceberg type checking
+func (cd *ColumnDefinition) Validate() error {
+	if cd.validated {
+		return nil // Already validated
+	}
+
+	if cd.Name == "" {
+		return fmt.Errorf("column name cannot be empty")
+	}
+
+	// Validate Iceberg type using centralized validator
+	validator := types.NewIcebergTypeValidator()
+	if !validator.IsValidType(cd.DataType) {
+		supportedTypes := validator.GetSupportedTypes()
+
+		// Check if it's a legacy SQL type and provide migration suggestion
+		if suggestion, err := validator.GetMigrationSuggestion(cd.DataType); err == nil {
+			return fmt.Errorf("column '%s': unsupported SQL type '%s'. Use Iceberg type '%s' instead. No legacy SQL types are supported",
+				cd.Name, cd.DataType, suggestion)
+		}
+
+		return fmt.Errorf("column '%s': invalid Iceberg type '%s'. Supported types: %v",
+			cd.Name, cd.DataType, supportedTypes)
+	}
+
+	// Validate complex types
+	if err := validator.ValidateComplexType(cd.DataType); err != nil {
+		return fmt.Errorf("column '%s': complex type validation failed: %v", cd.Name, err)
+	}
+
+	cd.validated = true
+	return nil
 }
 
 // Reference represents a foreign key reference
@@ -140,6 +169,16 @@ func IsValidDataType(dataType string) bool {
 	dataType = strings.TrimSpace(dataType)
 	validator := types.NewIcebergTypeValidator()
 	return validator.IsValidType(dataType)
+}
+
+// ValidateIcebergType validates an Iceberg type string and returns detailed error information
+func ValidateIcebergType(typeStr string) error {
+	return types.ValidateTypeString(typeStr)
+}
+
+// ParseIcebergType parses and validates an Iceberg type string
+func ParseIcebergType(typeStr string) (types.IcebergType, error) {
+	return types.ParseAndValidateType(typeStr)
 }
 
 type TokenType int // Token type
@@ -163,6 +202,7 @@ const (
 	MODULUS_TOK           // %
 	AT_TOK                // @
 	DOT_TOK               // .
+	COLON_TOK             // :
 )
 
 // Parser is a parser for SQL
@@ -426,6 +466,16 @@ func (l *Lexer) nextToken() Token {
 				startPos := l.pos
 				l.pos++
 				return l.createToken(DOT_TOK, ".", startPos, l.pos)
+			} else {
+				stringLiteral += string(l.input[l.pos])
+				l.pos++
+				continue
+			}
+		case ':':
+			if !insideLiteral {
+				startPos := l.pos
+				l.pos++
+				return l.createToken(COLON_TOK, ":", startPos, l.pos)
 			} else {
 				stringLiteral += string(l.input[l.pos])
 				l.pos++
@@ -3342,42 +3392,56 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 				[]string{"unique column name"})
 		}
 
-		// Parse Iceberg data type (can be DATATYPE_TOK, IDENT_TOK, or KEYWORD_TOK for legacy types)
+		// Parse Iceberg data type with support for complex types (list, map, struct)
 		var dataType string
+		var err error
+
 		if p.peek(0).tokenT == DATATYPE_TOK {
 			dataType = p.peek(0).value.(string)
 			p.consume() // Consume data type
+
+			// Check if this is a complex type that needs further parsing
+			if dataType == types.IcebergList || dataType == types.IcebergMap || dataType == types.IcebergStruct {
+				// Parse complex type syntax
+				complexType, parseErr := p.parseComplexIcebergType(dataType)
+				if parseErr != nil {
+					return nil, parseErr
+				}
+				dataType = complexType
+			}
 		} else if p.peek(0).tokenT == IDENT_TOK {
-			// Handle identifiers that might be Iceberg types or legacy SQL types
+			// Handle identifiers that might be Iceberg types
 			dataType = p.peek(0).value.(string)
 			p.consume() // Consume the identifier
-		} else if p.peek(0).tokenT == KEYWORD_TOK {
-			// Handle legacy SQL types that come through as keywords
-			dataType = p.peek(0).value.(string)
-			p.consume() // Consume the keyword
 
-			// Skip any parameters for legacy SQL types (e.g., VARCHAR(255))
-			if p.peek(0).tokenT == LPAREN_TOK {
-				p.consume() // Consume (
-				// Skip until we find the closing parenthesis
-				depth := 1
-				for depth > 0 && p.peek(0).tokenT != EOF_TOK {
-					if p.peek(0).tokenT == LPAREN_TOK {
-						depth++
-					} else if p.peek(0).tokenT == RPAREN_TOK {
-						depth--
-					}
-					p.consume()
+			// Check if this is a complex type that needs further parsing
+			if dataType == types.IcebergList || dataType == types.IcebergMap || dataType == types.IcebergStruct {
+				// Parse complex type syntax
+				complexType, parseErr := p.parseComplexIcebergType(dataType)
+				if parseErr != nil {
+					return nil, parseErr
 				}
+				dataType = complexType
 			}
+		} else if p.peek(0).tokenT == KEYWORD_TOK {
+			// Handle legacy SQL types that come through as keywords - reject with descriptive error
+			legacyType := p.peek(0).value.(string)
+			currentToken := p.peekToken(0)
+
+			// Provide migration suggestion if available
+			validator := types.NewIcebergTypeValidator()
+			if suggestion, migrationErr := validator.GetMigrationSuggestion(strings.ToUpper(legacyType)); migrationErr == nil {
+				message := fmt.Sprintf("legacy SQL type '%s' is not supported. Use Iceberg type '%s' instead", legacyType, suggestion)
+				return nil, p.newTypeError(ErrUnsupportedSQLType, message, currentToken, []string{suggestion})
+			}
+
+			message := fmt.Sprintf("unsupported type '%s'. Only Iceberg types are supported", legacyType)
+			return nil, p.newTypeError(ErrInvalidIcebergType, message, currentToken, []string{"valid Iceberg type"})
 		} else {
 			return nil, p.expectDataType(p.peekToken(0))
 		}
 
-		// Validate Iceberg type immediately during parsing
-		if err := p.validateIcebergType(dataType); err != nil {
-			return nil, err
-		}
+		// Don't validate here yet - we might need to parse decimal parameters first
 
 		// Create column definition (always create it here to ensure consistency)
 		createTableStmt.TableSchema.ColumnDefinitions[columnName] = &ColumnDefinition{
@@ -3426,10 +3490,20 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 			if err := p.validateIcebergType(dataType); err != nil {
 				return nil, err
 			}
+		} else if dataType == types.IcebergDecimal {
+			// If decimal is used without precision/scale, it's invalid in Iceberg
+			currentToken := &p.lexer.tokens[p.pos-1]
+			message := "decimal type requires precision and scale: decimal(precision,scale)"
+			return nil, p.newTypeError(ErrComplexTypeParseError, message, currentToken, []string{"decimal(10,2)"})
+		}
+
+		// Validate Iceberg type after handling decimal parameters
+		if err := p.validateIcebergType(dataType); err != nil {
+			return nil, err
 		}
 
 		// Parse column constraints
-		err := p.parseTableConstraints(createTableStmt, columnName)
+		err = p.parseTableConstraints(createTableStmt, columnName)
 		if err != nil {
 			return nil, err
 		}
@@ -3492,46 +3566,69 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 	return createTableStmt, nil
 }
 
-// validateIcebergType validates an Iceberg type string during parsing
+// validateIcebergType validates an Iceberg type string during parsing with descriptive error messages
 func (p *Parser) validateIcebergType(typeStr string) error {
 	validator := types.NewIcebergTypeValidator()
 	if !validator.IsValidType(typeStr) {
 		// Get the current token for error context
 		currentToken := &p.lexer.tokens[p.pos-1] // Previous token was the type
 
-		// Check if it's a legacy SQL type and provide migration suggestion
+		// Check if it's a legacy SQL type and provide migration suggestion (no legacy SQL support)
 		if suggestion, err := validator.GetMigrationSuggestion(strings.ToUpper(typeStr)); err == nil {
-			message := fmt.Sprintf("unsupported SQL type '%s'. Use Iceberg type '%s' instead", typeStr, suggestion)
+			message := fmt.Sprintf("unsupported SQL type '%s'. Use Iceberg type '%s' instead. Legacy SQL types are not supported - only Iceberg types are allowed", typeStr, suggestion)
 			return p.newTypeError(ErrUnsupportedSQLType, message, currentToken, []string{suggestion})
 		}
 
-		// Provide common Iceberg type suggestions
+		// Provide comprehensive Iceberg type suggestions including complex types
 		suggestions := []string{
 			"boolean", "int32", "int64", "float32", "float64",
-			"decimal", "string", "binary", "date", "time",
+			"decimal(precision,scale)", "string", "binary", "date", "time",
 			"timestamp", "timestamptz", "uuid",
+			"list<elementType>", "map<keyType,valueType>", "struct<field:type,...>",
 		}
 
-		message := fmt.Sprintf("invalid Iceberg type '%s'", typeStr)
+		message := fmt.Sprintf("invalid Iceberg type '%s'. Only Iceberg types are supported", typeStr)
 		return p.newTypeError(ErrInvalidIcebergType, message, currentToken, suggestions)
 	}
+
+	// Validate complex types for proper structure
+	if err := validator.ValidateComplexType(typeStr); err != nil {
+		currentToken := &p.lexer.tokens[p.pos-1]
+		message := fmt.Sprintf("complex type validation failed for '%s': %v", typeStr, err)
+		return p.newTypeError(ErrComplexTypeParseError, message, currentToken, []string{"valid complex type syntax"})
+	}
+
 	return nil
 }
 
 // parseComplexIcebergType parses complex Iceberg types like list<string>, map<string,int32>, struct<name:string,age:int32>
-func (p *Parser) parseComplexIcebergType() (string, error) {
+func (p *Parser) parseComplexIcebergType(baseType string) (string, error) {
 	var typeStr strings.Builder
-	depth := 0
+	typeStr.WriteString(baseType) // Start with the base type (list, map, struct)
+
+	// Expect opening angle bracket
+	if p.peek(0).tokenT != COMPARISON_TOK || p.peek(0).value != "<" {
+		return "", p.newTypeError(ErrComplexTypeParseError,
+			fmt.Sprintf("expected '<' after %s type", baseType),
+			p.peekToken(0), []string{"<"})
+	}
+
+	typeStr.WriteString("<")
+	p.consume() // Consume <
+
+	depth := 1
 
 	// Parse the complete type string including nested brackets
-	for {
+	for depth > 0 {
 		if p.peek(0).tokenT == EOF_TOK {
-			break
+			return "", p.newTypeError(ErrComplexTypeParseError,
+				"unexpected end of input while parsing complex type",
+				p.peekToken(0), []string{">"})
 		}
 
 		token := p.peek(0)
 		switch token.tokenT {
-		case IDENT_TOK:
+		case IDENT_TOK, DATATYPE_TOK:
 			typeStr.WriteString(token.value.(string))
 			p.consume()
 		case COMPARISON_TOK:
@@ -3543,55 +3640,52 @@ func (p *Parser) parseComplexIcebergType() (string, error) {
 				typeStr.WriteString(">")
 				depth--
 				p.consume()
-				if depth == 0 {
-					// Finished parsing the complex type
-					return typeStr.String(), nil
-				}
 			} else {
-				return "", errors.New(ErrComplexTypeParseError,
-					fmt.Sprintf("unexpected comparison operator '%s' in type definition", token.value), nil)
+				return "", p.newTypeError(ErrComplexTypeParseError,
+					fmt.Sprintf("unexpected comparison operator '%s' in complex type", token.value),
+					p.peekToken(0), []string{"<", ">"})
 			}
 		case COMMA_TOK:
-			if depth > 0 {
-				typeStr.WriteString(",")
-				p.consume()
-			} else {
-				// End of type definition, comma separates columns
-				return typeStr.String(), nil
-			}
+			typeStr.WriteString(",")
+			p.consume()
+		case COLON_TOK:
+			// For struct field separators like field:type (can be nested in other types)
+			typeStr.WriteString(":")
+			p.consume()
+		case DOT_TOK:
+			// Dots are not expected in complex types
+			return "", p.newTypeError(ErrComplexTypeParseError,
+				fmt.Sprintf("unexpected '.' in %s type", baseType),
+				p.peekToken(0), []string{"valid type syntax"})
+		case LITERAL_TOK:
+			// Handle numeric literals in decimal types like decimal(10,2)
+			typeStr.WriteString(fmt.Sprintf("%v", token.value))
+			p.consume()
 		case LPAREN_TOK:
+			// Handle parentheses for decimal(precision,scale) syntax
 			typeStr.WriteString("(")
 			p.consume()
 		case RPAREN_TOK:
-			if depth > 0 {
-				typeStr.WriteString(")")
-				p.consume()
-			} else {
-				// End of column definitions
-				return typeStr.String(), nil
-			}
-		case LITERAL_TOK:
-			typeStr.WriteString(fmt.Sprintf("%v", token.value))
-			p.consume()
-		case DOT_TOK:
-			typeStr.WriteString(":") // Convert dot to colon for struct field separator
+			// Handle closing parentheses for decimal(precision,scale) syntax
+			typeStr.WriteString(")")
 			p.consume()
 		default:
-			// Stop parsing if we hit an unexpected token
-			if depth == 0 {
-				return typeStr.String(), nil
-			}
-			return "", errors.New(ErrComplexTypeParseError,
-				fmt.Sprintf("unexpected token in complex type: %v", token.value), nil)
+			return "", p.newTypeError(ErrComplexTypeParseError,
+				fmt.Sprintf("unexpected token '%v' in complex type", token.value),
+				p.peekToken(0), []string{"valid type syntax"})
 		}
 	}
 
-	if depth > 0 {
-		return "", errors.New(ErrComplexTypeParseError,
-			"unclosed angle brackets in complex type definition", nil)
+	// Validate the complete complex type
+	finalType := typeStr.String()
+	validator := types.NewIcebergTypeValidator()
+	if !validator.IsValidType(finalType) {
+		return "", p.newTypeError(ErrComplexTypeParseError,
+			fmt.Sprintf("invalid complex type syntax: %s", finalType),
+			p.peekToken(0), []string{"valid complex type"})
 	}
 
-	return typeStr.String(), nil
+	return finalType, nil
 }
 
 func (p *Parser) parseTableConstraints(createTableStmt *CreateTableStmt, columnName string) error {
