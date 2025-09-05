@@ -12,9 +12,17 @@ func IsRangerError(err error) bool {
 }
 
 // Helper to extract context from our errors
-func GetContext(err error) map[string]string {
+func GetContext(err error) map[string]any {
 	if rangerErr, ok := err.(*Error); ok {
-		return rangerErr.Context
+		// Create a copy of the context map
+		if rangerErr.context == nil {
+			return nil
+		}
+		contextCopy := make(map[string]any)
+		for k, v := range rangerErr.context {
+			contextCopy[k] = v
+		}
+		return contextCopy
 	}
 	return nil
 }
@@ -34,9 +42,9 @@ func FormatError(err error) string {
 		parts = append(parts, fmt.Sprintf("Code: %s", rangerErr.Code))
 		parts = append(parts, fmt.Sprintf("Message: %s", rangerErr.Message))
 
-		if len(rangerErr.Context) > 0 {
+		if rangerErr.context != nil && len(rangerErr.context) > 0 {
 			parts = append(parts, "Context:")
-			for k, v := range rangerErr.Context {
+			for k, v := range rangerErr.context {
 				parts = append(parts, fmt.Sprintf("  %s: %v", k, v))
 			}
 		}

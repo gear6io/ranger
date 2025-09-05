@@ -835,12 +835,22 @@ func formatShowStmt(stmt *ShowStmt) string {
 		parts = append(parts, "INDEXES")
 	case SHOW_GRANTS:
 		parts = append(parts, "GRANTS")
+	case SHOW_COLUMNS:
+		parts = append(parts, "COLUMNS")
+	case SHOW_CREATE_TABLE:
+		parts = append(parts, "CREATE", "TABLE")
 	}
 
 	// Add FROM clause if present
 	if stmt.From != nil {
 		parts = append(parts, "FROM")
 		parts = append(parts, formatIdentifier(stmt.From))
+	}
+
+	// Add table name for COLUMNS and CREATE TABLE
+	if stmt.TableName != nil {
+		parts = append(parts, "FROM")
+		parts = append(parts, formatTableIdentifier(stmt.TableName))
 	}
 
 	return strings.Join(parts, " ") + ";"

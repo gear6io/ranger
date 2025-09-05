@@ -216,11 +216,11 @@ func (h *ConnectionHandler) Handle() error {
 			}
 		default:
 			h.logger.Warn().Uint8("message_type", uint8(signal.Type())).Msg("Unknown message type")
-			if err := h.sendException(fmt.Errorf("Unknown message type: %d", signal.Type())); err != nil {
+			if err := h.sendException(errors.Newf(ErrUnknownMessageType, "Unknown message type: %d", signal.Type())); err != nil {
 				h.logger.Error().Err(err).Msg("Failed to send exception for unknown message type")
 				return err
 			}
-			return fmt.Errorf("unknown message type: %d", signal.Type())
+			return errors.Newf(ErrUnknownMessageType, "unknown message type: %d", signal.Type())
 		}
 	}
 }
@@ -400,7 +400,7 @@ func (h *ConnectionHandler) handleClientCancelSignal(cancel *signals.ClientCance
 	// Try to cancel the query using the query engine
 	if err := h.queryEngine.CancelQuery(cancel.QueryID); err != nil {
 		h.logger.Warn().Err(err).Str("query_id", cancel.QueryID).Msg("Failed to cancel query")
-		return h.sendExceptionSignal(fmt.Errorf("Query %s cancellation failed: %v", cancel.QueryID, err))
+		return h.sendExceptionSignal(errors.Newf(ErrQueryCancellationFailed, "Query %s cancellation failed: %v", cancel.QueryID, err))
 	}
 
 	// Send acknowledgment
@@ -413,7 +413,7 @@ func (h *ConnectionHandler) sendServerHelloSignal() error {
 
 	message, err := h.codec.EncodeMessage(hello)
 	if err != nil {
-		return fmt.Errorf("failed to encode server hello: %w", err)
+		return errors.New(ErrInvalidMessageFormat, "failed to encode server hello", err)
 	}
 
 	return h.codec.WriteMessage(h.conn, message)
@@ -433,7 +433,7 @@ func (h *ConnectionHandler) sendExceptionSignal(err error) error {
 
 	message, err := h.codec.EncodeMessage(exception)
 	if err != nil {
-		return fmt.Errorf("failed to encode server exception: %w", err)
+		return errors.New(ErrInvalidMessageFormat, "failed to encode server exception", err)
 	}
 
 	return h.codec.WriteMessage(h.conn, message)
@@ -496,7 +496,7 @@ func (h *ConnectionHandler) sendServerDataSignal(columns [][]string, data [][]in
 
 	message, err := h.codec.EncodeMessage(serverData)
 	if err != nil {
-		return fmt.Errorf("failed to encode server data: %w", err)
+		return errors.New(ErrInvalidMessageFormat, "failed to encode server data", err)
 	}
 
 	return h.codec.WriteMessage(h.conn, message)
@@ -508,7 +508,7 @@ func (h *ConnectionHandler) sendServerEndOfStreamSignal() error {
 
 	message, err := h.codec.EncodeMessage(eos)
 	if err != nil {
-		return fmt.Errorf("failed to encode server end of stream: %w", err)
+		return errors.New(ErrInvalidMessageFormat, "failed to encode server end of stream", err)
 	}
 
 	return h.codec.WriteMessage(h.conn, message)
@@ -520,7 +520,7 @@ func (h *ConnectionHandler) sendServerPongSignal() error {
 
 	message, err := h.codec.EncodeMessage(pong)
 	if err != nil {
-		return fmt.Errorf("failed to encode server pong: %w", err)
+		return errors.New(ErrInvalidMessageFormat, "failed to encode server pong", err)
 	}
 
 	return h.codec.WriteMessage(h.conn, message)

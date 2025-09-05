@@ -13,6 +13,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/apache/iceberg-go/table"
+	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/gear6io/ranger/server/catalog"
 
 	_ "github.com/marcboeker/go-duckdb/v2"
@@ -109,7 +110,7 @@ func NewEngine(cat catalog.CatalogInterface) (*Engine, error) {
 // NewEngineWithConfig creates a new DuckDB engine with custom configuration
 func NewEngineWithConfig(cat catalog.CatalogInterface, config *EngineConfig) (*Engine, error) {
 	if cat == nil {
-		return nil, fmt.Errorf("catalog cannot be nil")
+		return nil, errors.New(ErrDuckDBConfigurationFailed, "catalog cannot be nil", nil)
 	}
 
 	if config == nil {
@@ -119,13 +120,13 @@ func NewEngineWithConfig(cat catalog.CatalogInterface, config *EngineConfig) (*E
 	// Create DuckDB connection with optimized settings
 	db, err := sql.Open("duckdb", ":memory:")
 	if err != nil {
-		return nil, fmt.Errorf("failed to open DuckDB connection: %w", err)
+		return nil, errors.New(ErrDuckDBConnectionFailed, "failed to open DuckDB connection", err)
 	}
 
 	// Test the connection
 	if err := db.Ping(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("failed to ping DuckDB: %w", err)
+		return nil, errors.New(ErrDuckDBPingFailed, "failed to ping DuckDB", err)
 	}
 
 	// Set connection pool settings for better performance
@@ -145,7 +146,7 @@ func NewEngineWithConfig(cat catalog.CatalogInterface, config *EngineConfig) (*E
 	// Initialize the engine with optimizations
 	if err := engine.initialize(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("failed to initialize engine: %w", err)
+		return nil, errors.New(ErrDuckDBConfigurationFailed, "failed to initialize engine", err)
 	}
 
 	return engine, nil
@@ -179,12 +180,12 @@ func (e *Engine) initialize() error {
 
 	// Install and load required extensions for Iceberg support
 	if err := e.initializeExtensions(); err != nil {
-		return fmt.Errorf("failed to initialize extensions: %w", err)
+		return errors.New(ErrDuckDBConfigurationFailed, "failed to initialize extensions", err)
 	}
 
 	// Attach the Iceberg catalog to DuckDB
 	if err := e.attachIcebergCatalog(); err != nil {
-		return fmt.Errorf("failed to attach Iceberg catalog: %w", err)
+		return errors.New(ErrDuckDBConfigurationFailed, "failed to attach Iceberg catalog", err)
 	}
 
 	e.log.Printf("DuckDB engine initialized successfully with catalog: %s", e.catalog.Name())
@@ -209,7 +210,8 @@ func (e *Engine) initializeExtensions() error {
 
 		// Try to load extension - this must succeed for required extensions
 		if _, err := e.db.Exec(fmt.Sprintf("LOAD %s", ext)); err != nil {
-			return fmt.Errorf("failed to load required %s extension: %w", ext, err)
+			return errors.New(ErrDuckDBConfigurationFailed, "failed to load required extension", err).
+				AddContext("extension", ext)
 		}
 
 		e.log.Printf("Info: %s extension loaded successfully", ext)
@@ -262,7 +264,8 @@ func (e *Engine) attachIcebergCatalog() error {
 			)`, "rest_endpoint", catalogName) // You'd need to extract the actual REST endpoint
 
 		if _, err := e.db.Exec(attachSQL); err != nil {
-			return fmt.Errorf("failed to attach REST catalog: %w", err)
+			return errors.New(ErrDuckDBConfigurationFailed, "failed to attach REST catalog", err).
+				AddContext("catalog_name", catalogName)
 		}
 		e.log.Printf("Info: Attached REST catalog as '%s'", catalogName)
 
@@ -329,7 +332,7 @@ func (e *Engine) GetConfig() *EngineConfig {
 // ExecuteQuery executes a SQL query and returns the results
 func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, error) {
 	if !e.initialized {
-		return nil, fmt.Errorf("engine not initialized")
+		return nil, errors.New(ErrDuckDBConfigurationFailed, "engine not initialized", nil)
 	}
 
 	// Update metrics and generate unique query ID for tracking
@@ -369,12 +372,12 @@ func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 		e.incrementErrorCount()
 		// Provide better error messages for common issues
 		if strings.Contains(err.Error(), "timeout") {
-			return nil, fmt.Errorf("query [%s] timed out after %ds: %w", queryID, e.config.QueryTimeoutSec, err)
+			return nil, errors.Newf(ErrDuckDBQueryTimeout, "query [%s] timed out after %ds: %w", queryID, e.config.QueryTimeoutSec, err)
 		}
 		if strings.Contains(err.Error(), "table") && strings.Contains(err.Error(), "not found") {
-			return nil, fmt.Errorf("table not found in query [%s]. Use 'SHOW TABLES' to see available tables: %w", queryID, err)
+			return nil, errors.Newf(ErrDuckDBTableNotFound, "table not found in query [%s]. Use 'SHOW TABLES' to see available tables: %w", queryID, err)
 		}
-		return nil, fmt.Errorf("failed to execute query [%s]: %w", queryID, err)
+		return nil, errors.Newf(ErrDuckDBExecutionFailed, "failed to execute query [%s]: %w", queryID, err)
 	}
 	defer rows.Close()
 
@@ -382,7 +385,7 @@ func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 	columns, err := rows.Columns()
 	if err != nil {
 		e.incrementErrorCount()
-		return nil, fmt.Errorf("failed to get columns for query [%s]: %w", queryID, err)
+		return nil, errors.Newf(ErrDuckDBColumnRetrievalFailed, "failed to get columns for query [%s]: %w", queryID, err)
 	}
 
 	// Fetch all rows with memory management
@@ -405,7 +408,7 @@ func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 
 		if err := rows.Scan(valuePtrs...); err != nil {
 			e.incrementErrorCount()
-			return nil, fmt.Errorf("failed to scan row %d in query [%s]: %w", rowCount, queryID, err)
+			return nil, errors.Newf(ErrDuckDBScanFailed, "failed to scan row %d in query [%s]: %w", rowCount, queryID, err)
 		}
 
 		resultRows = append(resultRows, values)
@@ -414,7 +417,7 @@ func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 
 	if err := rows.Err(); err != nil {
 		e.incrementErrorCount()
-		return nil, fmt.Errorf("error iterating rows in query [%s]: %w", queryID, err)
+		return nil, errors.Newf(ErrDuckDBExecutionFailed, "error iterating rows in query [%s]: %w", queryID, err)
 	}
 
 	duration := time.Since(start)
@@ -441,11 +444,11 @@ func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 // RegisterTable registers an Iceberg table for querying using DuckDB's native Iceberg support
 func (e *Engine) RegisterTable(ctx context.Context, identifier table.Identifier, icebergTable *table.Table) error {
 	if !e.initialized {
-		return fmt.Errorf("engine not initialized")
+		return errors.New(ErrDuckDBEngineCreationFailed, "engine not initialized")
 	}
 
 	if icebergTable == nil {
-		return fmt.Errorf("iceberg table cannot be nil")
+		return errors.New(ErrDuckDBEngineCreationFailed, "iceberg table cannot be nil")
 	}
 
 	e.mutex.Lock()
@@ -469,7 +472,7 @@ func (e *Engine) RegisterTable(ctx context.Context, identifier table.Identifier,
 
 		if _, err := e.db.Exec(createPlaceholderSQL); err != nil {
 			e.incrementErrorCount()
-			return fmt.Errorf("failed to create placeholder for table %s: %w", tableName, err)
+			return errors.Newf(ErrDuckDBExecutionFailed, "failed to create placeholder for table %s: %w", tableName, err)
 		}
 
 		// Create an alias with just the table name for easier querying
@@ -496,7 +499,7 @@ func (e *Engine) RegisterTable(ctx context.Context, identifier table.Identifier,
 	// Get table location from metadata
 	location := icebergTable.Location()
 	if location == "" {
-		return fmt.Errorf("table %s has no location", tableName)
+		return errors.Newf(ErrDuckDBTableNotFound, "table %s has no location", tableName)
 	}
 
 	// DuckDB v1.3.0 has significantly improved Iceberg support
@@ -506,7 +509,7 @@ func (e *Engine) RegisterTable(ctx context.Context, identifier table.Identifier,
 
 	// Validate metadata location to prevent injection
 	if strings.ContainsAny(metadataLocation, "'\"\\;") {
-		return fmt.Errorf("invalid metadata location: contains potentially dangerous characters")
+		return errors.New(ErrDuckDBEngineCreationFailed, "invalid metadata location: contains potentially dangerous characters")
 	}
 
 	createViewSQL := fmt.Sprintf(`
@@ -516,7 +519,7 @@ func (e *Engine) RegisterTable(ctx context.Context, identifier table.Identifier,
 
 	if _, err := e.db.Exec(createViewSQL); err != nil {
 		e.incrementErrorCount()
-		return fmt.Errorf("failed to register table %s: %w", tableName, err)
+		return errors.Newf(ErrDuckDBExecutionFailed, "failed to register table %s: %w", tableName, err)
 	}
 
 	// Create an alias with just the table name for easier querying
@@ -547,7 +550,7 @@ func (e *Engine) RegisterTable(ctx context.Context, identifier table.Identifier,
 func (e *Engine) ListTables(ctx context.Context) ([]string, error) {
 	rows, err := e.db.QueryContext(ctx, "SHOW TABLES")
 	if err != nil {
-		return nil, fmt.Errorf("failed to list tables: %w", err)
+		return nil, errors.New(ErrDuckDBExecutionFailed, "failed to list tables", err)
 	}
 	defer rows.Close()
 
@@ -555,7 +558,7 @@ func (e *Engine) ListTables(ctx context.Context) ([]string, error) {
 	for rows.Next() {
 		var tableName string
 		if err := rows.Scan(&tableName); err != nil {
-			return nil, fmt.Errorf("failed to scan table name: %w", err)
+			return nil, errors.New(ErrDuckDBScanFailed, "failed to scan table name", err)
 		}
 		tables = append(tables, tableName)
 	}
@@ -572,7 +575,7 @@ func (e *Engine) ListTables(ctx context.Context) ([]string, error) {
 func (e *Engine) DescribeTable(ctx context.Context, tableName string) (*QueryResult, error) {
 	// Validate table name to prevent injection
 	if strings.ContainsAny(tableName, "';\"\\-/*") {
-		return nil, fmt.Errorf("invalid table name: contains potentially dangerous characters")
+		return nil, errors.New(ErrDuckDBEngineCreationFailed, "invalid table name: contains potentially dangerous characters")
 	}
 
 	query := fmt.Sprintf("DESCRIBE %s", e.quoteName(tableName))
@@ -711,7 +714,7 @@ func (e *Engine) executeSecureQuery(ctx context.Context, query, queryID string) 
 			strings.Contains(query, ".") {
 			// Try to provide a helpful error message
 			processedQuery := strings.ReplaceAll(query, ".", "_")
-			return nil, fmt.Errorf("syntax error in query [%s]: DuckDB requires table names to use underscores instead of dots. "+
+			return nil, errors.Newf(ErrDuckDBExecutionFailed, "syntax error in query [%s]: DuckDB requires table names to use underscores instead of dots. "+
 				"Use '%s' instead of '%s' or just the table name '%s'. "+
 				"Original error: %w",
 				queryID,

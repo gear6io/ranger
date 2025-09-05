@@ -37,6 +37,18 @@ var (
 // ComponentType defines the metadata manager component type identifier
 const ComponentType = "metadata"
 
+// No-op diagnostic logger stub (TODO: remove all diagnostic logging)
+type noOpDiagLogger struct{}
+
+func (n *noOpDiagLogger) LogOperationStart(operation string, context map[string]interface{}) {}
+func (n *noOpDiagLogger) LogOperationEnd(operation string, success bool, err error, result map[string]interface{}) {
+}
+func (n *noOpDiagLogger) LogValidationError(operation string, details interface{})       {}
+func (n *noOpDiagLogger) LogRegistryOperation(operation string, diagnostics interface{}) {}
+func (n *noOpDiagLogger) LogPerformanceMetrics(operation string, duration time.Duration, metrics map[string]interface{}) {
+}
+func (n *noOpDiagLogger) LogSummary() {}
+
 // MetadataManager coordinates between Iceberg catalog and personal metadata storage
 type MetadataManager struct {
 	iceberg        catalog.CatalogInterface
@@ -403,14 +415,16 @@ func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseNa
 	// Generate transaction ID for tracking
 	transactionID := fmt.Sprintf("create_table_%d", time.Now().UnixNano())
 
-	// Initialize diagnostic logger
-	diagLogger := types.NewDiagnosticLogger(mm.logger, "metadata_manager", transactionID)
-	diagLogger.LogOperationStart("create_table_with_schema", map[string]interface{}{
-		"database":       databaseName,
-		"table_name":     table.Name,
-		"column_count":   len(columns),
-		"transaction_id": transactionID,
-	})
+	// No-op diagnostic logger stub (TODO: remove diagnostic logging)
+	diagLogger := &noOpDiagLogger{}
+
+	// Log operation start
+	mm.logger.Info().
+		Str("database", databaseName).
+		Str("table_name", table.Name).
+		Int("column_count", len(columns)).
+		Str("transaction_id", transactionID).
+		Msg("CREATE TABLE with schema started")
 
 	mm.mu.RLock()
 	if !mm.running {
@@ -592,20 +606,11 @@ func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseNa
 
 		// Check for specific error types and provide better error messages
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "already exists") {
-			createTableErr = types.NewCreateTableDuplicateError(table.Name, databaseName, transactionID)
 			registryDiagnostics.ConstraintViolations = []string{
 				fmt.Sprintf("UNIQUE constraint violation: table '%s' already exists", table.Name),
 			}
 		} else if strings.Contains(err.Error(), "database does not exist") {
-			createTableErr = types.NewCreateTableRegistryError(
-				fmt.Sprintf("database '%s' does not exist", databaseName),
-				table.Name,
-				databaseName,
-				transactionID,
-				transactionID,
-				errors.New(RegistryDatabaseNotFound, fmt.Sprintf("database '%s' does not exist", databaseName), err),
-			).AddSuggestion("Create the database before creating tables").
-				AddSuggestion("Check database name spelling and case sensitivity")
+			// Database doesn't exist
 		} else if strings.Contains(err.Error(), "transaction") {
 			createTableErr = types.NewCreateTableRegistryError(
 				"transaction failed during table creation",

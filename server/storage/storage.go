@@ -17,6 +17,7 @@ import (
 	"github.com/gear6io/ranger/server/metadata"
 	"github.com/gear6io/ranger/server/metadata/registry"
 	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
+	"github.com/gear6io/ranger/server/metadata/registry/system"
 	"github.com/gear6io/ranger/server/paths"
 	"github.com/gear6io/ranger/server/query/parser"
 	"github.com/gear6io/ranger/server/storage/filesystem"
@@ -366,7 +367,7 @@ func (m *Manager) CreateTable(ctx context.Context, req *types.CreateTableRequest
 			"",
 			req.Database,
 			req.RequestID,
-			fmt.Errorf("received type: %T", req.Statement),
+			errors.Newf(ErrStorageManagerUnsupportedType, "received type: %T", req.Statement),
 		).AddSuggestion("Ensure the statement is properly parsed before calling CreateTable")
 
 		diagLogger.LogOperationEnd("validate_statement", false, err, nil)
@@ -464,7 +465,7 @@ func (m *Manager) CreateTable(ctx context.Context, req *types.CreateTableRequest
 					tableName,
 					req.Database,
 					req.RequestID,
-					fmt.Errorf("panic during conversion: %v", r),
+					errors.Newf(ErrStorageManagerPanicRecovery, "panic during conversion: %v", r),
 				)
 				diagLogger.LogOperationEnd("convert_to_registry_types", false, createTableErr, nil)
 				panic(createTableErr) // Re-panic with enhanced error
@@ -1169,7 +1170,7 @@ func generateUUID() string {
 func (m *Manager) validateStorageEngine(storageEngine string) error {
 	if !m.engineRegistry.EngineExists(storageEngine) {
 		availableEngines := m.engineRegistry.GetAvailableEngines()
-		return fmt.Errorf("unsupported storage engine '%s'. Available engines: %v", storageEngine, availableEngines)
+		return errors.Newf(ErrStorageManagerUnsupportedEngine, "unsupported storage engine '%s'. Available engines: %v", storageEngine, availableEngines)
 	}
 	return nil
 }
@@ -1225,4 +1226,9 @@ func (m *Manager) convertToColumnRecords(columns map[string]*parser.ColumnDefini
 	}
 
 	return result
+}
+
+// GetSystemManager returns the system database manager
+func (m *Manager) GetSystemManager() *system.Manager {
+	return m.meta.GetStorage().GetSystemManager()
 }

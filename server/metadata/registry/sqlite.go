@@ -12,6 +12,7 @@ import (
 
 	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
+	"github.com/gear6io/ranger/server/metadata/registry/system"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -33,6 +34,7 @@ type Store struct {
 	dbPath      string
 	basePath    string
 	bunMigrator *BunMigrationManager
+	system      *system.Manager
 }
 
 // NewStore creates a new SQLite-based metadata store with bun migrations
@@ -78,6 +80,13 @@ func NewStoreWithOptions(dbPath, basePath string, useBun bool) (*Store, error) {
 	if err := bunMigrator.VerifySchema(ctx); err != nil {
 		db.Close()
 		return nil, errors.New(RegistrySchemaVerification, "bun schema verification failed", err).AddContext("path", dbPath)
+	}
+
+	// Initialize system manager
+	store.system = system.NewManager(db)
+	if err := store.system.Initialize(ctx); err != nil {
+		db.Close()
+		return nil, errors.New(RegistrySchemaVerification, "system database initialization failed", err).AddContext("path", dbPath)
 	}
 
 	return store, nil
@@ -851,4 +860,40 @@ func (sm *Store) ValidateTableMetadata(ctx context.Context, tableID int64) error
 	}
 
 	return nil
+}
+
+// GetTable retrieves table information by database and table name
+func (sm *Store) GetTable(ctx context.Context, databaseName, tableName string) (*regtypes.Table, error) {
+	query := `
+		SELECT t.id, t.database_id, t.name, t.display_name, t.description, t.table_type, 
+		       t.is_temporary, t.is_external, t.row_count, t.file_count, t.total_size,
+		       t.created_at, t.updated_at
+		FROM tables t
+		JOIN databases d ON t.database_id = d.id
+		WHERE d.name = ? AND t.name = ? AND t.deleted_at IS NULL AND d.deleted_at IS NULL
+	`
+
+	var table regtypes.Table
+	err := sm.db.QueryRowContext(ctx, query, databaseName, tableName).Scan(
+		&table.ID, &table.DatabaseID, &table.Name, &table.DisplayName, &table.Description,
+		&table.TableType, &table.IsTemporary, &table.IsExternal, &table.RowCount,
+		&table.FileCount, &table.TotalSize, &table.CreatedAt, &table.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, errors.New(RegistryTableNotFound, "table not found", nil).
+				AddContext("database", databaseName).
+				AddContext("table", tableName)
+		}
+		return nil, errors.New(errors.CommonInternal, "failed to get table", err).
+			AddContext("database", databaseName).
+			AddContext("table", tableName)
+	}
+
+	return &table, nil
+}
+
+// GetSystemManager returns the system database manager
+func (sm *Store) GetSystemManager() *system.Manager {
+	return sm.system
 }

@@ -62,16 +62,15 @@ func (sms *SchemaManagerSubscriber) OnEvent(ctx context.Context, event astha.Eve
 	// Update health status
 	sms.healthChecker.lastHealthCheck = time.Now()
 
-	// Initialize diagnostic logger for this event
+	// Log event processing start
 	eventID := fmt.Sprintf("event_%d", event.ID)
-	diagLogger := types.NewDiagnosticLogger(sms.logger, "astha_subscriber", eventID)
-
-	diagLogger.LogOperationStart("process_astha_event", map[string]interface{}{
-		"event_id":  event.ID,
-		"table":     event.Table,
-		"operation": event.Operation,
-		"timestamp": event.Timestamp,
-	})
+	sms.logger.Info().
+		Str("event_id", eventID).
+		Int64("event_id_num", event.ID).
+		Str("table", event.Table).
+		Str("operation", event.Operation).
+		Time("timestamp", event.Timestamp).
+		Msg("Processing Astha event started")
 
 	sms.logger.Debug().
 		Int64("event_id", event.ID).
@@ -209,7 +208,7 @@ func (sms *SchemaManagerSubscriber) handleTableCreated(ctx context.Context, even
 		if table, tableOk := event.Data.(regtypes.Table); tableOk {
 			return sms.handleTableCreatedFromTable(ctx, table)
 		}
-		return fmt.Errorf("invalid event data format for table creation: expected map[string]interface{} or regtypes.Table, got %T", event.Data)
+		return errors.Newf(SchemaManagerFormatError, "invalid event data format for table creation: expected map[string]interface{} or regtypes.Table, got %T", event.Data)
 	}
 
 	database, ok := tableData["database"].(string)
@@ -220,13 +219,13 @@ func (sms *SchemaManagerSubscriber) handleTableCreated(ctx context.Context, even
 			// we'd need to look up the database name from the database_id
 			database = fmt.Sprintf("db_%d", databaseID)
 		} else {
-			return fmt.Errorf("missing or invalid database field in event data")
+			return errors.New(SchemaManagerFormatError, "missing or invalid database field in event data")
 		}
 	}
 
 	tableName, ok := tableData["name"].(string)
 	if !ok {
-		return fmt.Errorf("missing or invalid table name field in event data")
+		return errors.New(SchemaManagerFormatError, "missing or invalid table name field in event data")
 	}
 
 	// Extract table ID if available
@@ -255,18 +254,18 @@ func (sms *SchemaManagerSubscriber) handleColumnAdded(ctx context.Context, event
 		if column, columnOk := event.Data.(regtypes.TableColumn); columnOk {
 			return sms.handleColumnAddedFromColumn(ctx, column)
 		}
-		return fmt.Errorf("invalid event data format for column addition: expected map[string]interface{} or regtypes.TableColumn, got %T", event.Data)
+		return errors.Newf(SchemaManagerFormatError, "invalid event data format for column addition: expected map[string]interface{} or regtypes.TableColumn, got %T", event.Data)
 	}
 
 	tableID, ok := columnData["table_id"].(int64)
 	if !ok {
-		return fmt.Errorf("missing or invalid table_id field in event data")
+		return errors.New(SchemaManagerFormatError, "missing or invalid table_id field in event data")
 	}
 
 	// Get table information to invalidate cache
 	database, tableName, err := sms.getTableInfo(ctx, tableID)
 	if err != nil {
-		return fmt.Errorf("failed to get table info for ID %d: %w", tableID, err)
+		return errors.Newf(SchemaManagerRetrievalError, "failed to get table info for ID %d: %w", tableID, err)
 	}
 
 	return sms.invalidateAndRefreshCache(ctx, database, tableName, "column_added")
@@ -277,7 +276,7 @@ func (sms *SchemaManagerSubscriber) handleColumnAddedFromColumn(ctx context.Cont
 	// Get table information to invalidate cache
 	database, tableName, err := sms.getTableInfo(ctx, column.TableID)
 	if err != nil {
-		return fmt.Errorf("failed to get table info for ID %d: %w", column.TableID, err)
+		return errors.Newf(SchemaManagerRetrievalError, "failed to get table info for ID %d: %w", column.TableID, err)
 	}
 
 	return sms.invalidateAndRefreshCache(ctx, database, tableName, "column_added")
@@ -292,18 +291,18 @@ func (sms *SchemaManagerSubscriber) handleSchemaChanged(ctx context.Context, eve
 		if column, columnOk := event.Data.(regtypes.TableColumn); columnOk {
 			return sms.handleSchemaChangedFromColumn(ctx, column)
 		}
-		return fmt.Errorf("invalid event data format for column change: expected map[string]interface{} or regtypes.TableColumn, got %T", event.Data)
+		return errors.Newf(SchemaManagerFormatError, "invalid event data format for column change: expected map[string]interface{} or regtypes.TableColumn, got %T", event.Data)
 	}
 
 	tableID, ok := columnData["table_id"].(int64)
 	if !ok {
-		return fmt.Errorf("missing or invalid table_id field in event data")
+		return errors.New(SchemaManagerFormatError, "missing or invalid table_id field in event data")
 	}
 
 	// Get table information to invalidate cache
 	database, tableName, err := sms.getTableInfo(ctx, tableID)
 	if err != nil {
-		return fmt.Errorf("failed to get table info for ID %d: %w", tableID, err)
+		return errors.Newf(SchemaManagerRetrievalError, "failed to get table info for ID %d: %w", tableID, err)
 	}
 
 	return sms.invalidateAndRefreshCache(ctx, database, tableName, "schema_changed")
@@ -314,7 +313,7 @@ func (sms *SchemaManagerSubscriber) handleSchemaChangedFromColumn(ctx context.Co
 	// Get table information to invalidate cache
 	database, tableName, err := sms.getTableInfo(ctx, column.TableID)
 	if err != nil {
-		return fmt.Errorf("failed to get table info for ID %d: %w", column.TableID, err)
+		return errors.Newf(SchemaManagerRetrievalError, "failed to get table info for ID %d: %w", column.TableID, err)
 	}
 
 	return sms.invalidateAndRefreshCache(ctx, database, tableName, "schema_changed")
@@ -329,18 +328,18 @@ func (sms *SchemaManagerSubscriber) handleMetadataChanged(ctx context.Context, e
 		if metadata, metadataOk := event.Data.(regtypes.TableMetadata); metadataOk {
 			return sms.handleMetadataChangedFromMetadata(ctx, metadata)
 		}
-		return fmt.Errorf("invalid event data format for metadata change: expected map[string]interface{} or regtypes.TableMetadata, got %T", event.Data)
+		return errors.Newf(SchemaManagerFormatError, "invalid event data format for metadata change: expected map[string]interface{} or regtypes.TableMetadata, got %T", event.Data)
 	}
 
 	tableID, ok := metadataData["table_id"].(int64)
 	if !ok {
-		return fmt.Errorf("missing or invalid table_id field in event data")
+		return errors.New(SchemaManagerFormatError, "missing or invalid table_id field in event data")
 	}
 
 	// Get table information to invalidate cache
 	database, tableName, err := sms.getTableInfo(ctx, tableID)
 	if err != nil {
-		return fmt.Errorf("failed to get table info for ID %d: %w", tableID, err)
+		return errors.Newf(SchemaManagerRetrievalError, "failed to get table info for ID %d: %w", tableID, err)
 	}
 
 	return sms.invalidateAndRefreshCache(ctx, database, tableName, "metadata_changed")
@@ -351,7 +350,7 @@ func (sms *SchemaManagerSubscriber) handleMetadataChangedFromMetadata(ctx contex
 	// Get table information to invalidate cache
 	database, tableName, err := sms.getTableInfo(ctx, metadata.TableID)
 	if err != nil {
-		return fmt.Errorf("failed to get table info for ID %d: %w", metadata.TableID, err)
+		return errors.Newf(SchemaManagerRetrievalError, "failed to get table info for ID %d: %w", metadata.TableID, err)
 	}
 
 	return sms.invalidateAndRefreshCache(ctx, database, tableName, "metadata_changed")
@@ -365,7 +364,7 @@ func (sms *SchemaManagerSubscriber) handleTableDeleted(ctx context.Context, even
 		if table, tableOk := event.Data.(regtypes.Table); tableOk {
 			return sms.handleTableDeletedFromTable(ctx, table)
 		}
-		return fmt.Errorf("invalid event data format for table deletion: expected map[string]interface{} or regtypes.Table, got %T", event.Data)
+		return errors.Newf(SchemaManagerFormatError, "invalid event data format for table deletion: expected map[string]interface{} or regtypes.Table, got %T", event.Data)
 	}
 
 	database, ok := tableData["database"].(string)
@@ -374,13 +373,13 @@ func (sms *SchemaManagerSubscriber) handleTableDeleted(ctx context.Context, even
 		if databaseID, idOk := tableData["database_id"].(int64); idOk {
 			database = fmt.Sprintf("db_%d", databaseID)
 		} else {
-			return fmt.Errorf("missing or invalid database field in event data")
+			return errors.New(SchemaManagerFormatError, "missing or invalid database field in event data")
 		}
 	}
 
 	tableName, ok := tableData["name"].(string)
 	if !ok {
-		return fmt.Errorf("missing or invalid table name field in event data")
+		return errors.New(SchemaManagerFormatError, "missing or invalid table name field in event data")
 	}
 
 	// Remove from cache using enhanced cleanup method
@@ -420,18 +419,18 @@ func (sms *SchemaManagerSubscriber) handleColumnDeleted(ctx context.Context, eve
 		if column, columnOk := event.Data.(regtypes.TableColumn); columnOk {
 			return sms.handleColumnDeletedFromColumn(ctx, column)
 		}
-		return fmt.Errorf("invalid event data format for column deletion: expected map[string]interface{} or regtypes.TableColumn, got %T", event.Data)
+		return errors.Newf(SchemaManagerFormatError, "invalid event data format for column deletion: expected map[string]interface{} or regtypes.TableColumn, got %T", event.Data)
 	}
 
 	tableID, ok := columnData["table_id"].(int64)
 	if !ok {
-		return fmt.Errorf("missing or invalid table_id field in event data")
+		return errors.New(SchemaManagerFormatError, "missing or invalid table_id field in event data")
 	}
 
 	// Get table information to invalidate cache
 	database, tableName, err := sms.getTableInfo(ctx, tableID)
 	if err != nil {
-		return fmt.Errorf("failed to get table info for ID %d: %w", tableID, err)
+		return errors.Newf(SchemaManagerRetrievalError, "failed to get table info for ID %d: %w", tableID, err)
 	}
 
 	return sms.invalidateAndRefreshCache(ctx, database, tableName, "column_deleted")
@@ -442,7 +441,7 @@ func (sms *SchemaManagerSubscriber) handleColumnDeletedFromColumn(ctx context.Co
 	// Get table information to invalidate cache
 	database, tableName, err := sms.getTableInfo(ctx, column.TableID)
 	if err != nil {
-		return fmt.Errorf("failed to get table info for ID %d: %w", column.TableID, err)
+		return errors.Newf(SchemaManagerRetrievalError, "failed to get table info for ID %d: %w", column.TableID, err)
 	}
 
 	return sms.invalidateAndRefreshCache(ctx, database, tableName, "column_deleted")
@@ -556,7 +555,7 @@ func (sms *SchemaManagerSubscriber) retryOperation(ctx context.Context, operatio
 		}
 	}
 
-	return fmt.Errorf("operation failed after %d retries", sms.retryConfig.MaxRetries)
+	return errors.Newf(SchemaManagerRetrievalError, "operation failed after %d retries", sms.retryConfig.MaxRetries)
 }
 
 // getTableInfo retrieves database and table name from table ID

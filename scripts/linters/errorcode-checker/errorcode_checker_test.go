@@ -317,6 +317,11 @@ func TestInternalPackageCallsUsingErrorsNew(t *testing.T) {
 
 import (
 	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/catalog"
+	"github.com/gear6io/ranger/server/storage"
+	"github.com/gear6io/ranger/client"
+	"github.com/gear6io/ranger/server/query"
+	"os"
 )
 
 var (
@@ -501,5 +506,278 @@ func testChainedMethodCalls() error {
 	}
 	if !foundTypeMethodFunction {
 		t.Error("Should have found testTypeMethodCalls")
+	}
+}
+
+func TestEnhancedErrorPatternDetection(t *testing.T) {
+	// Create a temporary test directory
+	testDir, err := os.MkdirTemp("", "enhanced-pattern-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(testDir)
+
+	// Create test file with different error handling patterns
+	testContent := `package test
+
+import (
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/catalog"
+	"github.com/gear6io/ranger/server/storage"
+	"github.com/gear6io/ranger/server/query"
+	"github.com/gear6io/ranger/server/metadata"
+	"github.com/gear6io/ranger/server/filesystem"
+	"github.com/gear6io/ranger/server/parser"
+)
+
+var (
+	ErrTest1 = errors.MustNewCode("test.error1")
+)
+
+// Function with meaningful context - should suggest errors.AddContext
+func testFunctionWithContext() error {
+	result, err := catalog.Parse("test_table")
+	if err != nil {
+		return errors.New(ErrTest1, "failed to parse table %s", err)
+	}
+	return nil
+}
+
+// Function with AddContext nearby - should suggest errors.AddContext
+func testFunctionWithAddContext() error {
+	result, err := storage.Write("data")
+	if err != nil {
+		return errors.New(ErrTest1, "storage operation failed", err).
+			AddContext("table", "users")
+	}
+	return nil
+}
+
+// Function with generic error - should suggest return err
+func testFunctionGeneric() error {
+	result, err := query.Execute("SELECT * FROM table")
+	if err != nil {
+		return errors.New(ErrTest1, "error occurred", err)
+	}
+	return nil
+}
+
+// Function with no meaningful context - should suggest return err
+func testFunctionNoContext() error {
+	result, err := metadata.Load("config")
+	if err != nil {
+		return errors.New(ErrTest1, "operation failed", err)
+	}
+	return nil
+}
+
+// Function with specific context indicators - should suggest errors.AddContext
+func testFunctionSpecificContext() error {
+	result, err := filesystem.ReadFile("config.json")
+	if err != nil {
+		return errors.New(ErrTest1, "failed to read database configuration", err)
+	}
+	return nil
+}
+
+// Function with format specifiers - should suggest errors.AddContext
+func testFunctionWithFormat() error {
+	result, err := parser.Parse("SELECT * FROM users")
+	if err != nil {
+		return errors.New(ErrTest1, "failed to parse query: %s", err)
+	}
+	return nil
+}
+`
+	filePath := filepath.Join(testDir, "test.go")
+	if err := os.WriteFile(filePath, []byte(testContent), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	// Test the checker
+	checker := NewErrorCodeChecker(false)
+	if err := checker.CheckDirectory(testDir, []string{}); err != nil {
+		t.Fatalf("Failed to check directory: %v", err)
+	}
+
+	// Check enhanced pattern report
+	noViolations, report := checker.ReportEnhancedErrorPatterns()
+
+	// Print report for debugging
+	for _, line := range report {
+		t.Log(line)
+	}
+
+	// Should find pattern suggestions
+	if noViolations {
+		t.Error("Expected to find enhanced error pattern suggestions")
+	}
+
+	// Should find at least 4 pattern suggestions
+	// (testFunctionWithContext, testFunctionWithAddContext, testFunctionSpecificContext, testFunctionWithFormat should suggest AddContext)
+	// (testFunctionGeneric, testFunctionNoContext should suggest return err)
+	if len(report) < 8 { // Header + 6 pattern suggestions
+		t.Errorf("Expected at least 8 report lines, got %d", len(report))
+	}
+
+	// Check specific function tracking
+	foundWithContext := false
+	foundGeneric := false
+	foundSpecificContext := false
+	foundWithFormat := false
+
+	for _, funcInfo := range checker.functions {
+		if funcInfo.Name == "testFunctionWithContext" {
+			foundWithContext = true
+			// Should suggest AddContext due to format specifier
+			hasAddContextSuggestion := false
+			for _, calls := range funcInfo.InternalPackageCalls {
+				for _, call := range calls {
+					if call.ShouldUseAddContext {
+						hasAddContextSuggestion = true
+						break
+					}
+				}
+			}
+			if !hasAddContextSuggestion {
+				t.Error("testFunctionWithContext should suggest AddContext")
+			}
+		}
+
+		if funcInfo.Name == "testFunctionGeneric" {
+			foundGeneric = true
+			// Should suggest return err due to generic message
+			hasReturnErrSuggestion := false
+			for _, calls := range funcInfo.InternalPackageCalls {
+				for _, call := range calls {
+					if call.ShouldReturnErr {
+						hasReturnErrSuggestion = true
+						break
+					}
+				}
+			}
+			if !hasReturnErrSuggestion {
+				t.Error("testFunctionGeneric should suggest return err")
+			}
+		}
+
+		if funcInfo.Name == "testFunctionSpecificContext" {
+			foundSpecificContext = true
+			// Should suggest AddContext due to specific context indicators
+			hasAddContextSuggestion := false
+			for _, calls := range funcInfo.InternalPackageCalls {
+				for _, call := range calls {
+					if call.ShouldUseAddContext {
+						hasAddContextSuggestion = true
+						break
+					}
+				}
+			}
+			if !hasAddContextSuggestion {
+				t.Error("testFunctionSpecificContext should suggest AddContext")
+			}
+		}
+
+		if funcInfo.Name == "testFunctionWithFormat" {
+			foundWithFormat = true
+			// Should suggest AddContext due to format specifier
+			hasAddContextSuggestion := false
+			for _, calls := range funcInfo.InternalPackageCalls {
+				for _, call := range calls {
+					if call.ShouldUseAddContext {
+						hasAddContextSuggestion = true
+						break
+					}
+				}
+			}
+			if !hasAddContextSuggestion {
+				t.Error("testFunctionWithFormat should suggest AddContext")
+			}
+		}
+	}
+
+	if !foundWithContext {
+		t.Error("Should have found testFunctionWithContext")
+	}
+	if !foundGeneric {
+		t.Error("Should have found testFunctionGeneric")
+	}
+	if !foundSpecificContext {
+		t.Error("Should have found testFunctionSpecificContext")
+	}
+	if !foundWithFormat {
+		t.Error("Should have found testFunctionWithFormat")
+	}
+}
+
+func TestContextDetectionLogic(t *testing.T) {
+	checker := NewErrorCodeChecker(false)
+
+	// Test cases for context detection
+	testCases := []struct {
+		name           string
+		errorLine      string
+		allLines       []string
+		lineNum        int
+		expectedResult bool
+		description    string
+	}{
+		{
+			name:           "Format specifier",
+			errorLine:      `return errors.New(ErrTest, "failed to parse %s", err)`,
+			allLines:       []string{},
+			lineNum:        1,
+			expectedResult: true,
+			description:    "Should detect format specifiers as meaningful context",
+		},
+		{
+			name:           "AddContext nearby",
+			errorLine:      `return errors.New(ErrTest, "error", err)`,
+			allLines:       []string{"", "", "    .AddContext(\"key\", value)"},
+			lineNum:        3,
+			expectedResult: true,
+			description:    "Should detect AddContext calls nearby",
+		},
+		{
+			name:           "Specific context indicators",
+			errorLine:      `return errors.New(ErrTest, "failed to read database table", err)`,
+			allLines:       []string{},
+			lineNum:        1,
+			expectedResult: true,
+			description:    "Should detect specific context indicators",
+		},
+		{
+			name:           "Generic error message",
+			errorLine:      `return errors.New(ErrTest, "error occurred", err)`,
+			allLines:       []string{},
+			lineNum:        1,
+			expectedResult: false,
+			description:    "Should detect generic error messages as no context",
+		},
+		{
+			name:           "Generic operation failed",
+			errorLine:      `return errors.New(ErrTest, "operation failed", err)`,
+			allLines:       []string{},
+			lineNum:        1,
+			expectedResult: false,
+			description:    "Should detect generic operation failed as no context",
+		},
+		{
+			name:           "Specific file operation",
+			errorLine:      `return errors.New(ErrTest, "failed to read file", err)`,
+			allLines:       []string{},
+			lineNum:        1,
+			expectedResult: true,
+			description:    "Should detect specific file operation as meaningful context",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := checker.detectMeaningfulContext(tc.errorLine, tc.allLines, tc.lineNum)
+			if result != tc.expectedResult {
+				t.Errorf("%s: Expected %v, got %v. %s", tc.name, tc.expectedResult, result, tc.description)
+			}
+		})
 	}
 }

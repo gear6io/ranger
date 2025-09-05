@@ -131,27 +131,51 @@ func (cd *ColumnDefinition) Validate() error {
 	}
 
 	if cd.Name == "" {
-		return fmt.Errorf("column name cannot be empty")
+		return errors.New(ErrEmptyColumnName, "column name cannot be empty", nil)
 	}
 
 	// Validate Iceberg type using centralized validator
 	validator := types.NewIcebergTypeValidator()
 	if !validator.IsValidType(cd.DataType) {
-		supportedTypes := validator.GetSupportedTypes()
-
-		// Check if it's a legacy SQL type and provide migration suggestion
-		if suggestion, err := validator.GetMigrationSuggestion(cd.DataType); err == nil {
-			return fmt.Errorf("column '%s': unsupported SQL type '%s'. Use Iceberg type '%s' instead. No legacy SQL types are supported",
-				cd.Name, cd.DataType, suggestion)
+		// Check if it's a legacy SQL type and provide specific mapping
+		upperType := strings.ToUpper(cd.DataType)
+		legacyMappings := map[string]string{
+			"VARCHAR":   "string",
+			"CHAR":      "string",
+			"TEXT":      "string",
+			"INT":       "int32",
+			"INTEGER":   "int32",
+			"BIGINT":    "int64",
+			"SMALLINT":  "int32",
+			"TINYINT":   "int32",
+			"FLOAT":     "float32",
+			"DOUBLE":    "float64",
+			"REAL":      "float32",
+			"NUMERIC":   "decimal",
+			"DECIMAL":   "decimal",
+			"BOOL":      "boolean",
+			"DATETIME":  "timestamp",
+			"TIMESTAMP": "timestamp",
+			"DATE":      "date",
+			"TIME":      "time",
+			"BLOB":      "binary",
+			"BINARY":    "binary",
+			"VARBINARY": "binary",
 		}
 
-		return fmt.Errorf("column '%s': invalid Iceberg type '%s'. Supported types: %v",
+		if icebergEquivalent, isLegacy := legacyMappings[upperType]; isLegacy {
+			return errors.Newf(ErrUnsupportedSQLType, "column '%s': unsupported SQL type '%s'. Use Iceberg type '%s' instead",
+				cd.Name, cd.DataType, icebergEquivalent)
+		}
+
+		supportedTypes := validator.GetSupportedTypes()
+		return errors.Newf(ErrInvalidIcebergType, "column '%s': invalid Iceberg type '%s'. Supported types: %v",
 			cd.Name, cd.DataType, supportedTypes)
 	}
 
 	// Validate complex types
 	if err := validator.ValidateComplexType(cd.DataType); err != nil {
-		return fmt.Errorf("column '%s': complex type validation failed: %v", cd.Name, err)
+		return errors.Newf(ErrComplexTypeParseError, "column '%s': complex type validation failed: %v", cd.Name, err)
 	}
 
 	cd.validated = true
@@ -698,8 +722,6 @@ func (l *Lexer) tokenize() {
 		}
 		l.tokens = append(l.tokens, tok)
 	}
-
-	return
 }
 
 func Parse(query string) (Node, error) {
@@ -846,6 +868,38 @@ func (p *Parser) expectDataType(found *Token) *ParseError {
 
 	message := "expected valid Iceberg data type"
 	return p.newTypeError(ErrInvalidIcebergType, message, found, suggestions)
+}
+
+// getLegacySQLTypeMapping returns the Iceberg equivalent for legacy SQL types
+func (p *Parser) getLegacySQLTypeMapping(legacyType string) string {
+	// Map common legacy SQL types to their Iceberg equivalents
+	mappings := map[string]string{
+		"VARCHAR":   "string",
+		"CHAR":      "string",
+		"TEXT":      "string",
+		"INT":       "int32",
+		"INTEGER":   "int32",
+		"BIGINT":    "int64",
+		"SMALLINT":  "int32",
+		"TINYINT":   "int32",
+		"FLOAT":     "float32",
+		"DOUBLE":    "float64",
+		"REAL":      "float32",
+		"NUMERIC":   "decimal",
+		"DECIMAL":   "decimal",
+		"BOOL":      "boolean",
+		"DATETIME":  "timestamp",
+		"TIMESTAMP": "timestamp",
+		"DATE":      "date",
+		"TIME":      "time",
+		"BLOB":      "binary",
+		"BINARY":    "binary",
+		"VARBINARY": "binary",
+	}
+
+	// Convert to uppercase for case-insensitive matching
+	upperType := strings.ToUpper(legacyType)
+	return mappings[upperType]
 }
 
 // expectLiteral creates a syntax error for missing literals
@@ -2276,6 +2330,38 @@ func (p *Parser) parseShowStmt() (Node, error) {
 		return &ShowStmt{ShowType: SHOW_INDEXES, From: &Identifier{
 			Value: tableName,
 		}}, nil
+	case "COLUMNS":
+		p.consume() // Consume COLUMNS
+
+		if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "FROM" {
+			return nil, errors.New(ErrExpectedFrom, "expected FROM", nil)
+		}
+
+		p.consume() // Consume FROM
+
+		// Parse table identifier (can be qualified database.table or just table)
+		tableIdent, err := p.parseTableIdentifier()
+		if err != nil {
+			return nil, err
+		}
+
+		return &ShowStmt{ShowType: SHOW_COLUMNS, TableName: tableIdent}, nil
+	case "CREATE":
+		p.consume() // Consume CREATE
+
+		if p.peek(0).tokenT != KEYWORD_TOK || p.peek(0).value != "TABLE" {
+			return nil, errors.New(ErrExpectedKeyword, "expected TABLE", nil)
+		}
+
+		p.consume() // Consume TABLE
+
+		// Parse table identifier (can be qualified database.table or just table)
+		tableIdent, err := p.parseTableIdentifier()
+		if err != nil {
+			return nil, err
+		}
+
+		return &ShowStmt{ShowType: SHOW_CREATE_TABLE, TableName: tableIdent}, nil
 	case "GRANTS":
 
 		p.consume() // Consume GRANTS
@@ -2296,7 +2382,7 @@ func (p *Parser) parseShowStmt() (Node, error) {
 		return &ShowStmt{ShowType: SHOW_GRANTS}, nil
 	}
 
-	return nil, errors.New(ErrExpectedDatabases, "expected DATABASES, TABLES, or USERS", nil)
+	return nil, errors.New(ErrExpectedDatabases, "expected DATABASES, TABLES, USERS, COLUMNS, or CREATE TABLE", nil)
 
 }
 
@@ -3428,15 +3514,16 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 			legacyType := p.peek(0).value.(string)
 			currentToken := p.peekToken(0)
 
-			// Provide migration suggestion if available
-			validator := types.NewIcebergTypeValidator()
-			if suggestion, migrationErr := validator.GetMigrationSuggestion(strings.ToUpper(legacyType)); migrationErr == nil {
-				message := fmt.Sprintf("legacy SQL type '%s' is not supported. Use Iceberg type '%s' instead", legacyType, suggestion)
-				return nil, p.newTypeError(ErrUnsupportedSQLType, message, currentToken, []string{suggestion})
+			// Map legacy SQL types to Iceberg equivalents
+			icebergEquivalent := p.getLegacySQLTypeMapping(legacyType)
+			if icebergEquivalent != "" {
+				message := fmt.Sprintf("unsupported SQL type '%s'. Use Iceberg type '%s' instead", legacyType, icebergEquivalent)
+				return nil, p.newTypeError(ErrUnsupportedSQLType, message, currentToken, []string{icebergEquivalent})
 			}
 
-			message := fmt.Sprintf("unsupported type '%s'. Only Iceberg types are supported", legacyType)
-			return nil, p.newTypeError(ErrInvalidIcebergType, message, currentToken, []string{"valid Iceberg type"})
+			// Generic error for unknown legacy types
+			message := fmt.Sprintf("legacy SQL type '%s' is not supported. Only Iceberg types are allowed", legacyType)
+			return nil, p.newTypeError(ErrUnsupportedSQLType, message, currentToken, []string{"valid Iceberg type"})
 		} else {
 			return nil, p.expectDataType(p.peekToken(0))
 		}
@@ -3573,10 +3660,11 @@ func (p *Parser) validateIcebergType(typeStr string) error {
 		// Get the current token for error context
 		currentToken := &p.lexer.tokens[p.pos-1] // Previous token was the type
 
-		// Check if it's a legacy SQL type and provide migration suggestion (no legacy SQL support)
-		if suggestion, err := validator.GetMigrationSuggestion(strings.ToUpper(typeStr)); err == nil {
-			message := fmt.Sprintf("unsupported SQL type '%s'. Use Iceberg type '%s' instead. Legacy SQL types are not supported - only Iceberg types are allowed", typeStr, suggestion)
-			return p.newTypeError(ErrUnsupportedSQLType, message, currentToken, []string{suggestion})
+		// Check if it's a legacy SQL type and provide specific mapping
+		icebergEquivalent := p.getLegacySQLTypeMapping(typeStr)
+		if icebergEquivalent != "" {
+			message := fmt.Sprintf("unsupported SQL type '%s'. Use Iceberg type '%s' instead", typeStr, icebergEquivalent)
+			return p.newTypeError(ErrUnsupportedSQLType, message, currentToken, []string{icebergEquivalent})
 		}
 
 		// Provide comprehensive Iceberg type suggestions including complex types

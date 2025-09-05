@@ -3,6 +3,7 @@ package errors
 import (
 	"fmt"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -16,12 +17,22 @@ type InternalError interface {
 
 // Error - simplified structure
 type Error struct {
-	Code      Code
-	Message   string
-	Cause     error
-	Context   map[string]string
-	Stack     []Frame
-	Timestamp time.Time
+	Code        Code
+	Message     string
+	Cause       error
+	context     map[string]any // private field
+	Suggestions []string
+	Recovery    []RecoveryAction
+	Stack       []Frame
+	Timestamp   time.Time
+}
+
+// RecoveryAction represents an actionable recovery suggestion
+type RecoveryAction struct {
+	Type        string `json:"type"`        // "retry", "fix_syntax", "check_config", etc.
+	Description string `json:"description"` // Human-readable description
+	Action      string `json:"action"`      // Specific action to take
+	Automatic   bool   `json:"automatic"`   // Whether this can be automatically recovered
 }
 
 // Frame represents a stack frame
@@ -94,16 +105,10 @@ func Newf(code Code, format string, args ...interface{}) *Error {
 //	if err := validateUser(user); err != nil {
 //	    return errors.AddContext(err, "request_id", requestID)
 //	}
-//
-//	// Chain multiple context additions
-//	return errors.AddContext(
-//	    errors.AddContext(err, "database", dbName),
-//	    "table", tableName,
-//	)
-func AddContext(err error, key string, value interface{}) *Error {
+func AddContext(err error, key string, value any) *Error {
 	// If it's already our Error type, add context to it
 	if rangerErr, ok := err.(*Error); ok {
-		return rangerErr.AddContext(key, fmt.Sprintf("%v", value))
+		return rangerErr.AddContext(key, value)
 	}
 
 	// For standard errors, create a new error with the context
@@ -113,9 +118,9 @@ func AddContext(err error, key string, value interface{}) *Error {
 		Cause:     err,
 		Timestamp: time.Now(),
 		Stack:     captureStackTrace(),
-		Context:   make(map[string]string),
+		context:   make(map[string]any),
 	}
-	newErr.Context[key] = fmt.Sprintf("%v", value)
+	newErr.context[key] = value
 	return newErr
 }
 
@@ -135,43 +140,63 @@ func AddContext(err error, key string, value interface{}) *Error {
 //	return errors.New(ErrTableNotFound, "table does not exist").
 //	    AddContext("database", database).
 //	    AddContext("table", tableName).
-//	    AddContext("timestamp", time.Now().Format(time.RFC3339))
+//	    AddContext("timestamp", time.Now())
 //
-//	// Add context with different value types (all converted to strings)
+//	// Add context with different value types (preserved as-is)
 //	return errors.New(ErrValidationFailed, "validation failed").
 //	    AddContext("row_index", 42).
 //	    AddContext("field_name", "email").
-//	    AddContext("is_required", true)
+//	    AddContext("is_required", true).
+//	    AddContext("failed_columns", []string{"col1", "col2"})
 //
 //	// Chain with external AddContext
 //	baseErr := errors.New(ErrDataParseFailed, "failed to parse data")
 //	return errors.AddContext(baseErr, "source", "user_input").
 //	    AddContext("format", "json")
-func (e *Error) AddContext(key string, value interface{}) *Error {
-	if e.Context == nil {
-		e.Context = make(map[string]string)
+func (e *Error) AddContext(key string, value any) *Error {
+	if e.context == nil {
+		e.context = make(map[string]any)
 	}
-	e.Context[key] = fmt.Sprintf("%v", value)
+	e.context[key] = value
 	return e
 }
 
 // Error methods
 
-// Error returns the error message string.
+// Error returns the error message string with context information.
 // If the error has a cause, it includes both the message and cause.
+// Context information is appended to provide additional debugging details.
 //
 // Examples:
 //
 //	err := errors.New(ErrTableNotFound, "table not found")
 //	fmt.Println(err.Error()) // Output: "table not found"
 //
-//	err = errors.New(ErrDataParseFailed, "parse failed", parseErr)
-//	fmt.Println(err.Error()) // Output: "parse failed: invalid json format"
+//	err = errors.New(ErrDataParseFailed, "parse failed", parseErr).
+//	    AddContext("table", "users").AddContext("database", "main")
+//	fmt.Println(err.Error()) // Output: "parse failed: invalid json format [table=users database=main]"
 func (e *Error) Error() string {
+	var parts []string
+
+	// Base message with cause
 	if e.Cause != nil {
-		return fmt.Sprintf("%s: %v", e.Message, e.Cause)
+		parts = append(parts, fmt.Sprintf("%s: %v", e.Message, e.Cause))
+	} else {
+		parts = append(parts, e.Message)
 	}
-	return e.Message
+
+	// Add context if available
+	if len(e.context) > 0 {
+		var contextParts []string
+		for key, value := range e.context {
+			contextParts = append(contextParts, fmt.Sprintf("%s=%v", key, value))
+		}
+		if len(contextParts) > 0 {
+			parts = append(parts, fmt.Sprintf("[%s]", strings.Join(contextParts, " ")))
+		}
+	}
+
+	return strings.Join(parts, " ")
 }
 
 // Unwrap returns the underlying cause error, implementing the errors.Unwrap interface.
@@ -183,6 +208,152 @@ func (e *Error) Error() string {
 //	cause := errors.Unwrap(err) // Returns parseErr
 func (e *Error) Unwrap() error {
 	return e.Cause
+}
+
+// Context accessor methods
+
+// GetContext returns the value for the given context key.
+// Returns nil if the key doesn't exist.
+//
+// Examples:
+//
+//	err := errors.New(ErrTableNotFound, "table not found").
+//	    AddContext("table_name", "users")
+//	tableName := err.GetContext("table_name") // Returns "users"
+func (e *Error) GetContext(key string) any {
+	if e.context == nil {
+		return nil
+	}
+	return e.context[key]
+}
+
+// HasContext returns true if the given context key exists.
+//
+// Examples:
+//
+//	err := errors.New(ErrTableNotFound, "table not found").
+//	    AddContext("table_name", "users")
+//	hasTable := err.HasContext("table_name") // Returns true
+func (e *Error) HasContext(key string) bool {
+	if e.context == nil {
+		return false
+	}
+	_, exists := e.context[key]
+	return exists
+}
+
+// GetContextKeys returns all context keys.
+// Useful for debugging or logging all available context.
+//
+// Examples:
+//
+//	err := errors.New(ErrTableNotFound, "table not found").
+//	    AddContext("table_name", "users").
+//	    AddContext("database", "main")
+//	keys := err.GetContextKeys() // Returns ["table_name", "database"]
+func (e *Error) GetContextKeys() []string {
+	if e.context == nil {
+		return nil
+	}
+	keys := make([]string, 0, len(e.context))
+	for key := range e.context {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// Suggestions and Recovery methods
+
+// AddSuggestion adds a suggestion to the error and returns the error for chaining.
+//
+// Examples:
+//
+//	return errors.New(ErrTableNotFound, "table not found").
+//	    AddSuggestion("Check if the table name is correct").
+//	    AddSuggestion("Verify the database connection")
+func (e *Error) AddSuggestion(suggestion string) *Error {
+	e.Suggestions = append(e.Suggestions, suggestion)
+	return e
+}
+
+// AddSuggestions adds multiple suggestions to the error and returns the error for chaining.
+//
+// Examples:
+//
+//	suggestions := []string{
+//	    "Check if the table name is correct",
+//	    "Verify the database connection",
+//	}
+//	return errors.New(ErrTableNotFound, "table not found").
+//	    AddSuggestions(suggestions)
+func (e *Error) AddSuggestions(suggestions []string) *Error {
+	e.Suggestions = append(e.Suggestions, suggestions...)
+	return e
+}
+
+// AddRecoveryAction adds a recovery action to the error and returns the error for chaining.
+//
+// Examples:
+//
+//	return errors.New(ErrConnectionFailed, "connection failed").
+//	    AddRecoveryAction(RecoveryAction{
+//	        Type: "retry",
+//	        Description: "Retry the connection",
+//	        Action: "Wait 5 seconds and retry",
+//	        Automatic: true,
+//	    })
+func (e *Error) AddRecoveryAction(action RecoveryAction) *Error {
+	e.Recovery = append(e.Recovery, action)
+	return e
+}
+
+// AddRecoveryActions adds multiple recovery actions to the error and returns the error for chaining.
+//
+// Examples:
+//
+//	actions := []RecoveryAction{
+//	    {Type: "retry", Description: "Retry operation", Automatic: true},
+//	    {Type: "check_config", Description: "Check configuration", Automatic: false},
+//	}
+//	return errors.New(ErrConnectionFailed, "connection failed").
+//	    AddRecoveryActions(actions)
+func (e *Error) AddRecoveryActions(actions []RecoveryAction) *Error {
+	e.Recovery = append(e.Recovery, actions...)
+	return e
+}
+
+// IsRecoverable returns true if the error has any automatic recovery actions.
+//
+// Examples:
+//
+//	err := errors.New(ErrConnectionFailed, "connection failed").
+//	    AddRecoveryAction(RecoveryAction{Type: "retry", Automatic: true})
+//	canRecover := err.IsRecoverable() // Returns true
+func (e *Error) IsRecoverable() bool {
+	for _, action := range e.Recovery {
+		if action.Automatic {
+			return true
+		}
+	}
+	return false
+}
+
+// GetAutomaticRecoveryActions returns only the recovery actions that can be performed automatically.
+//
+// Examples:
+//
+//	err := errors.New(ErrConnectionFailed, "connection failed").
+//	    AddRecoveryAction(RecoveryAction{Type: "retry", Automatic: true}).
+//	    AddRecoveryAction(RecoveryAction{Type: "check_config", Automatic: false})
+//	autoActions := err.GetAutomaticRecoveryActions() // Returns only the retry action
+func (e *Error) GetAutomaticRecoveryActions() []RecoveryAction {
+	var automaticActions []RecoveryAction
+	for _, action := range e.Recovery {
+		if action.Automatic {
+			automaticActions = append(automaticActions, action)
+		}
+	}
+	return automaticActions
 }
 
 // Helper functions

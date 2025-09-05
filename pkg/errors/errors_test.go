@@ -30,18 +30,18 @@ func TestAddContext(t *testing.T) {
 	originalErr := New(CommonInternal, "test error", nil)
 	err := AddContext(originalErr, "key1", "value1")
 
-	if err.Context["key1"] != "value1" {
-		t.Errorf("Expected context key1=value1, got %v", err.Context["key1"])
+	if err.GetContext("key1") != "value1" {
+		t.Errorf("Expected context key1=value1, got %v", err.GetContext("key1"))
 	}
 
 	// Test chaining AddContext
 	err = err.AddContext("key2", "value2").AddContext("key3", 123)
 
-	if err.Context["key2"] != "value2" {
-		t.Errorf("Expected context key2=value2, got %v", err.Context["key2"])
+	if err.GetContext("key2") != "value2" {
+		t.Errorf("Expected context key2=value2, got %v", err.GetContext("key2"))
 	}
-	if err.Context["key3"] != "123" {
-		t.Errorf("Expected context key3=123, got %v", err.Context["key3"])
+	if err.GetContext("key3") != 123 {
+		t.Errorf("Expected context key3=123, got %v", err.GetContext("key3"))
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/gear6io/ranger/pkg/errors"
 )
 
 // Iceberg primitive types - comprehensive set covering all Iceberg specifications
@@ -66,18 +68,23 @@ func (pt *PrimitiveType) GetNestedTypes() []IcebergType {
 
 func (pt *PrimitiveType) Validate() error {
 	if !isValidPrimitiveType(pt.TypeName) {
-		return fmt.Errorf("invalid primitive type: %s", pt.TypeName)
+		return errors.New(ErrInvalidPrimitiveType, "invalid primitive type", nil).
+			AddContext("type_name", pt.TypeName)
 	}
 
 	if pt.TypeName == IcebergDecimal {
 		if pt.Precision <= 0 {
-			return fmt.Errorf("decimal precision must be positive, got: %d", pt.Precision)
+			return errors.New(ErrInvalidDecimalPrecision, "decimal precision must be positive", nil).
+				AddContext("precision", pt.Precision)
 		}
 		if pt.Scale < 0 {
-			return fmt.Errorf("decimal scale must be non-negative, got: %d", pt.Scale)
+			return errors.New(ErrInvalidDecimalScale, "decimal scale must be non-negative", nil).
+				AddContext("scale", pt.Scale)
 		}
 		if pt.Scale > pt.Precision {
-			return fmt.Errorf("decimal scale (%d) cannot exceed precision (%d)", pt.Scale, pt.Precision)
+			return errors.New(ErrDecimalScaleExceedsPrecision, "decimal scale cannot exceed precision", nil).
+				AddContext("scale", pt.Scale).
+				AddContext("precision", pt.Precision)
 		}
 	}
 
@@ -103,7 +110,7 @@ func (lt *ListType) GetNestedTypes() []IcebergType {
 
 func (lt *ListType) Validate() error {
 	if lt.ElementType == nil {
-		return fmt.Errorf("list element type cannot be nil")
+		return errors.New(ErrInvalidListElement, "list element type cannot be nil", nil)
 	}
 	return lt.ElementType.Validate()
 }
@@ -128,14 +135,14 @@ func (mt *MapType) GetNestedTypes() []IcebergType {
 
 func (mt *MapType) Validate() error {
 	if mt.KeyType == nil {
-		return fmt.Errorf("map key type cannot be nil")
+		return errors.New(ErrInvalidMapKeyType, "map key type cannot be nil", nil)
 	}
 	if mt.ValueType == nil {
-		return fmt.Errorf("map value type cannot be nil")
+		return errors.New(ErrInvalidMapValueType, "map value type cannot be nil", nil)
 	}
 
 	if err := mt.KeyType.Validate(); err != nil {
-		return fmt.Errorf("invalid map key type: %w", err)
+		return errors.New(ErrInvalidMapKeyType, "invalid map key type", err)
 	}
 
 	return mt.ValueType.Validate()
@@ -174,26 +181,30 @@ func (st *StructType) GetNestedTypes() []IcebergType {
 
 func (st *StructType) Validate() error {
 	if len(st.Fields) == 0 {
-		return fmt.Errorf("struct must have at least one field")
+		return errors.New(ErrInvalidStructField, "struct must have at least one field", nil)
 	}
 
 	fieldNames := make(map[string]bool)
 	for i, field := range st.Fields {
 		if field.Name == "" {
-			return fmt.Errorf("struct field %d: name cannot be empty", i)
+			return errors.New(ErrInvalidStructField, "struct field name cannot be empty", nil).
+				AddContext("field_index", i)
 		}
 
 		if fieldNames[field.Name] {
-			return fmt.Errorf("duplicate struct field name: %s", field.Name)
+			return errors.New(ErrInvalidStructField, "duplicate struct field name", nil).
+				AddContext("field_name", field.Name)
 		}
 		fieldNames[field.Name] = true
 
 		if field.Type == nil {
-			return fmt.Errorf("struct field '%s': type cannot be nil", field.Name)
+			return errors.New(ErrInvalidStructField, "struct field type cannot be nil", nil).
+				AddContext("field_name", field.Name)
 		}
 
 		if err := field.Type.Validate(); err != nil {
-			return fmt.Errorf("struct field '%s': %w", field.Name, err)
+			return errors.New(ErrInvalidStructField, "struct field validation failed", err).
+				AddContext("field_name", field.Name)
 		}
 	}
 
@@ -294,7 +305,8 @@ func (v *DefaultIcebergTypeValidator) ParseType(typeStr string) (IcebergType, er
 		return v.parseStructType(typeStr)
 	}
 
-	return nil, fmt.Errorf("unsupported type: %s", typeStr)
+	return nil, errors.New(ErrUnsupportedType, "unsupported type", nil).
+		AddContext("type_string", typeStr)
 }
 
 func (v *DefaultIcebergTypeValidator) ValidateComplexType(typeStr string) error {
@@ -327,17 +339,21 @@ func (v *DefaultIcebergTypeValidator) parseDecimalType(typeStr string) (*Primiti
 	matches := re.FindStringSubmatch(typeStr)
 
 	if len(matches) != 3 {
-		return nil, fmt.Errorf("invalid decimal format: %s (expected: decimal(precision,scale))", typeStr)
+		return nil, errors.New(ErrTypeValidationFailed, "invalid decimal format", nil).
+			AddContext("type_string", typeStr).
+			AddContext("expected_format", "decimal(precision,scale)")
 	}
 
 	precision, err := strconv.Atoi(matches[1])
 	if err != nil {
-		return nil, fmt.Errorf("invalid decimal precision: %s", matches[1])
+		return nil, errors.New(ErrInvalidDecimalPrecision, "invalid decimal precision", err).
+			AddContext("precision_string", matches[1])
 	}
 
 	scale, err := strconv.Atoi(matches[2])
 	if err != nil {
-		return nil, fmt.Errorf("invalid decimal scale: %s", matches[2])
+		return nil, errors.New(ErrInvalidDecimalScale, "invalid decimal scale", err).
+			AddContext("scale_string", matches[2])
 	}
 
 	decimalType := &PrimitiveType{
@@ -360,19 +376,21 @@ func (v *DefaultIcebergTypeValidator) isValidListType(typeStr string) bool {
 
 func (v *DefaultIcebergTypeValidator) parseListType(typeStr string) (*ListType, error) {
 	if !strings.HasPrefix(typeStr, "list<") || !strings.HasSuffix(typeStr, ">") {
-		return nil, fmt.Errorf("invalid list format: %s", typeStr)
+		return nil, errors.New(ErrTypeValidationFailed, "invalid list format", nil).
+			AddContext("type_string", typeStr)
 	}
 
 	elementTypeStr := typeStr[5 : len(typeStr)-1] // Remove "list<" and ">"
 	elementTypeStr = strings.TrimSpace(elementTypeStr)
 
 	if elementTypeStr == "" {
-		return nil, fmt.Errorf("list element type cannot be empty")
+		return nil, errors.New(ErrInvalidListElement, "list element type cannot be empty", nil)
 	}
 
 	elementType, err := v.ParseType(elementTypeStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid list element type: %w", err)
+		return nil, errors.New(ErrInvalidListElement, "invalid list element type", err).
+			AddContext("element_type_string", elementTypeStr)
 	}
 
 	return &ListType{ElementType: elementType}, nil
@@ -385,7 +403,8 @@ func (v *DefaultIcebergTypeValidator) isValidMapType(typeStr string) bool {
 
 func (v *DefaultIcebergTypeValidator) parseMapType(typeStr string) (*MapType, error) {
 	if !strings.HasPrefix(typeStr, "map<") || !strings.HasSuffix(typeStr, ">") {
-		return nil, fmt.Errorf("invalid map format: %s", typeStr)
+		return nil, errors.New(ErrTypeValidationFailed, "invalid map format", nil).
+			AddContext("type_string", typeStr)
 	}
 
 	content := typeStr[4 : len(typeStr)-1] // Remove "map<" and ">"
@@ -395,27 +414,30 @@ func (v *DefaultIcebergTypeValidator) parseMapType(typeStr string) (*MapType, er
 	// Need to handle nested types properly
 	commaIndex := v.findTopLevelComma(content)
 	if commaIndex == -1 {
-		return nil, fmt.Errorf("map must have key and value types separated by comma: %s", typeStr)
+		return nil, errors.New(ErrTypeValidationFailed, "map must have key and value types separated by comma", nil).
+			AddContext("type_string", typeStr)
 	}
 
 	keyTypeStr := strings.TrimSpace(content[:commaIndex])
 	valueTypeStr := strings.TrimSpace(content[commaIndex+1:])
 
 	if keyTypeStr == "" {
-		return nil, fmt.Errorf("map key type cannot be empty")
+		return nil, errors.New(ErrInvalidMapKeyType, "map key type cannot be empty", nil)
 	}
 	if valueTypeStr == "" {
-		return nil, fmt.Errorf("map value type cannot be empty")
+		return nil, errors.New(ErrInvalidMapValueType, "map value type cannot be empty", nil)
 	}
 
 	keyType, err := v.ParseType(keyTypeStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid map key type: %w", err)
+		return nil, errors.New(ErrInvalidMapKeyType, "invalid map key type", err).
+			AddContext("key_type_string", keyTypeStr)
 	}
 
 	valueType, err := v.ParseType(valueTypeStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid map value type: %w", err)
+		return nil, errors.New(ErrInvalidMapValueType, "invalid map value type", err).
+			AddContext("value_type_string", valueTypeStr)
 	}
 
 	return &MapType{KeyType: keyType, ValueType: valueType}, nil
@@ -428,14 +450,15 @@ func (v *DefaultIcebergTypeValidator) isValidStructType(typeStr string) bool {
 
 func (v *DefaultIcebergTypeValidator) parseStructType(typeStr string) (*StructType, error) {
 	if !strings.HasPrefix(typeStr, "struct<") || !strings.HasSuffix(typeStr, ">") {
-		return nil, fmt.Errorf("invalid struct format: %s", typeStr)
+		return nil, errors.New(ErrTypeValidationFailed, "invalid struct format", nil).
+			AddContext("type_string", typeStr)
 	}
 
 	content := typeStr[7 : len(typeStr)-1] // Remove "struct<" and ">"
 	content = strings.TrimSpace(content)
 
 	if content == "" {
-		return nil, fmt.Errorf("struct must have at least one field")
+		return nil, errors.New(ErrInvalidStructField, "struct must have at least one field", nil)
 	}
 
 	// Parse field definitions
@@ -448,22 +471,30 @@ func (v *DefaultIcebergTypeValidator) parseStructType(typeStr string) (*StructTy
 		// Find the colon that separates field name and type
 		colonIndex := strings.Index(fieldStr, ":")
 		if colonIndex == -1 {
-			return nil, fmt.Errorf("struct field %d: missing colon separator (expected format: name:type)", i+1)
+			return nil, errors.New(ErrInvalidStructField, "missing colon separator in struct field", nil).
+				AddContext("field_index", i+1).
+				AddContext("expected_format", "name:type")
 		}
 
 		fieldName := strings.TrimSpace(fieldStr[:colonIndex])
 		fieldTypeStr := strings.TrimSpace(fieldStr[colonIndex+1:])
 
 		if fieldName == "" {
-			return nil, fmt.Errorf("struct field %d: name cannot be empty", i+1)
+			return nil, errors.New(ErrInvalidStructField, "struct field name cannot be empty", nil).
+				AddContext("field_index", i+1)
 		}
 		if fieldTypeStr == "" {
-			return nil, fmt.Errorf("struct field %d (%s): type cannot be empty", i+1, fieldName)
+			return nil, errors.New(ErrInvalidStructField, "struct field type cannot be empty", nil).
+				AddContext("field_index", i+1).
+				AddContext("field_name", fieldName)
 		}
 
 		fieldType, err := v.ParseType(fieldTypeStr)
 		if err != nil {
-			return nil, fmt.Errorf("struct field %d (%s): invalid type: %w", i+1, fieldName, err)
+			return nil, errors.New(ErrInvalidStructField, "invalid struct field type", err).
+				AddContext("field_index", i+1).
+				AddContext("field_name", fieldName).
+				AddContext("field_type_string", fieldTypeStr)
 		}
 
 		fields = append(fields, StructField{
@@ -567,11 +598,11 @@ func NewTypeConverter() TypeConverter {
 
 func (tc *DefaultTypeConverter) ConvertToRegistryFormat(icebergType IcebergType) (string, error) {
 	if icebergType == nil {
-		return "", fmt.Errorf("iceberg type cannot be nil")
+		return "", errors.New(ErrTypeConversionFailed, "iceberg type cannot be nil", nil)
 	}
 
 	if err := icebergType.Validate(); err != nil {
-		return "", fmt.Errorf("invalid iceberg type: %w", err)
+		return "", errors.AddContext(err, "operation", "convert_to_registry_format")
 	}
 
 	// Registry format is the same as Iceberg type string representation
@@ -580,13 +611,14 @@ func (tc *DefaultTypeConverter) ConvertToRegistryFormat(icebergType IcebergType)
 
 func (tc *DefaultTypeConverter) ConvertFromRegistryFormat(registryType string) (IcebergType, error) {
 	if registryType == "" {
-		return nil, fmt.Errorf("registry type cannot be empty")
+		return nil, errors.New(ErrTypeConversionFailed, "registry type cannot be empty", nil)
 	}
 
 	// Parse the registry type string as an Iceberg type
 	icebergType, err := tc.validator.ParseType(registryType)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse registry type '%s': %w", registryType, err)
+		return nil, errors.AddContext(err, "registry_type", registryType).
+			AddContext("operation", "convert_from_registry_format")
 	}
 
 	return icebergType, nil
@@ -618,8 +650,10 @@ func ValidateTypeString(typeStr string) error {
 
 	if !validator.IsValidType(typeStr) {
 		supportedTypes := validator.GetSupportedTypes()
-		return fmt.Errorf("invalid Iceberg type '%s'. Supported primitive types: %v. Complex types: list<type>, map<keyType,valueType>, struct<field:type,...>, decimal(precision,scale)",
-			typeStr, supportedTypes)
+		return errors.New(ErrUnsupportedType, "invalid Iceberg type", nil).
+			AddContext("type_string", typeStr).
+			AddContext("supported_primitive_types", supportedTypes).
+			AddSuggestion("Use supported primitive types or complex types like list<type>, map<keyType,valueType>, struct<field:type,...>, decimal(precision,scale)")
 	}
 
 	return validator.ValidateComplexType(typeStr)
@@ -635,7 +669,7 @@ func ParseAndValidateType(typeStr string) (IcebergType, error) {
 	}
 
 	if err := parsedType.Validate(); err != nil {
-		return nil, fmt.Errorf("type validation failed: %w", err)
+		return nil, errors.New(ErrTypeValidationFailed, "type validation failed", err)
 	}
 
 	return parsedType, nil

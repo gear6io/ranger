@@ -2,12 +2,12 @@ package schema_manager
 
 import (
 	"container/list"
-	"fmt"
 	"sync"
 	"time"
 	"unsafe"
 
 	"github.com/apache/iceberg-go"
+	"github.com/gear6io/ranger/pkg/errors"
 )
 
 // CacheEntry represents a cached schema with enhanced metadata for lifecycle management
@@ -527,11 +527,11 @@ func (sc *SchemaCache) CleanupWithRetry(maxRetries int, retryDelay time.Duration
 			return nil
 		}
 
-		lastErr = fmt.Errorf("cache cleanup failed: memory usage %d bytes exceeds limit %d bytes",
+		lastErr = errors.Newf(SchemaManagerCacheError, "cache cleanup failed: memory usage %d bytes exceeds limit %d bytes",
 			finalMemoryUsage, sc.config.MaxMemoryBytes)
 	}
 
-	return fmt.Errorf("cache cleanup failed after %d retries: %w", maxRetries, lastErr)
+	return errors.Newf(SchemaManagerCacheError, "cache cleanup failed after %d retries: %w", maxRetries, lastErr)
 }
 
 // GetCacheEntryMetadata returns metadata for a specific cache entry

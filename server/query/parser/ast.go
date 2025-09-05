@@ -162,18 +162,10 @@ func (stmt *CreateTableStmt) Validate() error {
 
 		// Validate Iceberg type
 		if !validator.IsValidType(colDef.DataType) {
-			supportedTypes := validator.GetSupportedTypes()
-
-			// Check if it's a legacy SQL type and provide migration suggestion
-			if suggestion, err := validator.GetMigrationSuggestion(colDef.DataType); err == nil {
-				return errors.New(ErrUnsupportedSQLType,
-					fmt.Sprintf("column '%s': unsupported SQL type '%s'. Use Iceberg type '%s' instead. No legacy SQL types are supported",
-						columnName, colDef.DataType, suggestion), nil)
-			}
-
-			return errors.New(ErrInvalidIcebergType,
-				fmt.Sprintf("column '%s': invalid Iceberg type '%s'. Supported types: %v",
-					columnName, colDef.DataType, supportedTypes), nil)
+			// Legacy SQL types are not supported
+			return errors.New(ErrUnsupportedSQLType,
+				fmt.Sprintf("column '%s': unsupported SQL type '%s'. Only Iceberg types are supported",
+					columnName, colDef.DataType), nil)
 		}
 
 		// Validate complex types
@@ -507,6 +499,8 @@ const (
 	SHOW_USERS
 	SHOW_INDEXES
 	SHOW_GRANTS
+	SHOW_COLUMNS
+	SHOW_CREATE_TABLE
 )
 
 // String returns the string representation of ShowType
@@ -522,6 +516,10 @@ func (st ShowType) String() string {
 		return "INDEXES"
 	case SHOW_GRANTS:
 		return "GRANTS"
+	case SHOW_COLUMNS:
+		return "COLUMNS"
+	case SHOW_CREATE_TABLE:
+		return "CREATE TABLE"
 	default:
 		return "UNKNOWN"
 	}
@@ -529,9 +527,10 @@ func (st ShowType) String() string {
 
 // ShowStmt represents a SHOW statement
 type ShowStmt struct {
-	ShowType ShowType
-	For      *Identifier
-	From     *Identifier
+	ShowType  ShowType
+	For       *Identifier
+	From      *Identifier
+	TableName *TableIdentifier // For SHOW COLUMNS and SHOW CREATE TABLE
 }
 
 // AlterTableStmt represents an ALTER TABLE statement

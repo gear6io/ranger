@@ -73,12 +73,17 @@ func NewEngine(cfg *config.Config, storageMgr *storage.Manager, logger zerolog.L
 	// Create execution manager for tracking and cancellation
 	queryManager := NewExecutionManager(logger)
 
-	return &Engine{
+	// Create engine instance
+	engine := &Engine{
 		duckdbEngine: duckdbEngine,
 		storageMgr:   storageMgr,
 		logger:       logger,
 		queryManager: queryManager,
-	}, nil
+	}
+
+	// System database is now initialized by the Store during creation
+
+	return engine, nil
 }
 
 // ExecuteQuery executes a query with full tracking and cancellation support
@@ -204,11 +209,16 @@ func (e *Engine) validateDatabaseExists(ctx context.Context, database string) er
 	return errors.New(ErrDatabaseNotFound, fmt.Sprintf("database '%s' does not exist", database), nil)
 }
 
-// executeReadQuery redirects read queries to DuckDB
+// executeReadQuery redirects read queries to DuckDB or system database
 func (e *Engine) executeReadQuery(ctx context.Context, query string, queryCtx *types.QueryContext) (*QueryResult, error) {
-	e.logger.Debug().Str("query", query).Msg("Executing read queries on DuckDB")
+	e.logger.Debug().Str("query", query).Msg("Executing read query")
 
-	// Execute on DuckDB engine
+	// Check if this is a system database query
+	if e.isSystemDatabaseQuery(query) {
+		return e.executeSystemDatabaseQuery(ctx, query, queryCtx)
+	}
+
+	// Execute on DuckDB engine for regular queries
 	result, err := e.duckdbEngine.ExecuteQuery(ctx, query)
 	if err != nil {
 		return nil, errors.New(ErrDuckDBExecutionFailed, "DuckDB execution failed", err)
@@ -250,6 +260,10 @@ func (e *Engine) executeShowStmt(ctx context.Context, stmt *parser.ShowStmt, que
 		return e.executeShowDatabases(ctx)
 	case parser.SHOW_TABLES:
 		return e.executeShowTables(ctx, stmt, queryCtx)
+	case parser.SHOW_COLUMNS:
+		return e.executeShowColumns(ctx, stmt, queryCtx)
+	case parser.SHOW_CREATE_TABLE:
+		return e.executeShowCreateTable(ctx, stmt, queryCtx)
 	default:
 		return nil, errors.New(ErrUnsupportedShowType, "unsupported SHOW type", nil).AddContext("show_type", stmt.ShowType.String())
 	}
@@ -392,7 +406,7 @@ func (e *Engine) executeCreateTable(ctx context.Context, stmt *parser.CreateTabl
 			Str("database", database).
 			Msg("CREATE TABLE execution failed")
 
-		return nil, fmt.Errorf("failed to create table '%s': %w", tableName, err)
+		return nil, errors.Newf(ErrTableCreationFailed, "failed to create table '%s': %w", tableName, err)
 	}
 
 	// Handle unsuccessful response
@@ -903,7 +917,7 @@ func (e *Engine) deserializeTableSchema(data []byte) (*parser.TableSchema, error
 	// Parse the JSON schema data
 	var schemaData map[string]interface{}
 	if err := json.Unmarshal(data, &schemaData); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal schema data: %w", err)
+		return nil, errors.New(ErrSchemaUnmarshalFailed, "failed to unmarshal schema data", err)
 	}
 
 	// Create TableSchema
@@ -1032,6 +1046,144 @@ func (e *Engine) ListRunningQueries() []*QueryInfo {
 // GetQueryStats returns statistics about queries
 func (e *Engine) GetQueryStats() map[string]interface{} {
 	return e.queryManager.GetStats()
+}
+
+// executeShowColumns handles SHOW COLUMNS statements
+func (e *Engine) executeShowColumns(ctx context.Context, stmt *parser.ShowStmt, queryCtx *types.QueryContext) (*QueryResult, error) {
+	// Get database and table names
+	database := e.getDatabaseFromContext(queryCtx)
+	tableName := ""
+
+	if stmt.TableName != nil {
+		if stmt.TableName.IsQualified() {
+			database = stmt.TableName.Database.Value
+		}
+		tableName = stmt.TableName.Table.Value
+	} else {
+		return nil, errors.New(ErrTableNameRequired, "table name is required for SHOW COLUMNS", nil)
+	}
+
+	// Validate that the database and table exist
+	if err := e.validateDatabaseExists(ctx, database); err != nil {
+		return nil, err
+	}
+
+	if !e.storageMgr.TableExists(ctx, database, tableName) {
+		return nil, errors.New(ErrTableNotFound, "table does not exist", nil).
+			AddContext("database", database).
+			AddContext("table", tableName)
+	}
+
+	e.logger.Debug().
+		Str("database", database).
+		Str("table", tableName).
+		Msg("Executing SHOW COLUMNS")
+
+	// Get columns from system database manager
+	systemMgr := e.storageMgr.GetSystemManager()
+	columns, err := systemMgr.GetSystemColumns(ctx, database, tableName)
+	if err != nil {
+		return nil, errors.New(ErrColumnListFailed, "failed to list columns", err)
+	}
+
+	// Format result as table data
+	var rows [][]interface{}
+	for _, col := range columns {
+		rows = append(rows, []interface{}{
+			col.ColumnName,
+			col.DataType,
+			col.IsNullable,
+			col.IsPrimary,
+			col.IsUnique,
+			col.DefaultValue,
+			col.Description,
+		})
+	}
+
+	return &QueryResult{
+		Data:     rows,
+		RowCount: int64(len(rows)),
+		Columns:  []string{"Field", "Type", "Null", "Key", "Unique", "Default", "Extra"},
+		Message:  fmt.Sprintf("Found %d column(s) in table %s.%s", len(rows), database, tableName),
+	}, nil
+}
+
+// executeShowCreateTable handles SHOW CREATE TABLE statements
+func (e *Engine) executeShowCreateTable(ctx context.Context, stmt *parser.ShowStmt, queryCtx *types.QueryContext) (*QueryResult, error) {
+	// Get database and table names
+	database := e.getDatabaseFromContext(queryCtx)
+	tableName := ""
+
+	if stmt.TableName != nil {
+		if stmt.TableName.IsQualified() {
+			database = stmt.TableName.Database.Value
+		}
+		tableName = stmt.TableName.Table.Value
+	} else {
+		return nil, errors.New(ErrTableNameRequired, "table name is required for SHOW CREATE TABLE", nil)
+	}
+
+	// Validate that the database and table exist
+	if err := e.validateDatabaseExists(ctx, database); err != nil {
+		return nil, err
+	}
+
+	if !e.storageMgr.TableExists(ctx, database, tableName) {
+		return nil, errors.New(ErrTableNotFound, "table does not exist", nil).
+			AddContext("database", database).
+			AddContext("table", tableName)
+	}
+
+	e.logger.Debug().
+		Str("database", database).
+		Str("table", tableName).
+		Msg("Executing SHOW CREATE TABLE")
+
+	// Generate DDL from system database manager
+	systemMgr := e.storageMgr.GetSystemManager()
+	ddl, err := systemMgr.GenerateCreateTableDDL(ctx, database, tableName)
+	if err != nil {
+		return nil, errors.New(ErrDDLGenerationFailed, "failed to generate DDL", err)
+	}
+
+	// Format result as table data
+	rows := [][]interface{}{
+		{tableName, ddl},
+	}
+
+	return &QueryResult{
+		Data:     rows,
+		RowCount: 1,
+		Columns:  []string{"Table", "Create Table"},
+		Message:  fmt.Sprintf("DDL for table %s.%s", database, tableName),
+	}, nil
+}
+
+// isSystemDatabaseQuery checks if a query targets the system database
+func (e *Engine) isSystemDatabaseQuery(query string) bool {
+	systemMgr := e.storageMgr.GetSystemManager()
+	return systemMgr.IsSystemDatabaseQuery(query)
+}
+
+// executeSystemDatabaseQuery executes queries against the system database
+func (e *Engine) executeSystemDatabaseQuery(ctx context.Context, query string, queryCtx *types.QueryContext) (*QueryResult, error) {
+	e.logger.Debug().Str("query", query).Msg("Executing system database query")
+
+	// Get system database manager
+	systemMgr := e.storageMgr.GetSystemManager()
+
+	// Execute the query
+	result, err := systemMgr.Query(ctx, query)
+	if err != nil {
+		return nil, errors.New(ErrDuckDBExecutionFailed, "system database query execution failed", err)
+	}
+
+	return &QueryResult{
+		Data:     result.Data,
+		RowCount: result.RowCount,
+		Columns:  result.Columns,
+		Message:  fmt.Sprintf("System query executed successfully, %d rows returned", result.RowCount),
+	}, nil
 }
 
 // GetType returns the component type identifier
