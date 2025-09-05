@@ -18,7 +18,6 @@ var (
 	SchemaManagerStale           = errors.MustNewCode("schema_manager.stale")
 	SchemaManagerUnresponsive    = errors.MustNewCode("schema_manager.unresponsive")
 	SchemaManagerFormatError     = errors.MustNewCode("schema_manager.format_error")
-	SchemaManagerCacheError      = errors.MustNewCode("schema_manager.cache_error")
 )
 
 // ValidationError represents a detailed validation error with context

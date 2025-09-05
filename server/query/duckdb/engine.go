@@ -444,11 +444,11 @@ func (e *Engine) ExecuteQuery(ctx context.Context, query string) (*QueryResult, 
 // RegisterTable registers an Iceberg table for querying using DuckDB's native Iceberg support
 func (e *Engine) RegisterTable(ctx context.Context, identifier table.Identifier, icebergTable *table.Table) error {
 	if !e.initialized {
-		return errors.New(ErrDuckDBEngineCreationFailed, "engine not initialized")
+		return errors.New(ErrDuckDBEngineCreationFailed, "engine not initialized", nil)
 	}
 
 	if icebergTable == nil {
-		return errors.New(ErrDuckDBEngineCreationFailed, "iceberg table cannot be nil")
+		return errors.New(ErrDuckDBEngineCreationFailed, "iceberg table cannot be nil", nil)
 	}
 
 	e.mutex.Lock()
@@ -509,7 +509,7 @@ func (e *Engine) RegisterTable(ctx context.Context, identifier table.Identifier,
 
 	// Validate metadata location to prevent injection
 	if strings.ContainsAny(metadataLocation, "'\"\\;") {
-		return errors.New(ErrDuckDBEngineCreationFailed, "invalid metadata location: contains potentially dangerous characters")
+		return errors.New(ErrDuckDBEngineCreationFailed, "invalid metadata location: contains potentially dangerous characters", nil)
 	}
 
 	createViewSQL := fmt.Sprintf(`
@@ -575,7 +575,7 @@ func (e *Engine) ListTables(ctx context.Context) ([]string, error) {
 func (e *Engine) DescribeTable(ctx context.Context, tableName string) (*QueryResult, error) {
 	// Validate table name to prevent injection
 	if strings.ContainsAny(tableName, "';\"\\-/*") {
-		return nil, errors.New(ErrDuckDBEngineCreationFailed, "invalid table name: contains potentially dangerous characters")
+		return nil, errors.New(ErrDuckDBEngineCreationFailed, "invalid table name: contains potentially dangerous characters", nil)
 	}
 
 	query := fmt.Sprintf("DESCRIBE %s", e.quoteName(tableName))

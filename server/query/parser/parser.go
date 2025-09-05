@@ -2308,6 +2308,22 @@ func (p *Parser) parseShowStmt() (Node, error) {
 	case "DATABASES":
 		return &ShowStmt{ShowType: SHOW_DATABASES}, nil
 	case "TABLES":
+		p.consume() // Consume TABLES
+
+		// Check if there's a FROM clause
+		if p.peek(0).tokenT == KEYWORD_TOK && p.peek(0).value == "FROM" {
+			p.consume() // Consume FROM
+
+			if p.peek(0).tokenT != IDENT_TOK {
+				return nil, errors.New(ErrExpectedIdentifier, "expected identifier", nil)
+			}
+
+			databaseName := p.peek(0).value.(string)
+			p.consume() // Consume database name
+
+			return &ShowStmt{ShowType: SHOW_TABLES, From: &Identifier{Value: databaseName}}, nil
+		}
+
 		return &ShowStmt{ShowType: SHOW_TABLES}, nil
 	case "USERS":
 		return &ShowStmt{ShowType: SHOW_USERS}, nil

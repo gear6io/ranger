@@ -841,7 +841,7 @@ func formatShowStmt(stmt *ShowStmt) string {
 		parts = append(parts, "CREATE", "TABLE")
 	}
 
-	// Add FROM clause if present
+	// Add FROM clause if present (for TABLES and INDEXES)
 	if stmt.From != nil {
 		parts = append(parts, "FROM")
 		parts = append(parts, formatIdentifier(stmt.From))
