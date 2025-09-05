@@ -493,45 +493,6 @@ func (sm *Store) TableExists(ctx context.Context, dbName, tableName string) bool
 	return err == nil
 }
 
-// CreateTableMetadata creates detailed metadata for a table (for storage operations)
-func (sm *Store) CreateTableMetadata(ctx context.Context, database, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*TableMetadata, error) {
-	// Get table ID
-	var tableID int64
-	query := `SELECT t.id FROM tables t JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ?`
-	err := sm.db.QueryRowContext(ctx, query, database, tableName).Scan(&tableID)
-	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to get table ID", err).AddContext("database", database).AddContext("table", tableName)
-	}
-
-	// Serialize engine config to JSON
-	engineConfigJSON := "{}"
-	if engineConfig != nil {
-		configBytes, err := json.Marshal(engineConfig)
-		if err != nil {
-			return nil, errors.New(errors.CommonInternal, "failed to marshal engine config", err)
-		}
-		engineConfigJSON = string(configBytes)
-	}
-
-	// Get current timestamp
-	now := time.Now()
-
-	// Create metadata object
-	tableMetadata := &TableMetadata{
-		Database:      database,
-		Name:          tableName,
-		StorageEngine: storageEngine,
-		EngineConfig:  engineConfigJSON,
-		FileCount:     0,
-		TotalSize:     0,
-		LastModified:  now,
-		Created:       now,
-		Files:         []*regtypes.TableFile{},
-	}
-
-	return tableMetadata, nil
-}
-
 // LoadTableMetadata loads detailed metadata for a table
 func (sm *Store) LoadTableMetadata(ctx context.Context, database, tableName string) (*TableMetadata, error) {
 	query := `SELECT tm.storage_engine, tm.engine_config, tm.last_modified, tm.created_at FROM table_metadata tm JOIN tables t ON tm.table_id = t.id JOIN databases d ON t.database_id = d.id WHERE d.name = ? AND t.name = ?`

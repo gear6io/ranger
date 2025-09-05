@@ -1,10 +1,11 @@
-package schema_manager
+package schema
 
 import (
 	"context"
 	"database/sql"
 
 	"github.com/gear6io/ranger/server/astha"
+	"github.com/gear6io/ranger/server/metadata/registry"
 	"github.com/rs/zerolog"
 )
 
@@ -33,10 +34,14 @@ func IntegrationExample() error {
 	// 4. Create Schema Manager
 	schemaManagerConfig := DefaultSchemaManagerConfig()
 
-	// Create a metadata manager interface (placeholder)
-	var metadataManager MetadataManagerInterface // This would be your actual metadata manager
+	// Create a registry store (placeholder - this would be your actual registry store)
+	var registryStore *registry.Store // This would be your actual registry store
 
-	schemaManager := NewManager(metadataManager, schemaManagerConfig, logger)
+	schemaManager, err := NewManager(registryStore, schemaManagerConfig, logger)
+	if err != nil {
+		logger.Error().Err(err).Msg("Failed to create schema manager")
+		return err
+	}
 
 	// 5. Register Schema Manager with Astha
 	// This is the key integration step - it registers the schema manager as a subscriber

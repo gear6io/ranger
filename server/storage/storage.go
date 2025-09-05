@@ -24,7 +24,6 @@ import (
 	"github.com/gear6io/ranger/server/storage/memory"
 	"github.com/gear6io/ranger/server/storage/s3"
 	"github.com/gear6io/ranger/server/storage/schema"
-	"github.com/gear6io/ranger/server/storage/schema_manager"
 	"github.com/gear6io/ranger/server/types"
 	"github.com/rs/zerolog"
 )
@@ -54,7 +53,7 @@ type Manager struct {
 	meta           *metadata.MetadataManager
 	pathManager    paths.PathManager
 	catalog        catalog.CatalogInterface
-	schemaManager  schema_manager.SchemaManager
+	schemaManager  schema.SchemaManager
 }
 
 // Config holds data storage configuration
@@ -169,7 +168,7 @@ func (m *Manager) initializeSchemaManager(cfg *config.Config) error {
 	schemaConfig := convertToSchemaManagerConfig(cfg.GetSchemaManagerConfig())
 
 	// Create schema manager
-	m.schemaManager = schema_manager.NewManager(m.meta, schemaConfig, m.logger)
+	m.schemaManager = schema.NewManager(m.meta, schemaConfig, m.logger)
 
 	m.logger.Info().
 		Int("cache_ttl_minutes", int(schemaConfig.CacheTTL/time.Minute)).
@@ -182,8 +181,8 @@ func (m *Manager) initializeSchemaManager(cfg *config.Config) error {
 }
 
 // convertToSchemaManagerConfig converts server config to schema manager config
-func convertToSchemaManagerConfig(cfg config.SchemaManagerConfig) *schema_manager.SchemaManagerConfig {
-	return &schema_manager.SchemaManagerConfig{
+func convertToSchemaManagerConfig(cfg config.SchemaManagerConfig) *schema.SchemaManagerConfig {
+	return &schema.SchemaManagerConfig{
 		CacheTTL:      time.Duration(cfg.CacheTTLMinutes) * time.Minute,
 		MaxCacheSize:  cfg.MaxCacheSize,
 		StatsInterval: time.Duration(cfg.StatsIntervalSecs) * time.Second,
@@ -286,7 +285,7 @@ func (m *Manager) GetEngineRegistry() *StorageEngineRegistry {
 }
 
 // GetSchemaManager returns the schema manager for external use
-func (m *Manager) GetSchemaManager() schema_manager.SchemaManager {
+func (m *Manager) GetSchemaManager() schema.SchemaManager {
 	return m.schemaManager
 }
 

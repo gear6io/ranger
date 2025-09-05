@@ -1,8 +1,9 @@
-package schema_manager
+package schema
 
 import (
 	"context"
 
+	"github.com/gear6io/ranger/server/metadata/registry"
 	"github.com/stretchr/testify/mock"
 	"github.com/uptrace/bun"
 )
@@ -52,4 +53,22 @@ func (m *MockSelectQuery) Order(order string) *MockSelectQuery {
 func (m *MockSelectQuery) Scan(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
+}
+
+// MockRegistryStore is a mock implementation of RegistryStoreInterface
+type MockRegistryStore struct {
+	mock.Mock
+}
+
+func (m *MockRegistryStore) RetrieveAllSchemas(ctx context.Context) (map[string]*registry.SchemaData, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]*registry.SchemaData), args.Error(1)
+}
+
+func (m *MockRegistryStore) CreateSchemaDataLoader() func(ctx context.Context, database, tableName string) (*registry.SchemaData, error) {
+	args := m.Called()
+	return args.Get(0).(func(ctx context.Context, database, tableName string) (*registry.SchemaData, error))
 }

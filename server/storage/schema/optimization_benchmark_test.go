@@ -1,4 +1,4 @@
-package schema_manager
+package schema
 
 import (
 	"fmt"
@@ -139,22 +139,21 @@ func BenchmarkMemoryOptimizations(b *testing.B) {
 	schema := createPerformanceTestSchema("test_table", 20, []string{"int32", "string", "boolean", "float64"})
 
 	b.Run("Standard Cache Entry", func(b *testing.B) {
-		var entries []*CacheEntry
+		var entries []*SchemaCacheEntry
 
 		b.ResetTimer()
 		b.ReportAllocs()
 
 		for i := 0; i < b.N; i++ {
-			entry := &CacheEntry{
-				Schema:      schema,
-				ExpiresAt:   time.Now().Add(5 * time.Minute),
-				LastUsed:    time.Now(),
-				HitCount:    int64(i),
-				MemoryBytes: estimateSchemaMemoryUsage(schema),
-				SourceType:  "registry",
-				CreatedFrom: "direct_access",
-				TableID:     int64(i),
-				CreatedAt:   time.Now(),
+			entry := &SchemaCacheEntry{
+				Schema:       schema,
+				SourceType:   "registry",
+				CreatedFrom:  "direct_access",
+				TableID:      int64(i),
+				CreatedAt:    time.Now(),
+				RefreshCount: 0,
+				IsNewTable:   false,
+				Priority:     5,
 			}
 			entries = append(entries, entry)
 		}

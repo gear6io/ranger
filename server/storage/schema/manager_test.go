@@ -1,14 +1,19 @@
-package schema_manager
+package schema
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/apache/iceberg-go"
+	"github.com/gear6io/ranger/server/metadata/registry"
+	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestManager_CacheOperations(t *testing.T) {
@@ -154,11 +159,24 @@ func TestDefaultSchemaManagerConfig(t *testing.T) {
 func TestManager_NewManager_NilConfig(t *testing.T) {
 	logger := zerolog.Nop()
 
-	// Create a minimal mock metadata manager for this test
-	mockMetadata := &MockMetadataManager{}
+	// Create a minimal mock registry store for this test
+	mockRegistry := &MockRegistryStore{}
+
+	// Set up mock expectations
+	mockRegistry.On("RetrieveAllSchemas", mock.Anything).Return(map[string]*registry.SchemaData{}, nil)
+	mockRegistry.On("CreateSchemaDataLoader").Return(func(ctx context.Context, database, tableName string) (*registry.SchemaData, error) {
+		return &registry.SchemaData{
+			Database: database,
+			Table:    tableName,
+			TableID:  1,
+			Columns:  []*regtypes.TableColumn{},
+			Metadata: &regtypes.TableMetadata{},
+		}, nil
+	})
 
 	// Should use default config when nil is passed
-	manager := NewManager(mockMetadata, nil, logger)
+	manager, err := NewManager(mockRegistry, nil, logger)
+	require.NoError(t, err)
 
 	assert.NotNil(t, manager)
 	assert.NotNil(t, manager.config)

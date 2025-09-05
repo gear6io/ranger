@@ -1,12 +1,15 @@
-package schema
+package parquet
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/iceberg-go"
 	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/metadata/registry"
 )
 
 // Package-specific error codes for parquet schema
@@ -230,6 +233,104 @@ func (sm *Manager) convertStructType(st *iceberg.StructType) (arrow.DataType, er
 	}
 
 	return arrow.StructOf(fields...), nil
+}
+
+// ConvertRegistryDataToIcebergSchema converts registry SchemaData to Iceberg schema
+func (sm *Manager) ConvertRegistryDataToIcebergSchema(schemaData *registry.SchemaData) (*iceberg.Schema, error) {
+	if schemaData == nil {
+		return nil, errors.New(ParquetSchemaNilSchema, "schema data cannot be nil", nil)
+	}
+
+	// Convert columns to Iceberg nested fields
+	fields := make([]iceberg.NestedField, 0, len(schemaData.Columns))
+
+	for _, col := range schemaData.Columns {
+		// Parse the data type to Iceberg type
+		icebergType, err := sm.parseRegistryDataType(col.DataType)
+		if err != nil {
+			return nil, errors.New(ParquetSchemaTypeConversionFailed, "failed to parse registry data type", err).
+				AddContext("column", col.ColumnName).
+				AddContext("data_type", col.DataType).
+				AddContext("database", schemaData.Database).
+				AddContext("table", schemaData.Table)
+		}
+
+		// Create Iceberg nested field
+		field := iceberg.NestedField{
+			ID:       int(col.ID),
+			Name:     col.ColumnName,
+			Type:     icebergType,
+			Required: col.IsPrimary, // Required if primary key, optional otherwise
+		}
+
+		fields = append(fields, field)
+	}
+
+	// Create Iceberg schema with schema version 1
+	schema := iceberg.NewSchema(1, fields...)
+
+	return schema, nil
+}
+
+// parseRegistryDataType converts string data type from registry to Iceberg type
+func (sm *Manager) parseRegistryDataType(dataType string) (iceberg.Type, error) {
+	switch strings.ToLower(dataType) {
+	case "boolean":
+		return iceberg.PrimitiveTypes.Bool, nil
+	case "int32", "integer":
+		return iceberg.PrimitiveTypes.Int32, nil
+	case "int64", "bigint":
+		return iceberg.PrimitiveTypes.Int64, nil
+	case "float32", "real":
+		return iceberg.PrimitiveTypes.Float32, nil
+	case "float64", "double":
+		return iceberg.PrimitiveTypes.Float64, nil
+	case "string", "varchar", "text":
+		return iceberg.PrimitiveTypes.String, nil
+	case "binary", "blob":
+		return iceberg.PrimitiveTypes.Binary, nil
+	case "date":
+		return iceberg.PrimitiveTypes.Date, nil
+	case "time":
+		return iceberg.PrimitiveTypes.Time, nil
+	case "timestamp":
+		return iceberg.PrimitiveTypes.Timestamp, nil
+	case "timestamptz":
+		return iceberg.PrimitiveTypes.TimestampTz, nil
+	case "uuid":
+		return iceberg.PrimitiveTypes.UUID, nil
+	default:
+		// Try to parse decimal types
+		if strings.HasPrefix(strings.ToLower(dataType), "decimal") {
+			// Extract precision and scale from decimal(10,2) format
+			parts := strings.Split(strings.Trim(dataType, "()"), ",")
+			if len(parts) == 2 {
+				precision, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+				if err != nil {
+					return nil, errors.New(ParquetSchemaTypeConversionFailed, "invalid decimal precision", err)
+				}
+				scale, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+				if err != nil {
+					return nil, errors.New(ParquetSchemaTypeConversionFailed, "invalid decimal scale", err)
+				}
+				return iceberg.DecimalTypeOf(precision, scale), nil
+			}
+		}
+
+		// Try to parse fixed types
+		if strings.HasPrefix(strings.ToLower(dataType), "fixed") {
+			// Extract length from fixed(16) format
+			lengthStr := strings.Trim(strings.TrimPrefix(dataType, "fixed"), "()")
+			length, err := strconv.Atoi(lengthStr)
+			if err != nil {
+				return nil, errors.New(ParquetSchemaTypeConversionFailed, "invalid fixed length", err)
+			}
+			return iceberg.FixedTypeOf(length), nil
+		}
+
+		return nil, errors.New(ParquetSchemaUnsupportedType, "unsupported data type", nil).
+			AddContext("data_type", dataType)
+	}
 }
 
 // ValidateData validates data against a given schema

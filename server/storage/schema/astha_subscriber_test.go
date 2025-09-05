@@ -1,4 +1,4 @@
-package schema_manager
+package schema
 
 import (
 	"context"

@@ -1,4 +1,4 @@
-package schema_manager
+package schema
 
 import (
 	"sync"
@@ -28,7 +28,7 @@ func NewCacheOptimizations() *CacheOptimizations {
 		batchSize: 100,
 		entryPool: sync.Pool{
 			New: func() interface{} {
-				return &CacheEntry{}
+				return &SchemaCacheEntry{}
 			},
 		},
 	}

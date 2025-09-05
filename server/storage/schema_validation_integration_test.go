@@ -8,7 +8,6 @@ import (
 
 	"github.com/apache/iceberg-go"
 	"github.com/gear6io/ranger/server/storage/schema"
-	"github.com/gear6io/ranger/server/storage/schema_manager"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -82,10 +81,10 @@ func TestEndToEndValidationPipeline(t *testing.T) {
 func TestCacheHitMissScenarios(t *testing.T) {
 	t.Run("CacheHitAfterInitialMiss", func(t *testing.T) {
 		// Test cache behavior using the schema cache directly
-		config := schema_manager.DefaultSchemaManagerConfig()
+		config := schema.DefaultSchemaManagerConfig()
 		config.CacheTTL = 1 * time.Hour // Long TTL for testing
 
-		cache := schema_manager.NewSchemaCache(config)
+		cache := schema.NewSchemaCache(config)
 
 		// Create test schema
 		testSchema := iceberg.NewSchema(0,
@@ -118,8 +117,8 @@ func TestCacheHitMissScenarios(t *testing.T) {
 
 	t.Run("ConcurrentCacheAccess", func(t *testing.T) {
 		// Test concurrent access to schema cache (Requirement 1.5)
-		config := schema_manager.DefaultSchemaManagerConfig()
-		cache := schema_manager.NewSchemaCache(config)
+		config := schema.DefaultSchemaManagerConfig()
+		cache := schema.NewSchemaCache(config)
 
 		testSchema := iceberg.NewSchema(0,
 			iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
@@ -341,8 +340,8 @@ func TestPerformanceAndScalability(t *testing.T) {
 	})
 
 	t.Run("CachePerformanceUnderLoad", func(t *testing.T) {
-		config := schema_manager.DefaultSchemaManagerConfig()
-		cache := schema_manager.NewSchemaCache(config)
+		config := schema.DefaultSchemaManagerConfig()
+		cache := schema.NewSchemaCache(config)
 
 		// Create multiple test schemas
 		const numTables = 50

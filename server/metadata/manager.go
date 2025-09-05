@@ -17,7 +17,6 @@ import (
 	"github.com/gear6io/ranger/server/paths"
 	"github.com/gear6io/ranger/server/types"
 	"github.com/rs/zerolog"
-	"github.com/uptrace/bun"
 )
 
 // Package-specific error codes for metadata management
@@ -336,39 +335,6 @@ func (mm *MetadataManager) Shutdown(ctx context.Context) error {
 // GetCatalog returns the Iceberg catalog
 func (mm *MetadataManager) GetCatalog() catalog.CatalogInterface {
 	return mm.iceberg
-}
-
-// GetStorage returns the personal metadata storage
-func (mm *MetadataManager) GetStorage() *registry.Store {
-	return mm.storage
-}
-
-// GetHybridManager returns the hybrid deployment manager
-func (mm *MetadataManager) GetHybridManager() *registry.HybridDeploymentManager {
-	return mm.hybrid
-}
-
-// GetIcebergManager returns the Iceberg metadata manager
-func (mm *MetadataManager) GetIcebergManager() *iceberg.Manager {
-	return mm.icebergManager
-}
-
-// IsUsingBun returns true if the manager is using bun migrations
-func (mm *MetadataManager) IsUsingBun() bool {
-	return true // Always true now
-}
-
-// GetBunDB returns the underlying bun DB for advanced operations
-func (mm *MetadataManager) GetBunDB() *bun.DB {
-	if mm.hybrid != nil {
-		return mm.hybrid.GetBunDB()
-	}
-	return nil
-}
-
-// CreateTableMetadata creates detailed metadata for a table (for storage operations)
-func (mm *MetadataManager) CreateTableMetadata(ctx context.Context, database, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) (*registry.TableMetadata, error) {
-	return mm.storage.CreateTableMetadata(ctx, database, tableName, schema, storageEngine, engineConfig)
 }
 
 // LoadTableMetadata loads detailed metadata for a table

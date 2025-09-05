@@ -1,4 +1,4 @@
-package schema
+package parquet
 
 import (
 	"fmt"

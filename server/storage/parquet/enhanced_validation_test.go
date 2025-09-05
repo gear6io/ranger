@@ -1,10 +1,9 @@
-package schema_manager
+package parquet
 
 import (
 	"testing"
 
 	"github.com/apache/arrow-go/v18/arrow"
-	"github.com/gear6io/ranger/server/storage/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,7 +13,7 @@ import (
 func TestDetailedValidationErrors(t *testing.T) {
 	t.Run("ValidationErrorWithContext", func(t *testing.T) {
 		// Test creating a detailed validation error
-		validationErr := schema.NewDetailedValidationError(
+		validationErr := NewDetailedValidationError(
 			1,        // rowIndex
 			2,        // columnIndex
 			"email",  // columnName
@@ -43,7 +42,7 @@ func TestDetailedValidationErrors(t *testing.T) {
 
 	t.Run("ColumnCountValidationError", func(t *testing.T) {
 		// Test creating a column count validation error
-		validationErr := schema.NewColumnCountValidationError(
+		validationErr := NewColumnCountValidationError(
 			0,        // rowIndex
 			2,        // actualColumns
 			3,        // expectedColumns
@@ -66,7 +65,7 @@ func TestDetailedValidationErrors(t *testing.T) {
 
 	t.Run("NullValueValidationError", func(t *testing.T) {
 		// Test creating a null value validation error
-		validationErr := schema.NewNullValueValidationError(
+		validationErr := NewNullValueValidationError(
 			5,        // rowIndex
 			1,        // columnIndex
 			"name",   // columnName
@@ -88,98 +87,12 @@ func TestDetailedValidationErrors(t *testing.T) {
 	})
 }
 
-// TestSchemaRetrievalErrors tests the enhanced schema retrieval error types
-// Requirement 4.4, 4.5: Indicate whether it's a cache miss or database error, and schema parsing failures
-func TestSchemaRetrievalErrors(t *testing.T) {
-	t.Run("DatabaseError", func(t *testing.T) {
-		// Test creating a database error
-		cause := assert.AnError
-		retrievalErr := NewSchemaRetrievalError("testdb", "users", "database_error", cause)
-
-		assert.Equal(t, "testdb", retrievalErr.Database)
-		assert.Equal(t, "users", retrievalErr.TableName)
-		assert.Equal(t, "database_error", retrievalErr.ErrorType)
-		assert.Equal(t, cause, retrievalErr.Cause)
-
-		// Verify error message
-		errorMsg := retrievalErr.Error()
-		assert.Contains(t, errorMsg, "failed to retrieve schema for table testdb.users from database")
-		assert.Contains(t, errorMsg, cause.Error())
-	})
-
-	t.Run("CacheMissError", func(t *testing.T) {
-		// Test creating a cache miss error
-		retrievalErr := NewSchemaRetrievalError("testdb", "users", "cache_miss", nil)
-
-		assert.Equal(t, "testdb", retrievalErr.Database)
-		assert.Equal(t, "users", retrievalErr.TableName)
-		assert.Equal(t, "cache_miss", retrievalErr.ErrorType)
-		assert.Nil(t, retrievalErr.Cause)
-
-		// Verify error message
-		errorMsg := retrievalErr.Error()
-		assert.Contains(t, errorMsg, "schema cache miss for table testdb.users")
-	})
-
-	t.Run("ParsingError", func(t *testing.T) {
-		// Test creating a parsing error with column details
-		cause := assert.AnError
-		parsingErr := NewSchemaParsingError("testdb", "users", "email", "invalid_type", cause)
-
-		assert.Equal(t, "testdb", parsingErr.Database)
-		assert.Equal(t, "users", parsingErr.TableName)
-		assert.Equal(t, "parsing_error", parsingErr.ErrorType)
-		assert.Equal(t, "email", parsingErr.ColumnName)
-		assert.Equal(t, "invalid_type", parsingErr.DataType)
-		assert.Equal(t, cause, parsingErr.Cause)
-
-		// Verify error message
-		errorMsg := parsingErr.Error()
-		assert.Contains(t, errorMsg, "failed to parse schema for table testdb.users")
-		assert.Contains(t, errorMsg, "invalid DataType 'invalid_type' for column 'email'")
-		assert.Contains(t, errorMsg, cause.Error())
-	})
-}
-
-// TestBatchValidationError tests the batch validation error type
-// Requirement 4.6: Clear indication that entire batch was rejected
-func TestBatchValidationError(t *testing.T) {
-	t.Run("BatchRejectionError", func(t *testing.T) {
-		// Create a first validation error
-		firstError := NewValidationError(
-			2,        // rowIndex
-			1,        // columnIndex
-			"age",    // columnName
-			"int32",  // expectedType
-			"string", // actualType
-			"abc",    // value
-			"testdb", // database
-			"users",  // tableName
-		)
-
-		// Create batch validation error
-		batchErr := NewBatchValidationError(firstError, 100, "testdb", "users")
-
-		assert.Equal(t, firstError, batchErr.FirstError)
-		assert.Equal(t, 100, batchErr.BatchSize)
-		assert.Equal(t, "testdb", batchErr.Database)
-		assert.Equal(t, "users", batchErr.TableName)
-		assert.Equal(t, 100, batchErr.RejectedCount)
-
-		// Verify error message
-		errorMsg := batchErr.Error()
-		assert.Contains(t, errorMsg, "batch validation failed for table testdb.users")
-		assert.Contains(t, errorMsg, "entire batch of 100 rows rejected")
-		assert.Contains(t, errorMsg, "validation failed at row 2, column 1 (age)")
-	})
-}
-
 // TestEnhancedValidationWithContext tests the enhanced validation with context
 // Requirement 4.1, 4.2, 4.3: Include database and table context in validation errors
 func TestEnhancedValidationWithContext(t *testing.T) {
 	t.Run("TypeMismatchWithContext", func(t *testing.T) {
 		// Create schema validator
-		schemaValidator := schema.NewManager(schema.DefaultParquetConfig())
+		schemaValidator := NewManager(DefaultParquetConfig())
 
 		// Create Arrow schema
 		fields := []arrow.Field{
@@ -208,7 +121,7 @@ func TestEnhancedValidationWithContext(t *testing.T) {
 
 	t.Run("NullConstraintViolationWithContext", func(t *testing.T) {
 		// Create schema validator
-		schemaValidator := schema.NewManager(schema.DefaultParquetConfig())
+		schemaValidator := NewManager(DefaultParquetConfig())
 
 		// Create Arrow schema with non-nullable field
 		fields := []arrow.Field{
@@ -236,7 +149,7 @@ func TestEnhancedValidationWithContext(t *testing.T) {
 
 	t.Run("ColumnCountMismatchWithContext", func(t *testing.T) {
 		// Create schema validator
-		schemaValidator := schema.NewManager(schema.DefaultParquetConfig())
+		schemaValidator := NewManager(DefaultParquetConfig())
 
 		// Create Arrow schema
 		fields := []arrow.Field{
@@ -269,7 +182,7 @@ func TestEnhancedValidationWithContext(t *testing.T) {
 func TestFailFastValidation(t *testing.T) {
 	t.Run("FailOnFirstError", func(t *testing.T) {
 		// Create schema validator
-		schemaValidator := schema.NewManager(schema.DefaultParquetConfig())
+		schemaValidator := NewManager(DefaultParquetConfig())
 
 		// Create Arrow schema
 		fields := []arrow.Field{
@@ -294,5 +207,52 @@ func TestFailFastValidation(t *testing.T) {
 		errorMsg := err.Error()
 		assert.Contains(t, errorMsg, "validation failed at row 0") // Should fail on first row
 		assert.Contains(t, errorMsg, "expected int64 but got string")
+	})
+}
+
+// TestValidationErrorLogging tests that validation errors are logged with appropriate severity
+// Requirement 4.7: Proper error logging with severity levels
+func TestValidationErrorLogging(t *testing.T) {
+	t.Run("ValidationErrorsAreDetailed", func(t *testing.T) {
+		// Create schema validator
+		schemaValidator := NewManager(DefaultParquetConfig())
+
+		// Create Arrow schema
+		fields := []arrow.Field{
+			{Name: "id", Type: arrow.PrimitiveTypes.Int32, Nullable: false},
+			{Name: "name", Type: arrow.BinaryTypes.String, Nullable: false},
+		}
+		arrowSchema := arrow.NewSchema(fields, nil)
+
+		// Test various validation error scenarios
+		testCases := []struct {
+			name        string
+			data        [][]interface{}
+			expectedErr string
+		}{
+			{
+				name:        "TypeMismatch",
+				data:        [][]interface{}{{"not_an_int", "Alice"}},
+				expectedErr: "expected int32 but got string",
+			},
+			{
+				name:        "NullConstraintViolation",
+				data:        [][]interface{}{{int32(1), nil}},
+				expectedErr: "field cannot be null",
+			},
+			{
+				name:        "ColumnCountMismatch",
+				data:        [][]interface{}{{int32(1)}}, // Missing name column
+				expectedErr: "expected 2 columns but got 1 columns",
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				err := schemaValidator.ValidateDataWithContext(tc.data, arrowSchema, "testdb", "users")
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.expectedErr)
+			})
+		}
 	})
 }

@@ -11,7 +11,7 @@ import (
 	"github.com/gear6io/ranger/server/config"
 	"github.com/gear6io/ranger/server/metadata"
 	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
-	"github.com/gear6io/ranger/server/storage/schema_manager"
+	"github.com/gear6io/ranger/server/storage/schema"
 	"github.com/rs/zerolog"
 )
 
@@ -794,7 +794,7 @@ func simulateInsertWithoutValidation(manager *Manager, ctx context.Context, data
 	return nil
 }
 
-func getSchemaManager(manager *Manager) schema_manager.SchemaManager {
+func getSchemaManager(manager *Manager) schema.SchemaManager {
 	// This is a helper to access the schema manager from the storage manager
 	// In the actual implementation, this would be a proper accessor method
 	return manager.schemaManager
