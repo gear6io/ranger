@@ -1,4 +1,4 @@
-package sdk
+package integration_tests
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 
+	"github.com/gear6io/ranger/pkg/sdk"
 	"github.com/gear6io/ranger/server"
 	"github.com/gear6io/ranger/server/config"
 )
@@ -87,19 +88,19 @@ func (s *TestServer) Cleanup() error {
 }
 
 // GetClient creates a new SDK client connected to the test server
-func (s *TestServer) GetClient(t *testing.T) *Client {
+func (s *TestServer) GetClient(t *testing.T) *sdk.Client {
 	t.Helper()
 
 	// Use the default native server port
-	client, err := Open(&Options{
+	client, err := sdk.Open(&sdk.Options{
 		Addr: []string{"127.0.0.1:2849"},
-		Auth: Auth{
+		Auth: sdk.Auth{
 			Database: "default",
 			Username: "default",
 			Password: "",
 		},
 		Debug: false,
-		Settings: Settings{
+		Settings: sdk.Settings{
 			"max_execution_time": 60,
 		},
 	})

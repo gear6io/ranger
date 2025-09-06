@@ -6,6 +6,9 @@ A custom Go tool that checks for unused ErrorCode variables and forbidden error 
 
 - **🔍 ErrorCode Usage Tracking**: Finds all declared ErrorCode variables and checks if they're actually used
 - **🚫 Forbidden Pattern Detection**: Identifies usage of `fmt.Errorf`, `errors.New`, `errors.Wrap`, etc.
+- **🧠 Enhanced Error Pattern Suggestions**: Provides intelligent suggestions for when to use `errors.AddContext()` vs `return err`
+- **🔍 Context Detection**: Analyzes error messages to determine if meaningful context is being added
+- **📦 Internal Package Call Analysis**: Detects when `errors.New` is used to handle errors from internal package calls
 - **📁 Path Exclusion**: Automatically excludes SDK packages and other non-server paths
 - **📊 Detailed Reporting**: Shows where each ErrorCode is declared and used
 - **🔧 Integration Ready**: Works with Makefile and pre-commit hooks
@@ -23,7 +26,16 @@ A custom Go tool that checks for unused ErrorCode variables and forbidden error 
 - `errors.Wrap` - Should use internal error package
 - `errors.Wrapf` - Should use internal error package
 
-### 3. Path Exclusions
+### 3. Enhanced Error Pattern Analysis
+- **Internal Package Calls**: Detects when `errors.New` is used to handle errors from internal packages
+- **Context Detection**: Analyzes error messages to determine if meaningful context is being added
+- **Smart Suggestions**: Provides specific suggestions:
+  - Use `errors.AddContext(err, "key", value)` when meaningful context should be added
+  - Use `return err` when no meaningful context is being added
+- **Pattern Recognition**: Identifies format specifiers (`%s`, `%v`, `%d`) and context indicators
+- **Generic Message Detection**: Flags generic error messages like "error occurred" or "operation failed"
+
+### 4. Path Exclusions
 Automatically excludes these paths from checking:
 - `pkg/sdk/` - SDK packages can use external error libraries
 - `integration_tests/` - Integration tests may have different requirements
@@ -110,7 +122,20 @@ go build -o errorcode-checker .
 ❌ FORBIDDEN: fmt\.Errorf in server/bad_file.go:25
 ❌ FORBIDDEN: errors\.New\( in server/bad_file.go:30
 
+🔍 Checking for errors.New usage for internal package calls...
+❌ INTERNAL_CALL: processData in server/example.go:15 calls catalog.Parse at line 20, uses errors.New at line 25 → Consider: errors.AddContext(err, "key", value)
+
+🔍 Checking for enhanced error pattern suggestions...
+🔧 ENHANCED ERROR PATTERN SUGGESTIONS:
+
+📦 Package: storage
+  🔧 PATTERN: handleFileOperation in server/storage/manager.go:42 calls filesystem.ReadFile at line 45, uses errors.New at line 47
+    💡 Consider using errors.AddContext(err, "key", value) to add meaningful context
+  ↩️ PATTERN: processMetadata in server/storage/manager.go:60 calls metadata.Load at line 65, uses errors.New at line 67
+    💡 Consider simply returning the error: return err
+
 ❌ Found unused ErrorCodes!
+❌ Found errors.New usage for internal package calls!
 ```
 
 ## Integration

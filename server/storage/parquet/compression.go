@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/parquet/compress"
+	"github.com/gear6io/ranger/pkg/errors"
 )
 
 // Package-specific error codes for parquet compression

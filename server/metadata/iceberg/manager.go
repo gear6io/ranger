@@ -255,9 +255,8 @@ func (m *Manager) validateTableInfo(tableInfo *registry.CompleteTableInfo) error
 		return errors.New(IcebergManagerOperationFailed, "table storage info is missing", nil).AddContext("table_id", tableInfo.ID)
 	}
 
-	if len(tableInfo.StorageInfo.Schema) == 0 {
-		return errors.New(IcebergManagerOperationFailed, "table schema is missing", nil).AddContext("table_id", tableInfo.ID)
-	}
+	// Schema validation removed - schema is now stored in TableColumn table
+	// TODO: Add schema validation by checking TableColumn records when needed
 
 	if tableInfo.StorageInfo.StorageEngine == "" {
 		return errors.New(IcebergManagerOperationFailed, "storage engine is not specified", nil).AddContext("table_id", tableInfo.ID)

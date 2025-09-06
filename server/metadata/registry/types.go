@@ -18,9 +18,9 @@ type TableReference struct {
 // TableMetadata represents a composite view of table metadata for storage operations
 // This combines information from multiple tables for convenience
 type TableMetadata struct {
-	Database      string                `json:"database"`
-	Name          string                `json:"name"`
-	Schema        []byte                `json:"schema"`
+	Database string `json:"database"`
+	Name     string `json:"name"`
+	// Schema is now stored in TableColumn table, not here
 	StorageEngine string                `json:"storage_engine"`
 	EngineConfig  string                `json:"engine_config"`
 	FileCount     int                   `json:"file_count"`
@@ -386,4 +386,13 @@ func (cti *CompleteTableInfo) loadTableStatistics(ctx context.Context) ([]*regty
 	}
 
 	return statistics, nil
+}
+
+// SchemaData represents the complete schema data for a table
+type SchemaData struct {
+	Database string                  `json:"database"`
+	Table    string                  `json:"table"`
+	TableID  int64                   `json:"table_id"`
+	Columns  []*regtypes.TableColumn `json:"columns"`
+	Metadata *regtypes.TableMetadata `json:"metadata"`
 }

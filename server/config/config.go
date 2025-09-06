@@ -28,14 +28,23 @@ type LogConfig struct {
 
 // StorageConfig represents storage configuration
 type StorageConfig struct {
-	DataPath string        `yaml:"data_path"`
-	Catalog  CatalogConfig `yaml:"catalog"`
-	Data     DataConfig    `yaml:"data"`
+	DataPath string              `yaml:"data_path"`
+	Catalog  CatalogConfig       `yaml:"catalog"`
+	Schema   SchemaManagerConfig `yaml:"schema"`
 }
 
 // CatalogConfig represents catalog configuration
 type CatalogConfig struct {
 	Type string `yaml:"type"`
+}
+
+// SchemaManagerConfig represents schema manager configuration
+type SchemaManagerConfig struct {
+	CacheTTLMinutes   int  `yaml:"cache_ttl_minutes"`   // Default: 5 minutes
+	MaxCacheSize      int  `yaml:"max_cache_size"`      // Default: 1000 schemas
+	StatsIntervalSecs int  `yaml:"stats_interval_secs"` // Default: 60 seconds
+	EnableMetrics     bool `yaml:"enable_metrics"`      // Default: true
+	EnableLRU         bool `yaml:"enable_lru"`          // Default: true
 }
 
 // DataConfig represents data storage configuration
@@ -63,8 +72,12 @@ func LoadDefaultConfig() *Config {
 			Catalog: CatalogConfig{
 				Type: "json",
 			},
-			Data: DataConfig{
-				// All storage engines are now available at runtime
+			Schema: SchemaManagerConfig{
+				CacheTTLMinutes:   5,    // 5 minutes
+				MaxCacheSize:      1000, // 1000 schemas
+				StatsIntervalSecs: 60,   // 1 minute
+				EnableMetrics:     true, // Enable metrics
+				EnableLRU:         true, // Enable LRU eviction
 			},
 		},
 	}
@@ -126,11 +139,6 @@ func (s *StorageConfig) Validate() error {
 	// Validate catalog configuration
 	if err := s.Catalog.Validate(); err != nil {
 		return errors.New(ErrCatalogValidationFailed, "catalog validation failed", err)
-	}
-
-	// Validate data storage configuration
-	if err := s.Data.Validate(); err != nil {
-		return errors.New(ErrDataStorageValidationFailed, "data storage validation failed", err)
 	}
 
 	// Validate data_path
@@ -228,4 +236,9 @@ func (c *Config) GetStoragePath() string {
 // GetCatalogType returns the catalog type
 func (c *Config) GetCatalogType() string {
 	return c.Storage.Catalog.Type
+}
+
+// GetSchemaManagerConfig returns the schema manager configuration
+func (c *Config) GetSchemaManagerConfig() SchemaManagerConfig {
+	return c.Storage.Schema
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gear6io/ranger/server/config"
 	"github.com/gear6io/ranger/server/query"
+	"github.com/gear6io/ranger/server/types"
 	"github.com/rs/zerolog"
 )
 
@@ -96,8 +97,14 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Info().Str("query", queryStr).Msg("Executing query via HTTP")
 
-	// Execute query using QueryEngine
-	result, err := s.queryEngine.ExecuteQuery(r.Context(), queryStr)
+	// Create query context for HTTP requests
+	queryCtx := &types.QueryContext{
+		Query:      queryStr,
+		Database:   "default",
+		User:       "http",
+		ClientAddr: r.RemoteAddr,
+	}
+	result, err := s.queryEngine.ExecuteQuery(r.Context(), queryCtx)
 	if err != nil {
 		s.logger.Error().Err(err).Str("query", queryStr).Msg("Query execution failed")
 		http.Error(w, fmt.Sprintf("Query execution failed: %v", err), http.StatusInternalServerError)

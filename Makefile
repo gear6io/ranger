@@ -41,13 +41,13 @@ help: ## Show this help message
 .PHONY: build-server
 build-server: ## Build the Ranger server
 	@echo "Building Ranger server..."
-	@go build $(GO_BUILD_FLAGS) -o $(SERVER_BINARY) ./cmd/ranger-server/main.go
+	@go build $(GO_BUILD_FLAGS) -o $(SERVER_BINARY) ./cmd/server/main.go
 	@echo "✅ Server built successfully: $(SERVER_BINARY)"
 
 .PHONY: build-client
 build-client: ## Build the Ranger client
 	@echo "Building Ranger client..."
-	@go build $(GO_BUILD_FLAGS) -o $(CLIENT_BINARY) ./cmd/ranger-client/main.go
+	@go build $(GO_BUILD_FLAGS) -o $(CLIENT_BINARY) ./cmd/client/main.go
 	@echo "✅ Client built successfully: $(CLIENT_BINARY)"
 
 .PHONY: build-all

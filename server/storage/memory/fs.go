@@ -6,10 +6,10 @@ import (
 	"io"
 	"sync"
 
-	"github.com/gear6io/ranger/pkg/errors"
-	"github.com/gear6io/ranger/server/storage/parquet"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/iceberg-go"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/storage/parquet"
 )
 
 // StorageType constant for this storage engine
@@ -221,8 +221,7 @@ func (ms *MemoryStorage) SetTableSchema(database, tableName string, icebergSchem
 	}
 
 	// Convert Iceberg schema to Arrow schema
-	schemaManager := parquet.NewSchemaManager(parquet.DefaultParquetConfig())
-	arrowSchema, err := schemaManager.ConvertIcebergToArrowSchema(icebergSchema)
+	arrowSchema, err := parquet.ConvertIcebergToArrowSchema(icebergSchema)
 	if err != nil {
 		return errors.New(ErrSchemaConversionFailed, "failed to convert Iceberg schema to Arrow schema", err)
 	}

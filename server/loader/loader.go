@@ -25,7 +25,7 @@ type LoaderInterface interface {
 	GetQueryEngine() *query.Engine
 	GetGateway() *gateway.Gateway
 	GetPathManager() paths.PathManager
-	GetMetadataManager() metadata.MetadataManagerInterface
+	GetMetadataManager() *metadata.MetadataManager
 	GetConfig() *config.Config
 	GetLogger() zerolog.Logger
 }
@@ -87,7 +87,7 @@ func (l *Loader) registerComponents() {
 	})
 
 	l.RegisterComponent("storage", func(loader LoaderInterface) (shared.Component, error) {
-		return storage.NewManager(loader.GetConfig(), loader.GetLogger())
+		return storage.NewManager(loader.GetConfig(), loader.GetLogger(), loader.GetMetadataManager())
 	})
 
 	l.RegisterComponent("query", func(loader LoaderInterface) (shared.Component, error) {
@@ -213,7 +213,7 @@ func (l *Loader) GetPathManager() paths.PathManager {
 }
 
 // GetMetadataManager returns the metadata manager from component registry
-func (l *Loader) GetMetadataManager() metadata.MetadataManagerInterface {
+func (l *Loader) GetMetadataManager() *metadata.MetadataManager {
 	if comp, exists := l.components[metadata.ComponentType]; exists {
 		return comp.(*metadata.MetadataManager)
 	}

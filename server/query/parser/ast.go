@@ -18,6 +18,10 @@ package parser
 import (
 	// External parser packages commented out - Ranger compatibility
 	"encoding/json"
+	"fmt"
+
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/types"
 )
 
 // Node represents an AST node
@@ -33,6 +37,39 @@ type Statement interface {
 // Identifier represents an identifier, like a table or column name
 type Identifier struct {
 	Value string
+}
+
+// TableIdentifier represents a table reference that can be qualified (database.table) or unqualified (table)
+type TableIdentifier struct {
+	Database *Identifier // Database name (can be nil for unqualified names)
+	Table    *Identifier // Table name (required)
+}
+
+// IsQualified returns true if this is a qualified table name (database.table)
+func (ti *TableIdentifier) IsQualified() bool {
+	return ti.Database != nil
+}
+
+// GetFullName returns the full qualified name as a string (database.table or just table)
+func (ti *TableIdentifier) GetFullName() string {
+	if ti.IsQualified() {
+		return ti.Database.Value + "." + ti.Table.Value
+	}
+	return ti.Table.Value
+}
+
+// Validate ensures the TableIdentifier is valid
+func (ti *TableIdentifier) Validate() error {
+	if ti.Table == nil {
+		return errors.New(ErrTableNameRequired, "table name is required", nil)
+	}
+	if ti.Table.Value == "" {
+		return errors.New(ErrTableNameEmpty, "table name cannot be empty", nil)
+	}
+	if ti.Database != nil && ti.Database.Value == "" {
+		return errors.New(ErrDatabaseNameEmptyIfSpecified, "database name cannot be empty if specified", nil)
+	}
+	return nil
 }
 
 // Literal represents a literal value, like a number or string
@@ -53,7 +90,7 @@ type DropDatabaseStmt struct {
 
 // CreateIndexStmt represents a CREATE INDEX statement
 type CreateIndexStmt struct {
-	TableName   *Identifier
+	TableName   *TableIdentifier
 	IndexName   *Identifier
 	ColumnNames []*Identifier
 	Unique      bool
@@ -61,24 +98,91 @@ type CreateIndexStmt struct {
 
 // DropIndexStmt represents a DROP INDEX statement
 type DropIndexStmt struct {
-	TableName *Identifier
+	TableName *TableIdentifier
 	IndexName *Identifier
 }
 
-// CreateTableStmt represents a CREATE TABLE statement
+// CreateTableStmt represents a CREATE TABLE statement with Iceberg type support
 type CreateTableStmt struct {
-	TableName   *Identifier
+	TableName   *TableIdentifier
 	TableSchema *TableSchema
 	Compress    bool
 	Encrypt     bool
 	EncryptKey  *Literal
-	Engine      *Identifier // Storage engine (e.g., MEMORY, FILESYSTEM, S3)
 	IfNotExists bool
+
+	// Enhanced CREATE TABLE support
+	StorageEngine *Identifier // STORAGE clause (mandatory)
+	StoragePath   *Literal    // Optional storage path
+
+	// Partitioning support
+	PartitionBy []*Identifier // PARTITION BY clause
+
+	// Sorting support
+	OrderBy []*Identifier // ORDER BY clause
+
+	// Table settings (raw parsed values from SETTINGS clause)
+	Settings map[string]interface{} // SETTINGS clause
+
+	// Internal validation state
+	validated bool // Track validation state
+}
+
+// Validate validates the CREATE TABLE statement with Iceberg type checking
+func (stmt *CreateTableStmt) Validate() error {
+	if stmt.validated {
+		return nil // Already validated
+	}
+
+	if stmt.TableName == nil {
+		return errors.New(ErrTableNameRequired, "table name is required", nil)
+	}
+
+	if err := stmt.TableName.Validate(); err != nil {
+		return err
+	}
+
+	if stmt.TableSchema == nil || len(stmt.TableSchema.ColumnDefinitions) == 0 {
+		return errors.New(ErrNoColumnsSpecified, "table must have at least one column", nil)
+	}
+
+	// Validate each column definition
+	columnNames := make(map[string]bool)
+	validator := types.NewIcebergTypeValidator()
+
+	for columnName, colDef := range stmt.TableSchema.ColumnDefinitions {
+		if columnName == "" {
+			return errors.New(ErrEmptyColumnName, "column name cannot be empty", nil)
+		}
+
+		if columnNames[columnName] {
+			return errors.New(ErrDuplicateColumnName, fmt.Sprintf("duplicate column name '%s'", columnName), nil)
+		}
+		columnNames[columnName] = true
+
+		// Validate Iceberg type
+		if !validator.IsValidType(colDef.DataType) {
+			// Legacy SQL types are not supported
+			return errors.New(ErrUnsupportedSQLType,
+				fmt.Sprintf("column '%s': unsupported SQL type '%s'. Only Iceberg types are supported",
+					columnName, colDef.DataType), nil)
+		}
+
+		// Validate complex types
+		if err := validator.ValidateComplexType(colDef.DataType); err != nil {
+			return errors.New(ErrComplexTypeParseError,
+				fmt.Sprintf("column '%s': complex type validation failed: %v", columnName, err), nil)
+		}
+	}
+
+	stmt.validated = true
+	return nil
 }
 
 // DropTableStmt represents a DROP TABLE statement
 type DropTableStmt struct {
-	TableName *Identifier
+	TableName *TableIdentifier
+	IfExists  bool // Support for IF EXISTS clause
 }
 
 // UseStmt represents a USE statement
@@ -88,7 +192,7 @@ type UseStmt struct {
 
 // InsertStmt represents an INSERT statement
 type InsertStmt struct {
-	TableName   *Identifier
+	TableName   *TableIdentifier
 	ColumnNames []*Identifier
 	Values      [][]interface{}
 }
@@ -104,7 +208,7 @@ type SelectStmt struct {
 
 // UpdateStmt represents an UPDATE statement
 type UpdateStmt struct {
-	TableName   *Identifier
+	TableName   *TableIdentifier
 	SetClause   []*SetClause
 	WhereClause *WhereClause
 }
@@ -117,7 +221,7 @@ type SetClause struct {
 
 // DeleteStmt represents a DELETE statement
 type DeleteStmt struct {
-	TableName   *Identifier
+	TableName   *TableIdentifier
 	WhereClause *WhereClause
 }
 
@@ -395,6 +499,8 @@ const (
 	SHOW_USERS
 	SHOW_INDEXES
 	SHOW_GRANTS
+	SHOW_COLUMNS
+	SHOW_CREATE_TABLE
 )
 
 // String returns the string representation of ShowType
@@ -410,6 +516,10 @@ func (st ShowType) String() string {
 		return "INDEXES"
 	case SHOW_GRANTS:
 		return "GRANTS"
+	case SHOW_COLUMNS:
+		return "COLUMNS"
+	case SHOW_CREATE_TABLE:
+		return "CREATE TABLE"
 	default:
 		return "UNKNOWN"
 	}
@@ -417,17 +527,32 @@ func (st ShowType) String() string {
 
 // ShowStmt represents a SHOW statement
 type ShowStmt struct {
-	ShowType ShowType
-	For      *Identifier
-	From     *Identifier
+	ShowType  ShowType
+	For       *Identifier
+	From      *Identifier
+	TableName *TableIdentifier // For SHOW COLUMNS and SHOW CREATE TABLE
 }
 
 // AlterTableStmt represents an ALTER TABLE statement
 type AlterTableStmt struct {
-	TableName        *Identifier       // Table name
+	TableName        *TableIdentifier  // Table name (can be qualified database.table)
 	ColumnName       *Identifier       // Column name
 	ColumnDefinition *ColumnDefinition // Column definition
+
+	// Enhanced ALTER TABLE support
+	Action   AlterTableAction       // Type of alteration
+	Settings map[string]interface{} // SETTINGS clause for ALTER TABLE SETTINGS
 }
+
+// AlterTableAction represents the type of ALTER TABLE action
+type AlterTableAction int
+
+const (
+	AlterTableActionUnknown AlterTableAction = iota
+	AlterTableActionDropColumn
+	AlterTableActionAlterColumn
+	AlterTableActionSettings
+)
 
 type AlterUserSetType int
 

@@ -2,6 +2,7 @@ package jdbc
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -53,7 +54,7 @@ func ReadMessage(reader io.Reader) (*Message, error) {
 	// Read message type (1 byte)
 	typeBuf := make([]byte, 1)
 	if _, err := io.ReadFull(reader, typeBuf); err != nil {
-		return nil, fmt.Errorf("failed to read message type: %w", err)
+		return nil, errors.New(ErrMessageTypeReadFailed, "failed to read message type", err)
 	}
 
 	msgType := typeBuf[0]
@@ -61,7 +62,7 @@ func ReadMessage(reader io.Reader) (*Message, error) {
 	// Read message length (4 bytes)
 	lengthBuf := make([]byte, 4)
 	if _, err := io.ReadFull(reader, lengthBuf); err != nil {
-		return nil, fmt.Errorf("failed to read message length: %w", err)
+		return nil, errors.New(ErrMessageLengthReadFailed, "failed to read message length", err)
 	}
 
 	length := binary.BigEndian.Uint32(lengthBuf)
@@ -70,7 +71,7 @@ func ReadMessage(reader io.Reader) (*Message, error) {
 	data := make([]byte, length-4) // Subtract 4 for the length field itself
 	if length > 4 {
 		if _, err := io.ReadFull(reader, data); err != nil {
-			return nil, fmt.Errorf("failed to read message data: %w", err)
+			return nil, errors.New(ErrMessageDataReadFailed, "failed to read message data", err)
 		}
 	}
 
@@ -88,20 +89,20 @@ func WriteMessage(writer io.Writer, msgType byte, data []byte) error {
 
 	// Write message type
 	if _, err := writer.Write([]byte{msgType}); err != nil {
-		return fmt.Errorf("failed to write message type: %w", err)
+		return errors.New(ErrMessageTypeWriteFailed, "failed to write message type", err)
 	}
 
 	// Write message length
 	lengthBuf := make([]byte, 4)
 	binary.BigEndian.PutUint32(lengthBuf, uint32(totalLength))
 	if _, err := writer.Write(lengthBuf); err != nil {
-		return fmt.Errorf("failed to write message length: %w", err)
+		return errors.New(ErrMessageLengthWriteFailed, "failed to write message length", err)
 	}
 
 	// Write message data
 	if len(data) > 0 {
 		if _, err := writer.Write(data); err != nil {
-			return fmt.Errorf("failed to write message data: %w", err)
+			return errors.New(ErrMessageDataWriteFailed, "failed to write message data", err)
 		}
 	}
 
@@ -241,7 +242,7 @@ func ParseStartupMessage(reader io.Reader) (map[string]string, error) {
 	// Read message length (4 bytes)
 	lengthBuf := make([]byte, 4)
 	if _, err := io.ReadFull(reader, lengthBuf); err != nil {
-		return nil, fmt.Errorf("failed to read startup message length: %w", err)
+		return nil, errors.New(ErrStartupMessageLengthReadFailed, "failed to read startup message length", err)
 	}
 
 	length := binary.BigEndian.Uint32(lengthBuf)
@@ -249,7 +250,7 @@ func ParseStartupMessage(reader io.Reader) (map[string]string, error) {
 	// Read message data
 	data := make([]byte, length-4)
 	if _, err := io.ReadFull(reader, data); err != nil {
-		return nil, fmt.Errorf("failed to read startup message data: %w", err)
+		return nil, errors.New(ErrStartupMessageDataReadFailed, "failed to read startup message data", err)
 	}
 
 	// Parse key-value pairs

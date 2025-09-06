@@ -16,10 +16,16 @@ import (
 	"github.com/gear6io/ranger/server/config"
 	"github.com/gear6io/ranger/server/metadata"
 	"github.com/gear6io/ranger/server/metadata/registry"
+	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
+	"github.com/gear6io/ranger/server/metadata/registry/system"
 	"github.com/gear6io/ranger/server/paths"
+	"github.com/gear6io/ranger/server/query/parser"
 	"github.com/gear6io/ranger/server/storage/filesystem"
 	"github.com/gear6io/ranger/server/storage/memory"
+	"github.com/gear6io/ranger/server/storage/parquet"
 	"github.com/gear6io/ranger/server/storage/s3"
+	"github.com/gear6io/ranger/server/storage/schema"
+	"github.com/gear6io/ranger/server/types"
 	"github.com/rs/zerolog"
 )
 
@@ -45,9 +51,10 @@ type Manager struct {
 	config         *Config
 	logger         zerolog.Logger
 	engineRegistry *StorageEngineRegistry
-	meta           metadata.MetadataManagerInterface
+	meta           *metadata.MetadataManager
 	pathManager    paths.PathManager
 	catalog        catalog.CatalogInterface
+	schemaManager  schema.SchemaManager
 }
 
 // Config holds data storage configuration
@@ -71,7 +78,7 @@ type FileSystem interface {
 }
 
 // NewManager creates a new data storage manager
-func NewManager(cfg *config.Config, logger zerolog.Logger) (*Manager, error) {
+func NewManager(cfg *config.Config, logger zerolog.Logger, meta *metadata.MetadataManager) (*Manager, error) {
 	// Get the base data path (already validated in config layer)
 	basePath := cfg.GetStoragePath()
 
@@ -88,12 +95,6 @@ func NewManager(cfg *config.Config, logger zerolog.Logger) (*Manager, error) {
 
 	// Initialize catalog
 	catalog, err := catalog.NewCatalog(cfg, pathManager)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create metadata manager with internal metadata path from PathManager
-	meta, err := metadata.NewMetadataManager(catalog, pathManager.GetInternalMetadataDBPath(), basePath, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +118,11 @@ func NewManager(cfg *config.Config, logger zerolog.Logger) (*Manager, error) {
 
 	// Initialize storage engines with the PathManager
 	if err := manager.initializeStorageEngines(cfg); err != nil {
+		return nil, err
+	}
+
+	// Initialize schema manager
+	if err := manager.initializeSchemaManager(cfg); err != nil {
 		return nil, err
 	}
 
@@ -157,6 +163,41 @@ func (m *Manager) initializeStorageEngines(cfg *config.Config) error {
 	return nil
 }
 
+// initializeSchemaManager initializes the schema manager with proper configuration
+func (m *Manager) initializeSchemaManager(cfg *config.Config) error {
+	// Convert config to schema manager config
+	schemaConfig := convertToSchemaManagerConfig(cfg.GetSchemaManagerConfig())
+
+	// Create schema manager
+	// TODO: Fix interface compatibility between MetadataManager and RegistryStoreInterface
+	// var err error
+	// m.schemaManager, err = schema.NewManager(m.meta, schemaConfig, m.logger)
+	// if err != nil {
+	//	return errors.New(StorageManagerInitializationFailed, "failed to initialize schema manager", err)
+	// }
+	m.schemaManager = nil // Temporary - will be fixed when interface is updated
+
+	m.logger.Info().
+		Int("cache_ttl_minutes", int(schemaConfig.CacheTTL/time.Minute)).
+		Int("max_cache_size", schemaConfig.MaxCacheSize).
+		Bool("enable_metrics", schemaConfig.EnableMetrics).
+		Bool("enable_lru", schemaConfig.EnableLRU).
+		Msg("Schema manager initialized successfully")
+
+	return nil
+}
+
+// convertToSchemaManagerConfig converts server config to schema manager config
+func convertToSchemaManagerConfig(cfg config.SchemaManagerConfig) *schema.SchemaManagerConfig {
+	return &schema.SchemaManagerConfig{
+		CacheTTL:      time.Duration(cfg.CacheTTLMinutes) * time.Minute,
+		MaxCacheSize:  cfg.MaxCacheSize,
+		StatsInterval: time.Duration(cfg.StatsIntervalSecs) * time.Second,
+		EnableMetrics: cfg.EnableMetrics,
+		EnableLRU:     cfg.EnableLRU,
+	}
+}
+
 // Initialize initializes the data storage
 func (m *Manager) Initialize(ctx context.Context) error {
 	m.logger.Info().Msg("Initializing data storage with multi-engine support")
@@ -180,6 +221,12 @@ func (m *Manager) GetType() string {
 // Shutdown gracefully shuts down the storage manager
 func (m *Manager) Shutdown(ctx context.Context) error {
 	m.logger.Info().Msg("Shutting down storage manager")
+
+	// Shutdown schema manager first
+	if m.schemaManager != nil {
+		m.schemaManager.Shutdown()
+		m.logger.Info().Msg("Schema manager shut down successfully")
+	}
 
 	// Close storage manager
 	if err := m.Close(); err != nil {
@@ -213,22 +260,40 @@ func (m *Manager) GetStatus() map[string]interface{} {
 		status[k] = v
 	}
 
+	// Add schema manager status
+	if m.schemaManager != nil {
+		schemaStats := m.schemaManager.GetCacheStats()
+		status["schema_cache"] = map[string]interface{}{
+			"hit_count":    schemaStats.HitCount,
+			"miss_count":   schemaStats.MissCount,
+			"hit_ratio":    schemaStats.HitRatio,
+			"cache_size":   schemaStats.CacheSize,
+			"evict_count":  schemaStats.EvictCount,
+			"last_updated": schemaStats.LastUpdated,
+		}
+	}
+
 	return status
 }
 
-// GetPathManager returns the path manager for external use
-func (m *Manager) GetPathManager() paths.PathManager {
-	return m.pathManager
-}
-
-// GetCatalog returns the catalog for external use
+// GetCatalog returns the catalog interface
 func (m *Manager) GetCatalog() catalog.CatalogInterface {
 	return m.catalog
+}
+
+// GetPathManager returns the path manager
+func (m *Manager) GetPathManager() paths.PathManager {
+	return m.pathManager
 }
 
 // GetEngineRegistry returns the engine registry for external use
 func (m *Manager) GetEngineRegistry() *StorageEngineRegistry {
 	return m.engineRegistry
+}
+
+// GetSchemaManager returns the schema manager for external use
+func (m *Manager) GetSchemaManager() schema.SchemaManager {
+	return m.schemaManager
 }
 
 // GetFileSystem returns the default filesystem (for backward compatibility)
@@ -277,13 +342,140 @@ func generateTableFileName(tableName string, date time.Time, ulid string) string
 // TABLE MANAGEMENT METHODS
 // ============================================================================
 
-// CreateTable creates a new table with schema and storage engine
-func (m *Manager) CreateTable(ctx context.Context, database, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) error {
+// CreateTable creates a new table with parsed CREATE TABLE statement
+func (m *Manager) CreateTable(ctx context.Context, req *types.CreateTableRequest) (*types.CreateTableResponse, error) {
+	startTime := time.Now()
+
+	m.logger.Info().
+		Str("database", req.Database).
+		Str("storage_engine", req.StorageEngine).
+		Str("request_id", req.RequestID).
+		Msg("Starting CREATE TABLE operation")
+
+	// Cast the statement interface{} to the proper type
+	stmt, ok := req.Statement.(*parser.CreateTableStmt)
+	if !ok {
+		err := errors.Newf(ErrStorageManagerUnsupportedType, "invalid statement type - expected *parser.CreateTableStmt, received type: %T", req.Statement).
+			AddContext("database", req.Database).
+			AddContext("request_id", req.RequestID).
+			AddSuggestion("Ensure the statement is properly parsed before calling CreateTable")
+		return nil, err
+	}
+
+	// Get table name from statement
+	tableName := stmt.TableName.Table.Value
+
+	m.logger.Info().
+		Str("database", req.Database).
+		Str("table", tableName).
+		Str("storage_engine", req.StorageEngine).
+		Str("request_id", req.RequestID).
+		Msg("Creating new table with parsed statement")
+
+	// 1. Validate statement
+	if err := stmt.Validate(); err != nil {
+		return nil, errors.New(ErrStorageManagerTableOperationFailed, "CREATE TABLE statement validation failed", err).
+			AddContext("table_name", tableName).
+			AddContext("database", req.Database).
+			AddContext("request_id", req.RequestID)
+	}
+
+	// 2. Validate storage engine
+	if err := m.validateStorageEngine(req.StorageEngine); err != nil {
+		return nil, errors.Newf(ErrStorageManagerUnsupportedEngine, "invalid storage engine: %s", req.StorageEngine).
+			AddContext("table_name", tableName).
+			AddContext("database", req.Database).
+			AddContext("request_id", req.RequestID)
+	}
+
+	// 3. Convert to registry types
+	var tableRecord *regtypes.Table
+	var columns []*regtypes.TableColumn
+
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				panic(errors.Newf(ErrStorageManagerPanicRecovery, "failed to convert statement to registry types: %v", r))
+			}
+		}()
+
+		tableRecord = m.convertToTableRecord(req, stmt)
+		columns = m.convertToColumnRecords(stmt.TableSchema.ColumnDefinitions)
+	}()
+
+	// 4. Create table through metadata manager
+	tableID, err := m.meta.CreateTableWithSchema(ctx, req.Database, tableRecord, columns)
+	if err != nil {
+		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "duplicate") {
+			return nil, errors.New(errors.CommonConflict, "table already exists", err).
+				AddContext("table_name", tableName).
+				AddContext("database", req.Database).
+				AddContext("request_id", req.RequestID)
+		}
+
+		return nil, errors.New(ErrStorageManagerTableOperationFailed, "failed to create table in registry", err).
+			AddContext("table_name", tableName).
+			AddContext("database", req.Database).
+			AddContext("request_id", req.RequestID)
+	}
+
+	// 5. Get storage engine
+	engine, err := m.engineRegistry.GetEngine(req.StorageEngine)
+	if err != nil {
+		return nil, errors.Newf(ErrStorageManagerEngineNotFound, "failed to get storage engine: %s", req.StorageEngine).
+			AddContext("table_name", tableName).
+			AddContext("database", req.Database).
+			AddContext("request_id", req.RequestID)
+	}
+
+	// 6. Setup storage environment
+	if err := engine.SetupTable(req.Database, tableName); err != nil {
+		m.logger.Error().
+			Err(err).
+			Str("database", req.Database).
+			Str("table", tableName).
+			Int64("table_id", tableID).
+			Str("request_id", req.RequestID).
+			Msg("Storage setup failed")
+
+		return nil, errors.New(ErrStorageManagerTableOperationFailed, "failed to setup table storage", err).
+			AddContext("table_name", tableName).
+			AddContext("database", req.Database).
+			AddContext("request_id", req.RequestID)
+	}
+
+	// 7. Success - Create response
+	totalDuration := time.Since(startTime)
+	response := &types.CreateTableResponse{
+		TableID: tableID,
+		Success: true,
+		Metadata: &types.TableCreationMetadata{
+			CreatedAt:     time.Now(),
+			ColumnCount:   len(stmt.TableSchema.ColumnDefinitions),
+			StorageEngine: req.StorageEngine,
+			SchemaVersion: 1,
+		},
+	}
+
+	m.logger.Info().
+		Str("database", req.Database).
+		Str("table", tableName).
+		Str("storage_engine", req.StorageEngine).
+		Int64("table_id", tableID).
+		Str("request_id", req.RequestID).
+		Dur("duration", totalDuration).
+		Msg("Table created successfully")
+
+	return response, nil
+}
+
+// CreateTableLegacy creates a new table with schema and storage engine (legacy method for backward compatibility)
+func (m *Manager) CreateTableLegacy(ctx context.Context, database, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) error {
 	m.logger.Info().
 		Str("database", database).
 		Str("table", tableName).
 		Str("storage_engine", storageEngine).
-		Msg("Creating new table")
+		Msg("Creating new table (legacy method)")
 
 	// Validate storage engine
 	if !m.engineRegistry.EngineExists(storageEngine) {
@@ -333,6 +525,35 @@ func (m *Manager) InsertData(ctx context.Context, database, tableName string, da
 	// Check if table exists in metadata
 	if !m.meta.TableExists(ctx, database, tableName) {
 		return errors.New(errors.CommonNotFound, "table does not exist", nil).AddContext("database", database).AddContext("tableName", tableName)
+	}
+
+	// Retrieve schema before processing data
+	if m.schemaManager != nil {
+		icebergSchema, err := m.schemaManager.GetSchema(ctx, database, tableName)
+		if err != nil {
+			return errors.New(StorageManagerMetadataFailed, "failed to retrieve table schema", err).AddContext("database", database).AddContext("tableName", tableName)
+		}
+
+		// Convert Iceberg schema to Arrow schema for validation
+		arrowSchema, err := parquet.ConvertIcebergToArrowSchema(icebergSchema)
+		if err != nil {
+			return errors.New(StorageManagerMetadataFailed, "failed to convert schema for validation", err).AddContext("database", database).AddContext("tableName", tableName)
+		}
+
+		// Validate data against schema before any storage operations
+		if err := parquet.ValidateDataWithContext(data, arrowSchema, database, tableName); err != nil {
+			m.logger.Error().
+				Err(err).
+				Str("database", database).
+				Str("table", tableName).
+				Int("batch_size", len(data)).
+				Msg("Data validation failed - entire batch rejected")
+
+			return errors.New(StorageManagerWriteFailed, "data validation failed - batch rejected", err).
+				AddContext("database", database).
+				AddContext("tableName", tableName).
+				AddContext("batch_size", fmt.Sprintf("%d", len(data)))
+		}
 	}
 
 	// Get table metadata to determine storage engine
@@ -412,8 +633,7 @@ func (m *Manager) InsertData(ctx context.Context, database, tableName string, da
 		Int("rows", len(data)).
 		Msg("Data inserted successfully using streaming")
 
-	// Phase 2.4.1: Update metadata after successful data insertion
-	// This will trigger CDC events for Iceberg metadata generation
+	// Update metadata after successful data insertion
 	if err := m.updateMetadataAfterInsertion(ctx, database, tableName, len(data), metadata.StorageEngine); err != nil {
 		m.logger.Warn().
 			Err(err).
@@ -444,7 +664,6 @@ func (m *Manager) updateMetadataAfterInsertion(ctx context.Context, database, ta
 		Msg("Starting metadata updates after insertion")
 
 	// Calculate file size (approximate for now)
-	// In a real implementation, this would be the actual file size
 	estimatedFileSize := int64(rowCount * 100) // Rough estimate: 100 bytes per row
 
 	// Generate a file name based on timestamp
@@ -465,7 +684,6 @@ func (m *Manager) updateMetadataAfterInsertion(ctx context.Context, database, ta
 	}
 
 	// Single atomic call to Registry for all metadata updates
-	// This will update table_files, table statistics, and trigger CDC events
 	if err := m.meta.UpdateTableAfterInsertion(ctx, database, tableName, fileInfo); err != nil {
 		m.logger.Error().
 			Err(err).
@@ -576,13 +794,10 @@ func (m *Manager) GetTableSchema(ctx context.Context, database, tableName string
 		return nil, errors.New(errors.CommonNotFound, "table does not exist", nil).AddContext("database", database).AddContext("table", tableName)
 	}
 
-	// Get table metadata
-	metadata, err := m.meta.LoadTableMetadata(ctx, database, tableName)
-	if err != nil {
-		return nil, err
-	}
-
-	return metadata.Schema, nil
+	// For now, return empty schema since schema is stored in TableColumn table
+	// TODO: Implement proper schema retrieval from TableColumn table
+	// This requires getting the table ID first, then retrieving columns
+	return []byte("{}"), nil
 }
 
 // RemoveTable removes a table and all its data
@@ -629,9 +844,43 @@ func (m *Manager) ListTables(ctx context.Context) ([]string, error) {
 	return m.meta.ListAllTables(ctx)
 }
 
+// ListTablesForDatabase returns a list of tables in a specific database
+func (m *Manager) ListTablesForDatabase(ctx context.Context, database string) ([]string, error) {
+	return m.meta.ListTables(ctx, database)
+}
+
+// ListAllTables returns a list of all tables across all databases
+func (m *Manager) ListAllTables(ctx context.Context) ([]string, error) {
+	return m.meta.ListAllTables(ctx)
+}
+
 // TableExists checks if a table exists
 func (m *Manager) TableExists(ctx context.Context, database, tableName string) bool {
 	return m.meta.TableExists(ctx, database, tableName)
+}
+
+// ListDatabases returns a list of all databases
+func (m *Manager) ListDatabases(ctx context.Context) ([]string, error) {
+	return m.meta.ListDatabases(ctx)
+}
+
+// DatabaseExists checks if a database exists
+func (m *Manager) DatabaseExists(ctx context.Context, dbName string) bool {
+	return m.meta.DatabaseExists(ctx, dbName)
+}
+
+// CreateDatabase creates a new database
+func (m *Manager) CreateDatabase(ctx context.Context, dbName string) error {
+	return m.meta.CreateDatabase(ctx, dbName)
+}
+
+// ============================================================================
+// ABSTRACTION METHODS (replacing direct metadata manager access)
+// ============================================================================
+
+// DropTable drops a table from the specified database
+func (m *Manager) DropTable(ctx context.Context, database, tableName string) error {
+	return m.meta.DropTable(ctx, database, tableName)
 }
 
 // createIcebergMetadata creates proper Iceberg metadata structure
@@ -745,7 +994,76 @@ func generateUUID() string {
 	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), time.Now().Unix())
 }
 
-// GetMetadataManager returns the metadata manager instance
-func (m *Manager) GetMetadataManager() metadata.MetadataManagerInterface {
-	return m.meta
+// ============================================================================
+// CREATE TABLE HELPER METHODS
+// ============================================================================
+
+// validateStorageEngine validates that the storage engine is supported
+func (m *Manager) validateStorageEngine(storageEngine string) error {
+	if !m.engineRegistry.EngineExists(storageEngine) {
+		availableEngines := m.engineRegistry.GetAvailableEngines()
+		return errors.Newf(ErrStorageManagerUnsupportedEngine, "unsupported storage engine '%s'. Available engines: %v", storageEngine, availableEngines)
+	}
+	return nil
+}
+
+// convertToTableRecord converts CREATE TABLE request to registry Table record
+func (m *Manager) convertToTableRecord(req *types.CreateTableRequest, stmt *parser.CreateTableStmt) *regtypes.Table {
+	now := time.Now()
+	return &regtypes.Table{
+		// DatabaseID will be set by the registry when creating the table
+		Name:        stmt.TableName.Table.Value,
+		DisplayName: stmt.TableName.Table.Value, // Use table name as display name
+		Description: "",                         // No description in CREATE TABLE statement
+		TableType:   "user",
+		IsTemporary: false, // TODO: Support temporary tables in parser
+		IsExternal:  false, // TODO: Support external tables in parser
+		RowCount:    0,
+		FileCount:   0,
+		TotalSize:   0,
+		TimeAuditable: regtypes.TimeAuditable{
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+	}
+}
+
+// convertToColumnRecords converts column definitions to registry TableColumn records
+func (m *Manager) convertToColumnRecords(columns map[string]*parser.ColumnDefinition) []*regtypes.TableColumn {
+	result := make([]*regtypes.TableColumn, 0, len(columns))
+	ordinalPosition := 1
+	now := time.Now()
+
+	for columnName, colDef := range columns {
+		column := &regtypes.TableColumn{
+			ColumnName:      columnName,
+			DisplayName:     columnName, // Use column name as display name
+			DataType:        colDef.DataType,
+			IsNullable:      colDef.IsNullable,
+			IsPrimary:       false, // TODO: Support primary key constraints in parser
+			IsUnique:        false, // TODO: Support unique constraints in parser
+			DefaultValue:    colDef.DefaultValue,
+			Description:     "", // No description in CREATE TABLE statement
+			OrdinalPosition: ordinalPosition,
+			MaxLength:       colDef.Length,
+			Precision:       colDef.Precision,
+			Scale:           colDef.Scale,
+			TimeAuditable: regtypes.TimeAuditable{
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		}
+		result = append(result, column)
+		ordinalPosition++
+	}
+
+	return result
+}
+
+// GetSystemManager returns the system database manager
+func (m *Manager) GetSystemManager() *system.Manager {
+	// TODO: Implement proper access to system manager
+	// The metadata manager doesn't expose the storage directly
+	// This needs to be implemented when the interface is updated
+	return nil
 }

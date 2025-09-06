@@ -595,17 +595,12 @@ func formatCreateTableStmt(stmt *CreateTableStmt) string {
 		parts = append(parts, "IF NOT EXISTS")
 	}
 
-	parts = append(parts, formatIdentifier(stmt.TableName))
+	parts = append(parts, formatTableIdentifier(stmt.TableName))
 
 	if stmt.TableSchema != nil {
 		parts = append(parts, "(")
 		parts = append(parts, formatTableSchema(stmt.TableSchema))
 		parts = append(parts, ")")
-	}
-
-	if stmt.Engine != nil {
-		parts = append(parts, "ENGINE")
-		parts = append(parts, formatIdentifier(stmt.Engine))
 	}
 
 	if stmt.Compress {
@@ -673,9 +668,9 @@ func formatColumnDefinition(colName string, col *ColumnDefinition) string {
 		parts = append(parts, "NOT NULL")
 	}
 
-	if col.Default != nil {
+	if col.DefaultValue != "" {
 		parts = append(parts, "DEFAULT")
-		parts = append(parts, formatExpression(col.Default))
+		parts = append(parts, col.DefaultValue)
 	}
 
 	return strings.Join(parts, " ")
@@ -695,7 +690,7 @@ func formatInsertStmt(stmt *InsertStmt) string {
 
 	var parts []string
 	parts = append(parts, "INSERT INTO")
-	parts = append(parts, formatIdentifier(stmt.TableName))
+	parts = append(parts, formatTableIdentifier(stmt.TableName))
 
 	// Column names
 	if len(stmt.ColumnNames) > 0 {
@@ -731,7 +726,7 @@ func formatUpdateStmt(stmt *UpdateStmt) string {
 
 	var parts []string
 	parts = append(parts, "UPDATE")
-	parts = append(parts, formatIdentifier(stmt.TableName))
+	parts = append(parts, formatTableIdentifier(stmt.TableName))
 
 	// SET clause
 	if len(stmt.SetClause) > 0 {
@@ -762,7 +757,7 @@ func formatDeleteStmt(stmt *DeleteStmt) string {
 
 	var parts []string
 	parts = append(parts, "DELETE FROM")
-	parts = append(parts, formatIdentifier(stmt.TableName))
+	parts = append(parts, formatTableIdentifier(stmt.TableName))
 
 	// WHERE clause
 	if stmt.WhereClause != nil {
@@ -791,6 +786,17 @@ func formatCreateDatabaseStmt(stmt *CreateDatabaseStmt) string {
 	return strings.Join(parts, " ") + ";"
 }
 
+// formatTableIdentifier formats a TableIdentifier as a string
+func formatTableIdentifier(ti *TableIdentifier) string {
+	if ti == nil {
+		return ""
+	}
+	if ti.IsQualified() {
+		return formatIdentifier(ti.Database) + "." + formatIdentifier(ti.Table)
+	}
+	return formatIdentifier(ti.Table)
+}
+
 // formatDropTableStmt formats a DROP TABLE statement
 func formatDropTableStmt(stmt *DropTableStmt) string {
 	if stmt == nil {
@@ -799,7 +805,12 @@ func formatDropTableStmt(stmt *DropTableStmt) string {
 
 	var parts []string
 	parts = append(parts, "DROP TABLE")
-	parts = append(parts, formatIdentifier(stmt.TableName))
+
+	if stmt.IfExists {
+		parts = append(parts, "IF EXISTS")
+	}
+
+	parts = append(parts, formatTableIdentifier(stmt.TableName))
 
 	return strings.Join(parts, " ") + ";"
 }
@@ -824,12 +835,22 @@ func formatShowStmt(stmt *ShowStmt) string {
 		parts = append(parts, "INDEXES")
 	case SHOW_GRANTS:
 		parts = append(parts, "GRANTS")
+	case SHOW_COLUMNS:
+		parts = append(parts, "COLUMNS")
+	case SHOW_CREATE_TABLE:
+		parts = append(parts, "CREATE", "TABLE")
 	}
 
-	// Add FROM clause if present
+	// Add FROM clause if present (for TABLES and INDEXES)
 	if stmt.From != nil {
 		parts = append(parts, "FROM")
 		parts = append(parts, formatIdentifier(stmt.From))
+	}
+
+	// Add table name for COLUMNS and CREATE TABLE
+	if stmt.TableName != nil {
+		parts = append(parts, "FROM")
+		parts = append(parts, formatTableIdentifier(stmt.TableName))
 	}
 
 	return strings.Join(parts, " ") + ";"

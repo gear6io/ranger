@@ -1,4 +1,4 @@
-package sdk
+package integration_tests
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gear6io/ranger/pkg/sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -59,7 +60,7 @@ func TestNativeServerProtocolHandshake(t *testing.T) {
 func TestNativeServerMultipleConnections(t *testing.T) {
 	TestWithServer(t, func(t *testing.T, server *TestServer) {
 		// Create multiple clients
-		clients := make([]*Client, 5)
+		clients := make([]*sdk.Client, 5)
 
 		for i := 0; i < 5; i++ {
 			client := server.GetClient(t)
@@ -95,11 +96,11 @@ func TestNativeServerMultipleConnections(t *testing.T) {
 func TestNativeServerConnectionPooling(t *testing.T) {
 	TestWithServer(t, func(t *testing.T, server *TestServer) {
 		// Create client with specific connection pool settings
-		client, err := NewClient(&Options{
+		client, err := sdk.NewClient(&sdk.Options{
 			Addr:         []string{"127.0.0.1:2849"},
 			MaxOpenConns: 3,
 			MaxIdleConns: 2,
-			Auth: Auth{
+			Auth: sdk.Auth{
 				Database: "default",
 				Username: "default",
 				Password: "",
@@ -262,12 +263,12 @@ func TestNativeServerErrorHandling(t *testing.T) {
 func TestNativeServerConnectionTimeout(t *testing.T) {
 	TestWithServer(t, func(t *testing.T, server *TestServer) {
 		// Create client with short timeouts
-		client, err := NewClient(&Options{
+		client, err := sdk.NewClient(&sdk.Options{
 			Addr:         []string{"127.0.0.1:2849"},
 			DialTimeout:  1 * time.Second,
 			ReadTimeout:  500 * time.Millisecond,
 			WriteTimeout: 500 * time.Millisecond,
-			Auth: Auth{
+			Auth: sdk.Auth{
 				Database: "default",
 				Username: "default",
 				Password: "",
@@ -289,13 +290,13 @@ func TestNativeServerConnectionTimeout(t *testing.T) {
 func TestNativeServerCompression(t *testing.T) {
 	TestWithServer(t, func(t *testing.T, server *TestServer) {
 		// Test client with compression enabled
-		client, err := NewClient(&Options{
+		client, err := sdk.NewClient(&sdk.Options{
 			Addr: []string{"127.0.0.1:2849"},
-			Compression: &Compression{
-				Method: CompressionZSTD,
+			Compression: &sdk.Compression{
+				Method: sdk.CompressionZSTD,
 				Level:  1,
 			},
-			Auth: Auth{
+			Auth: sdk.Auth{
 				Database: "default",
 				Username: "default",
 				Password: "",
@@ -317,10 +318,10 @@ func TestNativeServerCompression(t *testing.T) {
 func TestNativeServerTLS(t *testing.T) {
 	TestWithServer(t, func(t *testing.T, server *TestServer) {
 		// Test client with TLS config (should handle gracefully even if TLS not supported)
-		client, err := NewClient(&Options{
+		client, err := sdk.NewClient(&sdk.Options{
 			Addr: []string{"127.0.0.1:2849"},
 			TLS:  &tls.Config{InsecureSkipVerify: true}, // Insecure for testing
-			Auth: Auth{
+			Auth: sdk.Auth{
 				Database: "default",
 				Username: "default",
 				Password: "",
@@ -345,7 +346,7 @@ func TestNativeServerTLS(t *testing.T) {
 func TestNativeServerDSNParsing(t *testing.T) {
 	// Test valid DSN parsing
 	validDSN := "ranger://user:pass@localhost:2849/testdb?max_execution_time=60&debug=true"
-	options, err := ParseDSN(validDSN)
+	options, err := sdk.ParseDSN(validDSN)
 	require.NoError(t, err)
 	require.NotNil(t, options)
 
@@ -353,17 +354,17 @@ func TestNativeServerDSNParsing(t *testing.T) {
 	assert.Equal(t, "pass", options.Auth.Password, "Password should be parsed correctly")
 	assert.Equal(t, "testdb", options.Auth.Database, "Database should be parsed correctly")
 	assert.Equal(t, "localhost:2849", options.Addr[0], "Address should be parsed correctly")
-	assert.Equal(t, 60, options.Settings.GetInt("max_execution_time"), "Settings should be parsed correctly")
+	assert.Equal(t, 60, options.Settings.GetInt("max_execution_time"), "sdk.Settings should be parsed correctly")
 	assert.Equal(t, true, options.Settings.GetBool("debug"), "Boolean settings should be parsed correctly")
 
 	// Test invalid DSN parsing
 	invalidDSN := "invalid://dsn"
-	_, err = ParseDSN(invalidDSN)
+	_, err = sdk.ParseDSN(invalidDSN)
 	assert.Error(t, err, "Invalid DSN should cause an error")
 
 	// Test DSN without auth
 	noAuthDSN := "ranger://localhost:2849/testdb"
-	options, err = ParseDSN(noAuthDSN)
+	options, err = sdk.ParseDSN(noAuthDSN)
 	require.NoError(t, err)
 	assert.Equal(t, "", options.Auth.Username, "Username should be empty for no-auth DSN")
 	assert.Equal(t, "", options.Auth.Password, "Password should be empty for no-auth DSN")
@@ -371,7 +372,7 @@ func TestNativeServerDSNParsing(t *testing.T) {
 
 // TestNativeServerSettings tests settings management
 func TestNativeServerSettings(t *testing.T) {
-	settings := Settings{}
+	settings := sdk.Settings{}
 
 	// Test setting and getting values
 	settings.Set("test_key", "test_value")
@@ -405,10 +406,10 @@ func TestNativeServerSettings(t *testing.T) {
 func TestNativeServerConnectionStrategy(t *testing.T) {
 	TestWithServer(t, func(t *testing.T, server *TestServer) {
 		// Test round-robin strategy
-		client, err := NewClient(&Options{
+		client, err := sdk.NewClient(&sdk.Options{
 			Addr:             []string{"127.0.0.1:2849", "127.0.0.1:2849"}, // Same address twice for testing
-			ConnOpenStrategy: ConnOpenRoundRobin,
-			Auth: Auth{
+			ConnOpenStrategy: sdk.ConnOpenRoundRobin,
+			Auth: sdk.Auth{
 				Database: "default",
 				Username: "default",
 				Password: "",
@@ -425,10 +426,10 @@ func TestNativeServerConnectionStrategy(t *testing.T) {
 		assert.NoError(t, err, "Ping should succeed with round-robin strategy")
 
 		// Test random strategy
-		client2, err := NewClient(&Options{
+		client2, err := sdk.NewClient(&sdk.Options{
 			Addr:             []string{"127.0.0.1:2849", "127.0.0.1:2849"},
-			ConnOpenStrategy: ConnOpenRandom,
-			Auth: Auth{
+			ConnOpenStrategy: sdk.ConnOpenRandom,
+			Auth: sdk.Auth{
 				Database: "default",
 				Username: "default",
 				Password: "",
@@ -537,5 +538,41 @@ func TestNativeServerProtocolCompliance(t *testing.T) {
 		assert.NoError(t, err, "Ping/Pong should work after successful handshake")
 
 		t.Logf("✅ Protocol compliance verified! Client successfully completed handshake and ping/pong exchange")
+	})
+}
+
+// TestBatchErrorHandling tests error handling in batch operations
+func TestBatchErrorHandling(t *testing.T) {
+	t.Run("BatchAppendAfterSend", func(t *testing.T) {
+		TestWithServer(t, func(t *testing.T, server *TestServer) {
+			client := server.GetClient(t)
+			defer client.Close()
+
+			batch, err := client.PrepareBatch(context.Background(), "INSERT INTO test_table VALUES")
+			require.NoError(t, err)
+
+			// Mark batch as sent
+			batch.Sent = true
+
+			// Try to append after sending
+			err = batch.Append(1, "test")
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "already sent")
+		})
+	})
+
+	t.Run("BatchAppendWithWrongColumnCount", func(t *testing.T) {
+		TestWithServer(t, func(t *testing.T, server *TestServer) {
+			client := server.GetClient(t)
+			defer client.Close()
+
+			batch, err := client.PrepareBatch(context.Background(), "INSERT INTO test_table (id, name) VALUES")
+			require.NoError(t, err)
+
+			// Try to append wrong number of values
+			err = batch.Append(1) // Only 1 value, but batch expects 2 columns
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "value count does not match column count")
+		})
 	})
 }

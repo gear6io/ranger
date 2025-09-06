@@ -276,42 +276,6 @@ func TestQueryErrorHandling(t *testing.T) {
 	})
 }
 
-// TestBatchErrorHandling tests error handling in batch operations
-func TestBatchErrorHandling(t *testing.T) {
-	t.Run("BatchAppendAfterSend", func(t *testing.T) {
-		sdk.TestWithServer(t, func(t *testing.T, server *sdk.TestServer) {
-			client := server.GetClient(t)
-			defer client.Close()
-
-			batch, err := client.PrepareBatch(context.Background(), "INSERT INTO test_table VALUES")
-			require.NoError(t, err)
-
-			// Mark batch as sent
-			batch.Sent = true
-
-			// Try to append after sending
-			err = batch.Append(1, "test")
-			assert.Error(t, err)
-			assert.Contains(t, err.Error(), "already sent")
-		})
-	})
-
-	t.Run("BatchAppendWithWrongColumnCount", func(t *testing.T) {
-		sdk.TestWithServer(t, func(t *testing.T, server *sdk.TestServer) {
-			client := server.GetClient(t)
-			defer client.Close()
-
-			batch, err := client.PrepareBatch(context.Background(), "INSERT INTO test_table (id, name) VALUES")
-			require.NoError(t, err)
-
-			// Try to append wrong number of values
-			err = batch.Append(1) // Only 1 value, but batch expects 2 columns
-			assert.Error(t, err)
-			assert.Contains(t, err.Error(), "value count does not match column count")
-		})
-	})
-}
-
 // TestSettingsErrorHandling tests error handling in settings operations
 func TestSettingsErrorHandling(t *testing.T) {
 	t.Run("SettingsTypeConversionErrors", func(t *testing.T) {

@@ -8,8 +8,6 @@ var (
 	ErrDatabaseConnectionRequired = errors.MustNewCode("astha.database_connection_required")
 
 	// CDC infrastructure errors
-	ErrCDCSetupFailed       = errors.MustNewCode("astha.cdc_setup_failed")
-	ErrSchedulerStartFailed = errors.MustNewCode("astha.scheduler_start_failed")
 
 	// Scheduler-specific error codes
 	ErrComponentNameEmpty       = errors.MustNewCode("astha.component_name_empty")

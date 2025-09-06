@@ -431,7 +431,7 @@ func (c *connection) readExecResponse() error {
 		case protocol.ServerException:
 			// Handle exception signal
 			exception := signal.(*signals.ServerException)
-			return fmt.Errorf("server exception [%d]: %s", exception.ErrorCode, exception.ErrorMessage)
+			return fmt.Errorf("server exception [%s]: %s", exception.ErrorCode, exception.ErrorMessage)
 		case protocol.ServerData:
 			// Handle data signal - just continue reading
 			continue
@@ -504,7 +504,7 @@ func (c *connection) sendBatchData(batch *Batch) error {
 		case protocol.ServerException:
 			// Handle exception signal
 			exception := signal.(*signals.ServerException)
-			return fmt.Errorf("server exception [%d]: %s", exception.ErrorCode, exception.ErrorMessage)
+			return fmt.Errorf("server exception [%s]: %s", exception.ErrorCode, exception.ErrorMessage)
 		case protocol.ServerData:
 			// Handle data signal - just continue reading for batch operations
 			continue

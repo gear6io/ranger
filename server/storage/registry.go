@@ -92,3 +92,8 @@ func (r *StorageEngineRegistry) GetEngineStatus() map[string]interface{} {
 
 	return status
 }
+
+// GetAvailableEngines returns a list of available engine names (alias for ListEngines)
+func (r *StorageEngineRegistry) GetAvailableEngines() []string {
+	return r.ListEngines()
+}

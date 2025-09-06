@@ -2,7 +2,6 @@ package registry
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -155,75 +154,6 @@ func TestStoreWithProductionSchema(t *testing.T) {
 
 		// Verify it no longer exists
 		assert.False(t, store.DatabaseExists(ctx, "dropdb"))
-	})
-}
-
-func TestTableMetadataOperations(t *testing.T) {
-	// Create temporary directory for test
-	tempDir, err := os.MkdirTemp("", "table_metadata_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
-
-	dbPath := filepath.Join(tempDir, "test.db")
-	basePath := filepath.Join(tempDir, "data")
-
-	// Create store
-	store, err := NewStore(dbPath, basePath)
-	require.NoError(t, err)
-	defer store.Close()
-
-	ctx := context.Background()
-
-	// Create test database and table
-	err = store.CreateDatabase(ctx, "metadatadb")
-	require.NoError(t, err)
-
-	tableMeta, err := store.CreateTable(ctx, "metadatadb", "metatable", []byte("{}"), "parquet", nil)
-	require.NoError(t, err)
-	require.NotNil(t, tableMeta)
-
-	t.Run("CreateTableMetadata", func(t *testing.T) {
-		// Create table metadata
-		schema := []byte(`{"type": "object", "properties": {"id": {"type": "integer"}}}`)
-		engineConfig := map[string]interface{}{
-			"format":      "parquet",
-			"compression": "snappy",
-		}
-
-		metadata, err := store.CreateTableMetadata(ctx, "metadatadb", "metatable", schema, "parquet", engineConfig)
-		require.NoError(t, err)
-		assert.NotNil(t, metadata)
-
-		// Verify metadata fields
-		assert.Equal(t, "metadatadb", metadata.Database)
-		assert.Equal(t, "metatable", metadata.Name)
-		assert.Equal(t, schema, metadata.Schema)
-		assert.Equal(t, "parquet", metadata.StorageEngine)
-
-		// EngineConfig is stored as JSON string, so we need to unmarshal it for comparison
-		var storedConfig map[string]interface{}
-		err = json.Unmarshal([]byte(metadata.EngineConfig), &storedConfig)
-		require.NoError(t, err)
-		assert.Equal(t, engineConfig, storedConfig)
-	})
-
-	t.Run("LoadTableMetadata", func(t *testing.T) {
-		// Load table metadata
-		metadata, err := store.LoadTableMetadata(ctx, "metadatadb", "metatable")
-		require.NoError(t, err)
-		assert.NotNil(t, metadata)
-
-		// Verify metadata fields
-		assert.Equal(t, "metadatadb", metadata.Database)
-		assert.Equal(t, "metatable", metadata.Name)
-		assert.Equal(t, "parquet", metadata.StorageEngine)
-	})
-
-	t.Run("ListAllTables", func(t *testing.T) {
-		// List all tables across all databases
-		tables, err := store.ListAllTables(ctx)
-		require.NoError(t, err)
-		assert.Contains(t, tables, "metadatadb.metatable")
 	})
 }
 

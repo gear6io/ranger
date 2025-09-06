@@ -9,6 +9,7 @@ import (
 
 	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/gear6io/ranger/server/query"
+	"github.com/gear6io/ranger/server/types"
 	"github.com/rs/zerolog"
 )
 
@@ -106,8 +107,14 @@ func (h *JDBCHandler) handleQuery(conn io.WriteCloser, msg *Message) error {
 	queryStr := strings.TrimSpace(string(msg.Data))
 	h.logger.Debug().Str("query", queryStr).Msg("Executing query using QueryEngine")
 
-	// Execute query using the QueryEngine
-	result, err := h.queryEngine.ExecuteQuery(h.ctx, queryStr)
+	// Create query context for JDBC requests
+	queryCtx := &types.QueryContext{
+		Query:      queryStr,
+		Database:   "default",
+		User:       "jdbc",
+		ClientAddr: "jdbc",
+	}
+	result, err := h.queryEngine.ExecuteQuery(h.ctx, queryCtx)
 	if err != nil {
 		h.logger.Error().Err(err).Str("query", queryStr).Msg("Query execution failed")
 		return WriteErrorResponse(conn, "XX000", fmt.Sprintf("Query execution failed: %v", err))
@@ -200,10 +207,16 @@ func (h *JDBCHandler) handleTerminate(conn io.WriteCloser, msg *Message) error {
 
 // ExecuteQuery executes a SQL query (for testing)
 func (h *JDBCHandler) ExecuteQuery(ctx context.Context, query string) (*QueryResult, error) {
-	// Execute query using the QueryEngine
-	result, err := h.queryEngine.ExecuteQuery(ctx, query)
+	// Create query context for testing
+	queryCtx := &types.QueryContext{
+		Query:      query,
+		Database:   "default",
+		User:       "jdbc",
+		ClientAddr: "jdbc",
+	}
+	result, err := h.queryEngine.ExecuteQuery(ctx, queryCtx)
 	if err != nil {
-		return nil, errors.New(ErrQueryExecutionFailed, "query execution failed", err)
+		return nil, err
 	}
 
 	// Convert QueryEngine result to JDBC QueryResult format

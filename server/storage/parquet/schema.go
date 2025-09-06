@@ -2,11 +2,14 @@ package parquet
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
-	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/iceberg-go"
+	"github.com/gear6io/ranger/pkg/errors"
+	"github.com/gear6io/ranger/server/metadata/registry"
 )
 
 // Package-specific error codes for parquet schema
@@ -25,20 +28,84 @@ var (
 	ParquetSchemaTypeMismatch           = errors.MustNewCode("parquet.schema_type_mismatch")
 )
 
-// SchemaManager handles schema conversion and validation
-type SchemaManager struct {
-	config *ParquetConfig
+// DetailedValidationError represents a detailed validation error with context
+// This implements Requirement 4.1, 4.2, 4.3 for detailed error information
+type DetailedValidationError struct {
+	RowIndex     int         `json:"row_index"`
+	ColumnIndex  int         `json:"column_index"`
+	ColumnName   string      `json:"column_name"`
+	ExpectedType string      `json:"expected_type"`
+	ActualType   string      `json:"actual_type"`
+	Value        interface{} `json:"value"`
+	Message      string      `json:"message"`
+	TableName    string      `json:"table_name"`
+	Database     string      `json:"database"`
 }
 
-// NewSchemaManager creates a new schema manager
-func NewSchemaManager(config *ParquetConfig) *SchemaManager {
-	return &SchemaManager{
-		config: config,
+// Error implements the error interface
+func (ve DetailedValidationError) Error() string {
+	return ve.Message
+}
+
+// NewDetailedValidationError creates a new validation error with comprehensive context
+// Requirement 4.1, 4.2, 4.3: Include specific validation failure reason, row/column info, and type information
+func NewDetailedValidationError(rowIndex, columnIndex int, columnName, expectedType, actualType string, value interface{}, database, tableName string) *DetailedValidationError {
+	message := fmt.Sprintf("validation failed at row %d, column %d (%s): expected %s but got %s (value: %v)",
+		rowIndex, columnIndex, columnName, expectedType, actualType, value)
+
+	return &DetailedValidationError{
+		RowIndex:     rowIndex,
+		ColumnIndex:  columnIndex,
+		ColumnName:   columnName,
+		ExpectedType: expectedType,
+		ActualType:   actualType,
+		Value:        value,
+		Message:      message,
+		TableName:    tableName,
+		Database:     database,
+	}
+}
+
+// NewColumnCountValidationError creates a validation error for column count mismatches
+// Requirement 4.1, 4.2: Include specific validation failure reason and row information
+func NewColumnCountValidationError(rowIndex, actualColumns, expectedColumns int, database, tableName string) *DetailedValidationError {
+	message := fmt.Sprintf("validation failed at row %d: expected %d columns but got %d columns",
+		rowIndex, expectedColumns, actualColumns)
+
+	return &DetailedValidationError{
+		RowIndex:     rowIndex,
+		ColumnIndex:  -1, // Not applicable for column count errors
+		ColumnName:   "",
+		ExpectedType: fmt.Sprintf("%d columns", expectedColumns),
+		ActualType:   fmt.Sprintf("%d columns", actualColumns),
+		Value:        actualColumns,
+		Message:      message,
+		TableName:    tableName,
+		Database:     database,
+	}
+}
+
+// NewNullValueValidationError creates a validation error for null value violations
+// Requirement 4.1, 4.2, 4.3: Include specific validation failure reason, row/column info, and field requirements
+func NewNullValueValidationError(rowIndex, columnIndex int, columnName, database, tableName string) *DetailedValidationError {
+	message := fmt.Sprintf("validation failed at row %d, column %d (%s): field cannot be null",
+		rowIndex, columnIndex, columnName)
+
+	return &DetailedValidationError{
+		RowIndex:     rowIndex,
+		ColumnIndex:  columnIndex,
+		ColumnName:   columnName,
+		ExpectedType: "non-null value",
+		ActualType:   "null",
+		Value:        nil,
+		Message:      message,
+		TableName:    tableName,
+		Database:     database,
 	}
 }
 
 // ConvertIcebergToArrowSchema converts an Iceberg schema to an Arrow schema
-func (sm *SchemaManager) ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*arrow.Schema, error) {
+func ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*arrow.Schema, error) {
 	if schema == nil {
 		return nil, errors.New(ParquetSchemaNilSchema, "iceberg schema cannot be nil", nil)
 	}
@@ -46,7 +113,7 @@ func (sm *SchemaManager) ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*a
 	fields := make([]arrow.Field, 0, len(schema.Fields()))
 
 	for _, field := range schema.Fields() {
-		arrowField, err := sm.convertIcebergField(field)
+		arrowField, err := convertIcebergField(field)
 		if err != nil {
 			return nil, err
 		}
@@ -57,8 +124,8 @@ func (sm *SchemaManager) ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*a
 }
 
 // convertIcebergField converts a single Iceberg field to an Arrow field
-func (sm *SchemaManager) convertIcebergField(field iceberg.NestedField) (arrow.Field, error) {
-	arrowType, err := sm.convertIcebergType(field.Type)
+func convertIcebergField(field iceberg.NestedField) (arrow.Field, error) {
+	arrowType, err := convertIcebergType(field.Type)
 	if err != nil {
 		return arrow.Field{}, err
 	}
@@ -75,7 +142,7 @@ func (sm *SchemaManager) convertIcebergField(field iceberg.NestedField) (arrow.F
 }
 
 // convertIcebergType converts an Iceberg type to an Arrow type
-func (sm *SchemaManager) convertIcebergType(icebergType iceberg.Type) (arrow.DataType, error) {
+func convertIcebergType(icebergType iceberg.Type) (arrow.DataType, error) {
 	switch icebergType {
 	case iceberg.PrimitiveTypes.Bool:
 		return arrow.FixedWidthTypes.Boolean, nil
@@ -105,11 +172,11 @@ func (sm *SchemaManager) convertIcebergType(icebergType iceberg.Type) (arrow.Dat
 		// Handle complex types
 		switch t := icebergType.(type) {
 		case *iceberg.ListType:
-			return sm.convertListType(t)
+			return convertListType(t)
 		case *iceberg.MapType:
-			return sm.convertMapType(t)
+			return convertMapType(t)
 		case *iceberg.StructType:
-			return sm.convertStructType(t)
+			return convertStructType(t)
 		default:
 			return nil, errors.New(ParquetSchemaUnsupportedType, "unsupported iceberg type", nil).AddContext("type", fmt.Sprintf("%T", icebergType))
 		}
@@ -117,8 +184,8 @@ func (sm *SchemaManager) convertIcebergType(icebergType iceberg.Type) (arrow.Dat
 }
 
 // convertListType converts Iceberg list type to Arrow list type
-func (sm *SchemaManager) convertListType(lt *iceberg.ListType) (arrow.DataType, error) {
-	elementType, err := sm.convertIcebergType(lt.Element)
+func convertListType(lt *iceberg.ListType) (arrow.DataType, error) {
+	elementType, err := convertIcebergType(lt.Element)
 	if err != nil {
 		return nil, err
 	}
@@ -127,13 +194,13 @@ func (sm *SchemaManager) convertListType(lt *iceberg.ListType) (arrow.DataType, 
 }
 
 // convertMapType converts Iceberg map type to Arrow map type
-func (sm *SchemaManager) convertMapType(mt *iceberg.MapType) (arrow.DataType, error) {
-	keyType, err := sm.convertIcebergType(mt.KeyType)
+func convertMapType(mt *iceberg.MapType) (arrow.DataType, error) {
+	keyType, err := convertIcebergType(mt.KeyType)
 	if err != nil {
 		return nil, err
 	}
 
-	valueType, err := sm.convertIcebergType(mt.ValueType)
+	valueType, err := convertIcebergType(mt.ValueType)
 	if err != nil {
 		return nil, err
 	}
@@ -142,11 +209,11 @@ func (sm *SchemaManager) convertMapType(mt *iceberg.MapType) (arrow.DataType, er
 }
 
 // convertStructType converts Iceberg struct type to Arrow struct type
-func (sm *SchemaManager) convertStructType(st *iceberg.StructType) (arrow.DataType, error) {
+func convertStructType(st *iceberg.StructType) (arrow.DataType, error) {
 	fields := make([]arrow.Field, 0, len(st.Fields()))
 
 	for _, field := range st.Fields() {
-		arrowField, err := sm.convertIcebergField(field)
+		arrowField, err := convertIcebergField(field)
 		if err != nil {
 			return nil, err
 		}
@@ -156,8 +223,108 @@ func (sm *SchemaManager) convertStructType(st *iceberg.StructType) (arrow.DataTy
 	return arrow.StructOf(fields...), nil
 }
 
+// ConvertRegistryDataToIcebergSchema converts registry SchemaData to Iceberg schema
+func ConvertRegistryDataToIcebergSchema(schemaData *registry.SchemaData) (*iceberg.Schema, error) {
+	if schemaData == nil {
+		return nil, errors.New(ParquetSchemaNilSchema, "schema data cannot be nil", nil)
+	}
+
+	// Convert columns to Iceberg nested fields
+	fields := make([]iceberg.NestedField, 0, len(schemaData.Columns))
+
+	for _, col := range schemaData.Columns {
+		// Parse the data type to Iceberg type
+		icebergType, err := parseRegistryDataType(col.DataType)
+		if err != nil {
+			return nil, errors.New(ParquetSchemaTypeConversionFailed, "failed to parse registry data type", err).
+				AddContext("column", col.ColumnName).
+				AddContext("data_type", col.DataType).
+				AddContext("database", schemaData.Database).
+				AddContext("table", schemaData.Table)
+		}
+
+		// Create Iceberg nested field
+		field := iceberg.NestedField{
+			ID:       int(col.ID),
+			Name:     col.ColumnName,
+			Type:     icebergType,
+			Required: col.IsPrimary, // Required if primary key, optional otherwise
+		}
+
+		fields = append(fields, field)
+	}
+
+	// Create Iceberg schema with schema version 1
+	schema := iceberg.NewSchema(1, fields...)
+
+	return schema, nil
+}
+
+// parseRegistryDataType converts string data type from registry to Iceberg type
+func parseRegistryDataType(dataType string) (iceberg.Type, error) {
+	switch strings.ToLower(dataType) {
+	case "boolean":
+		return iceberg.PrimitiveTypes.Bool, nil
+	case "int32", "integer":
+		return iceberg.PrimitiveTypes.Int32, nil
+	case "int64", "bigint":
+		return iceberg.PrimitiveTypes.Int64, nil
+	case "float32", "real":
+		return iceberg.PrimitiveTypes.Float32, nil
+	case "float64", "double":
+		return iceberg.PrimitiveTypes.Float64, nil
+	case "string", "varchar", "text":
+		return iceberg.PrimitiveTypes.String, nil
+	case "binary", "blob":
+		return iceberg.PrimitiveTypes.Binary, nil
+	case "date":
+		return iceberg.PrimitiveTypes.Date, nil
+	case "time":
+		return iceberg.PrimitiveTypes.Time, nil
+	case "timestamp":
+		return iceberg.PrimitiveTypes.Timestamp, nil
+	case "timestamptz":
+		return iceberg.PrimitiveTypes.TimestampTz, nil
+	case "uuid":
+		return iceberg.PrimitiveTypes.UUID, nil
+	default:
+		// Try to parse decimal types
+		if strings.HasPrefix(strings.ToLower(dataType), "decimal") {
+			// Extract precision and scale from decimal(10,2) format
+			parts := strings.Split(strings.Trim(dataType, "()"), ",")
+			if len(parts) == 2 {
+				precision, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+				if err != nil {
+					return nil, errors.New(ParquetSchemaTypeConversionFailed, "invalid decimal precision", err)
+				}
+				scale, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+				if err != nil {
+					return nil, errors.New(ParquetSchemaTypeConversionFailed, "invalid decimal scale", err)
+				}
+				return iceberg.DecimalTypeOf(precision, scale), nil
+			}
+		}
+
+		// Try to parse fixed types
+		if strings.HasPrefix(strings.ToLower(dataType), "fixed") {
+			// Extract length from fixed(16) format
+			lengthStr := strings.Trim(strings.TrimPrefix(dataType, "fixed"), "()")
+			length, err := strconv.Atoi(lengthStr)
+			if err != nil {
+				return nil, errors.New(ParquetSchemaTypeConversionFailed, "invalid fixed length", err)
+			}
+			return iceberg.FixedTypeOf(length), nil
+		}
+
+		return nil, errors.New(ParquetSchemaUnsupportedType, "unsupported data type", nil).
+			AddContext("data_type", dataType)
+	}
+}
+
 // ValidateData validates data against a given schema
-func (sm *SchemaManager) ValidateData(data [][]interface{}, schema *arrow.Schema) error {
+// Requirement 3.4: Return immediately on first validation failure (fail-fast)
+// Requirement 4.1, 4.2, 4.3: Return detailed error information including row and column details
+func ValidateData(data [][]interface{}, schema *arrow.Schema) error {
 	if len(data) == 0 {
 		return nil // Empty data is valid
 	}
@@ -170,10 +337,49 @@ func (sm *SchemaManager) ValidateData(data [][]interface{}, schema *arrow.Schema
 
 	for rowIndex, row := range data {
 		if len(row) != expectedColumns {
-			return errors.New(ParquetSchemaColumnMismatch, "row has incorrect number of columns", nil).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("actual_columns", fmt.Sprintf("%d", len(row))).AddContext("expected_columns", fmt.Sprintf("%d", expectedColumns))
+			return errors.New(ParquetSchemaColumnMismatch, "row has incorrect number of columns", nil).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("actual_columns", fmt.Sprintf("%d", len(row))).
+				AddContext("expected_columns", fmt.Sprintf("%d", expectedColumns)).
+				AddContext("validation_type", "column_count_mismatch")
 		}
 
-		if err := sm.validateRow(row, schema, rowIndex); err != nil {
+		// Validate each field in the row - fail fast on first error (Requirement 3.4)
+		if err := validateRow(row, schema, rowIndex); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// ValidateDataWithContext validates data against a schema with table context for enhanced error reporting
+// Requirement 4.1, 4.2, 4.3: Include database and table context in validation errors
+func ValidateDataWithContext(data [][]interface{}, schema *arrow.Schema, database, tableName string) error {
+	if len(data) == 0 {
+		return nil // Empty data is valid
+	}
+
+	if schema == nil {
+		return errors.New(ParquetSchemaNilSchema, "schema cannot be nil", nil).
+			AddContext("database", database).
+			AddContext("table", tableName)
+	}
+
+	expectedColumns := len(schema.Fields())
+
+	for rowIndex, row := range data {
+		if len(row) != expectedColumns {
+			// Create detailed column count validation error
+			validationErr := NewColumnCountValidationError(rowIndex, len(row), expectedColumns, database, tableName)
+			return errors.New(ParquetSchemaColumnMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "column_count_mismatch")
+		}
+
+		// Validate each field in the row - fail fast on first error (Requirement 3.4)
+		if err := validateRowWithContext(row, schema, rowIndex, database, tableName); err != nil {
 			return err
 		}
 	}
@@ -182,11 +388,25 @@ func (sm *SchemaManager) ValidateData(data [][]interface{}, schema *arrow.Schema
 }
 
 // validateRow validates a single row against the schema
-func (sm *SchemaManager) validateRow(row []interface{}, schema *arrow.Schema, rowIndex int) error {
+func validateRow(row []interface{}, schema *arrow.Schema, rowIndex int) error {
 	for colIndex, value := range row {
 		field := schema.Field(colIndex)
 
-		if err := sm.validateValue(value, field, rowIndex, colIndex); err != nil {
+		if err := validateValue(value, field, rowIndex, colIndex); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateRowWithContext validates a single row against the schema with table context
+// Requirement 4.1, 4.2, 4.3: Include database and table context in validation errors
+func validateRowWithContext(row []interface{}, schema *arrow.Schema, rowIndex int, database, tableName string) error {
+	for colIndex, value := range row {
+		field := schema.Field(colIndex)
+
+		if err := validateValueWithContext(value, field, rowIndex, colIndex, database, tableName); err != nil {
 			return err
 		}
 	}
@@ -195,17 +415,44 @@ func (sm *SchemaManager) validateRow(row []interface{}, schema *arrow.Schema, ro
 }
 
 // validateValue validates a single value against a field
-func (sm *SchemaManager) validateValue(value interface{}, field arrow.Field, rowIndex, colIndex int) error {
+func validateValue(value interface{}, field arrow.Field, rowIndex, colIndex int) error {
 	// Handle null values
 	if value == nil {
 		if !field.Nullable {
-			return errors.New(ParquetSchemaFieldCannotBeNull, "field cannot be null", nil).AddContext("field_name", field.Name).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+			return errors.New(ParquetSchemaFieldCannotBeNull, "field cannot be null", nil).
+				AddContext("field_name", field.Name).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 		return nil
 	}
 
 	// Validate type compatibility
-	if err := sm.validateType(value, field.Type, field.Name, rowIndex, colIndex); err != nil {
+	if err := validateType(value, field.Type, field.Name, rowIndex, colIndex); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateValueWithContext validates a single value against a field with table context
+// Requirement 4.1, 4.2, 4.3: Include detailed validation context including database and table
+func validateValueWithContext(value interface{}, field arrow.Field, rowIndex, colIndex int, database, tableName string) error {
+	// Handle null values
+	if value == nil {
+		if !field.Nullable {
+			// Create detailed null value validation error
+			validationErr := NewNullValueValidationError(rowIndex, colIndex, field.Name, database, tableName)
+			return errors.New(ParquetSchemaFieldCannotBeNull, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "null_constraint_violation")
+		}
+		return nil
+	}
+
+	// Validate type compatibility with enhanced error context
+	if err := validateTypeWithContext(value, field.Type, field.Name, rowIndex, colIndex, database, tableName); err != nil {
 		return err
 	}
 
@@ -213,43 +460,165 @@ func (sm *SchemaManager) validateValue(value interface{}, field arrow.Field, row
 }
 
 // validateType validates that a value is compatible with an Arrow type
-func (sm *SchemaManager) validateType(value interface{}, arrowType arrow.DataType, fieldName string, rowIndex, colIndex int) error {
+func validateType(value interface{}, arrowType arrow.DataType, fieldName string, rowIndex, colIndex int) error {
 	switch arrowType.(type) {
 	case *arrow.BooleanType:
 		if _, ok := value.(bool); !ok {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects boolean", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+			return errors.New(ParquetSchemaTypeMismatch, "field expects boolean", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Int32Type:
-		if !sm.isInt32Compatible(value) {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects int32", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+		if !isInt32Compatible(value) {
+			return errors.New(ParquetSchemaTypeMismatch, "field expects int32", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Int64Type:
-		if !sm.isInt64Compatible(value) {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects int64", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+		if !isInt64Compatible(value) {
+			return errors.New(ParquetSchemaTypeMismatch, "field expects int64", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Float32Type:
-		if !sm.isFloat32Compatible(value) {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects float32", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+		if !isFloat32Compatible(value) {
+			return errors.New(ParquetSchemaTypeMismatch, "field expects float32", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Float64Type:
-		if !sm.isFloat64Compatible(value) {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects float64", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+		if !isFloat64Compatible(value) {
+			return errors.New(ParquetSchemaTypeMismatch, "field expects float64", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.StringType:
 		if _, ok := value.(string); !ok {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects string", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+			return errors.New(ParquetSchemaTypeMismatch, "field expects string", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.BinaryType:
 		if _, ok := value.([]byte); !ok {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects []byte", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+			return errors.New(ParquetSchemaTypeMismatch, "field expects []byte", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Date32Type:
-		if !sm.isDateCompatible(value) {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects date", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+		if !isDateCompatible(value) {
+			return errors.New(ParquetSchemaTypeMismatch, "field expects date", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.TimestampType:
-		if !sm.isTimestampCompatible(value) {
-			return errors.New(ParquetSchemaTypeMismatch, "field expects timestamp", nil).AddContext("field_name", fieldName).AddContext("actual_type", fmt.Sprintf("%T", value)).AddContext("row_index", fmt.Sprintf("%d", rowIndex)).AddContext("col_index", fmt.Sprintf("%d", colIndex))
+		if !isTimestampCompatible(value) {
+			return errors.New(ParquetSchemaTypeMismatch, "field expects timestamp", nil).
+				AddContext("field_name", fieldName).
+				AddContext("actual_type", fmt.Sprintf("%T", value)).
+				AddContext("row_index", fmt.Sprintf("%d", rowIndex)).
+				AddContext("col_index", fmt.Sprintf("%d", colIndex))
+		}
+	default:
+		// For complex types, we'll do basic validation
+		return nil
+	}
+
+	return nil
+}
+
+// validateTypeWithContext validates that a value is compatible with an Arrow type with enhanced error context
+// Requirement 4.1, 4.2, 4.3: Include detailed validation context with expected vs actual types
+func validateTypeWithContext(value interface{}, arrowType arrow.DataType, fieldName string, rowIndex, colIndex int, database, tableName string) error {
+	actualType := fmt.Sprintf("%T", value)
+
+	switch arrowType.(type) {
+	case *arrow.BooleanType:
+		if _, ok := value.(bool); !ok {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "boolean", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
+		}
+	case *arrow.Int32Type:
+		if !isInt32Compatible(value) {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "int32", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
+		}
+	case *arrow.Int64Type:
+		if !isInt64Compatible(value) {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "int64", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
+		}
+	case *arrow.Float32Type:
+		if !isFloat32Compatible(value) {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "float32", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
+		}
+	case *arrow.Float64Type:
+		if !isFloat64Compatible(value) {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "float64", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
+		}
+	case *arrow.StringType:
+		if _, ok := value.(string); !ok {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "string", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
+		}
+	case *arrow.BinaryType:
+		if _, ok := value.([]byte); !ok {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "[]byte", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
+		}
+	case *arrow.Date32Type:
+		if !isDateCompatible(value) {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "date", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
+		}
+	case *arrow.TimestampType:
+		if !isTimestampCompatible(value) {
+			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "timestamp", actualType, value, database, tableName)
+			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
+				AddContext("database", database).
+				AddContext("table", tableName).
+				AddContext("validation_type", "type_mismatch")
 		}
 	default:
 		// For complex types, we'll do basic validation
@@ -260,7 +629,7 @@ func (sm *SchemaManager) validateType(value interface{}, arrowType arrow.DataTyp
 }
 
 // Type compatibility helpers
-func (sm *SchemaManager) isInt32Compatible(value interface{}) bool {
+func isInt32Compatible(value interface{}) bool {
 	switch value.(type) {
 	case int, int8, int16, int32, int64:
 		return true
@@ -274,7 +643,7 @@ func (sm *SchemaManager) isInt32Compatible(value interface{}) bool {
 	}
 }
 
-func (sm *SchemaManager) isInt64Compatible(value interface{}) bool {
+func isInt64Compatible(value interface{}) bool {
 	switch value.(type) {
 	case int, int8, int16, int32, int64:
 		return true
@@ -287,7 +656,7 @@ func (sm *SchemaManager) isInt64Compatible(value interface{}) bool {
 	}
 }
 
-func (sm *SchemaManager) isFloat32Compatible(value interface{}) bool {
+func isFloat32Compatible(value interface{}) bool {
 	switch value.(type) {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
 		return true
@@ -296,7 +665,7 @@ func (sm *SchemaManager) isFloat32Compatible(value interface{}) bool {
 	}
 }
 
-func (sm *SchemaManager) isFloat64Compatible(value interface{}) bool {
+func isFloat64Compatible(value interface{}) bool {
 	switch value.(type) {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
 		return true
@@ -305,7 +674,7 @@ func (sm *SchemaManager) isFloat64Compatible(value interface{}) bool {
 	}
 }
 
-func (sm *SchemaManager) isDateCompatible(value interface{}) bool {
+func isDateCompatible(value interface{}) bool {
 	switch value.(type) {
 	case time.Time, string:
 		return true
@@ -314,7 +683,7 @@ func (sm *SchemaManager) isDateCompatible(value interface{}) bool {
 	}
 }
 
-func (sm *SchemaManager) isTimestampCompatible(value interface{}) bool {
+func isTimestampCompatible(value interface{}) bool {
 	switch value.(type) {
 	case time.Time, string:
 		return true

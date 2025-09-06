@@ -10,7 +10,6 @@
 ranger
 ranger-client
 ranger-server
-native_client
 clickhouse_example
 
 # Test binary, built with `go test -c`
@@ -38,3 +37,4 @@ logs/
 bin/
 workspace/
 .cursor/
+.kiro/

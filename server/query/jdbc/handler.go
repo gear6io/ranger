@@ -2,6 +2,7 @@ package jdbc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -69,14 +70,14 @@ func (h *JDBCHandler) handleStartup(conn io.ReadWriteCloser) error {
 	// Read startup message
 	params, err := ParseStartupMessage(conn)
 	if err != nil {
-		return fmt.Errorf("failed to parse startup message: %w", err)
+		return errors.New(ErrStartupMessageParseFailed, "failed to parse startup message", err)
 	}
 
 	h.logger.Debug().Interface("params", params).Msg("Startup parameters")
 
 	// Send startup response
 	if err := WriteStartupResponse(conn); err != nil {
-		return fmt.Errorf("failed to write startup response: %w", err)
+		return errors.New(ErrStartupResponseWriteFailed, "failed to write startup response", err)
 	}
 
 	return nil

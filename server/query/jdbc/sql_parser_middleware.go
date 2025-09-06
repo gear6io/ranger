@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/gear6io/ranger/server/query/parser"
 	"github.com/rs/zerolog"
 )
@@ -52,7 +53,7 @@ func (m *SQLParserMiddleware) AnalyzeQuery(query string) (*QueryAnalysis, error)
 			IsValid:          false,
 			ValidationErrors: []string{err.Error()},
 			ParseTime:        time.Since(start),
-		}, fmt.Errorf("failed to parse query: %w", err)
+		}, errors.New(ErrQueryParseFailed, "failed to parse query", err)
 	}
 
 	// Initialize analysis
@@ -125,13 +126,13 @@ func (m *SQLParserMiddleware) ValidateQuery(analysis *QueryAnalysis) error {
 	blockedTypes := []string{"DROP", "ALTER", "GRANT", "REVOKE"}
 	for _, blocked := range blockedTypes {
 		if strings.HasPrefix(analysis.StatementType, blocked) {
-			return fmt.Errorf("statement type '%s' is not allowed", blocked)
+			return errors.Newf(ErrStatementTypeNotAllowed, "statement type '%s' is not allowed", blocked)
 		}
 	}
 
 	// Add more validation rules as needed
 	if len(analysis.ValidationErrors) > 0 {
-		return fmt.Errorf("query validation failed: %s", strings.Join(analysis.ValidationErrors, "; "))
+		return errors.Newf(ErrQueryValidationFailed, "query validation failed: %s", strings.Join(analysis.ValidationErrors, "; "))
 	}
 
 	return nil
@@ -176,7 +177,7 @@ func (m *SQLParserMiddleware) analyzeInsertStatement(stmt *parser.InsertStmt, an
 	analysis.StatementType = "INSERT"
 
 	if stmt.TableName != nil {
-		analysis.Tables = append(analysis.Tables, stmt.TableName.Value)
+		analysis.Tables = append(analysis.Tables, stmt.TableName.GetFullName())
 	}
 
 	return analysis
@@ -187,7 +188,7 @@ func (m *SQLParserMiddleware) analyzeUpdateStatement(stmt *parser.UpdateStmt, an
 	analysis.StatementType = "UPDATE"
 
 	if stmt.TableName != nil {
-		analysis.Tables = append(analysis.Tables, stmt.TableName.Value)
+		analysis.Tables = append(analysis.Tables, stmt.TableName.GetFullName())
 	}
 
 	return analysis
@@ -198,7 +199,7 @@ func (m *SQLParserMiddleware) analyzeDeleteStatement(stmt *parser.DeleteStmt, an
 	analysis.StatementType = "DELETE"
 
 	if stmt.TableName != nil {
-		analysis.Tables = append(analysis.Tables, stmt.TableName.Value)
+		analysis.Tables = append(analysis.Tables, stmt.TableName.GetFullName())
 	}
 
 	return analysis
@@ -209,7 +210,7 @@ func (m *SQLParserMiddleware) analyzeCreateTableStatement(stmt *parser.CreateTab
 	analysis.StatementType = "CREATE TABLE"
 
 	if stmt.TableName != nil {
-		analysis.Tables = append(analysis.Tables, stmt.TableName.Value)
+		analysis.Tables = append(analysis.Tables, stmt.TableName.GetFullName())
 	}
 
 	return analysis
@@ -220,7 +221,7 @@ func (m *SQLParserMiddleware) analyzeDropTableStatement(stmt *parser.DropTableSt
 	analysis.StatementType = "DROP TABLE"
 
 	if stmt.TableName != nil {
-		analysis.Tables = append(analysis.Tables, stmt.TableName.Value)
+		analysis.Tables = append(analysis.Tables, stmt.TableName.GetFullName())
 	}
 
 	return analysis
@@ -242,7 +243,7 @@ func (m *SQLParserMiddleware) analyzeCreateIndexStatement(stmt *parser.CreateInd
 	analysis.StatementType = "CREATE INDEX"
 
 	if stmt.TableName != nil {
-		analysis.Tables = append(analysis.Tables, stmt.TableName.Value)
+		analysis.Tables = append(analysis.Tables, stmt.TableName.GetFullName())
 	}
 
 	return analysis
