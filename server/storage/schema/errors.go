@@ -8,16 +8,17 @@ import (
 
 // Package-specific error codes for schema manager
 var (
-	SchemaManagerCacheError      = errors.MustNewCode("schema.cache_error")
-	SchemaManagerRetrievalError  = errors.MustNewCode("schema.retrieval_error")
-	SchemaManagerParsingError    = errors.MustNewCode("schema.parsing_error")
-	SchemaManagerValidationError = errors.MustNewCode("schema.validation_error")
-	SchemaManagerNotFound        = errors.MustNewCode("schema.not_found")
-	SchemaManagerInvalidConfig   = errors.MustNewCode("schema.invalid_config")
-	SchemaManagerUnhealthy       = errors.MustNewCode("schema.unhealthy")
-	SchemaManagerStale           = errors.MustNewCode("schema.stale")
-	SchemaManagerUnresponsive    = errors.MustNewCode("schema.unresponsive")
-	SchemaManagerFormatError     = errors.MustNewCode("schema.format_error")
+	ErrSchemaManagerCacheError      = errors.MustNewCode("schema.cache_error")
+	ErrSchemaManagerRetrievalError  = errors.MustNewCode("schema.retrieval_error")
+	ErrSchemaManagerParsingError    = errors.MustNewCode("schema.parsing_error")
+	ErrSchemaManagerValidationError = errors.MustNewCode("schema.validation_error")
+	ErrSchemaManagerNotFound        = errors.MustNewCode("schema.not_found")
+	ErrSchemaManagerInvalidConfig   = errors.MustNewCode("schema.invalid_config")
+	ErrSchemaManagerUnhealthy       = errors.MustNewCode("schema.unhealthy")
+	ErrSchemaManagerStale           = errors.MustNewCode("schema.stale")
+	ErrSchemaManagerUnresponsive    = errors.MustNewCode("schema.unresponsive")
+	ErrSchemaManagerFormatError     = errors.MustNewCode("schema.format_error")
+	ErrSchemaManagerInitFailed      = errors.MustNewCode("schema.init_failed")
 )
 
 // ValidationError represents a detailed validation error with context

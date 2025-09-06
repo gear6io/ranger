@@ -12,7 +12,6 @@ import (
 	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -159,12 +158,8 @@ func TestDefaultSchemaManagerConfig(t *testing.T) {
 func TestManager_NewManager_NilConfig(t *testing.T) {
 	logger := zerolog.Nop()
 
-	// Create a minimal mock registry store for this test
-	mockRegistry := &MockRegistryStore{}
-
-	// Set up mock expectations
-	mockRegistry.On("RetrieveAllSchemas", mock.Anything).Return(map[string]*registry.SchemaData{}, nil)
-	mockRegistry.On("CreateSchemaDataLoader").Return(func(ctx context.Context, database, tableName string) (*registry.SchemaData, error) {
+	// Create a mock schema loader function
+	mockSchemaLoader := func(ctx context.Context, database, tableName string) (*registry.SchemaData, error) {
 		return &registry.SchemaData{
 			Database: database,
 			Table:    tableName,
@@ -172,10 +167,10 @@ func TestManager_NewManager_NilConfig(t *testing.T) {
 			Columns:  []*regtypes.TableColumn{},
 			Metadata: &regtypes.TableMetadata{},
 		}, nil
-	})
+	}
 
 	// Should use default config when nil is passed
-	manager, err := NewManager(mockRegistry, nil, logger)
+	manager, err := NewManager(context.Background(), map[string]*registry.SchemaData{}, nil, logger, mockSchemaLoader)
 	require.NoError(t, err)
 
 	assert.NotNil(t, manager)

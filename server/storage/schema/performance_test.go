@@ -425,8 +425,9 @@ func (m *TestMetadataManager) GetTableColumns(ctx context.Context, database, tab
 		return nil, fmt.Errorf("table not found: %s", key)
 	}
 
-	columns := make([]regtypes.TableColumn, len(schema.Fields()))
-	for i, field := range schema.Fields() {
+	fields := schema.Fields()
+	columns := make([]regtypes.TableColumn, len(fields))
+	for i, field := range fields {
 		columns[i] = regtypes.TableColumn{
 			TableID:         1,
 			ColumnName:      field.Name,

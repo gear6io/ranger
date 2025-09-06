@@ -9,18 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewManager(t *testing.T) {
-	config := DefaultParquetConfig()
-	sm := NewManager(config)
-
-	assert.NotNil(t, sm)
-	assert.Equal(t, config, sm.config)
-}
-
 func TestConvertIcebergToArrowSchema_SimpleTypes(t *testing.T) {
-	config := DefaultParquetConfig()
-	sm := NewManager(config)
-
 	// Create a simple Iceberg schema
 	schema := iceberg.NewSchema(0,
 		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
@@ -30,7 +19,7 @@ func TestConvertIcebergToArrowSchema_SimpleTypes(t *testing.T) {
 	)
 
 	// Convert to Arrow schema
-	arrowSchema, err := sm.ConvertIcebergToArrowSchema(schema)
+	arrowSchema, err := ConvertIcebergToArrowSchema(schema)
 	require.NoError(t, err)
 	assert.NotNil(t, arrowSchema)
 
@@ -56,9 +45,6 @@ func TestConvertIcebergToArrowSchema_SimpleTypes(t *testing.T) {
 }
 
 func TestConvertIcebergToArrowSchema_ComplexTypes(t *testing.T) {
-	config := DefaultParquetConfig()
-	sm := NewManager(config)
-
 	// Create a complex Iceberg schema with nested types
 	schema := iceberg.NewSchema(0,
 		iceberg.NestedField{ID: 1, Name: "id", Type: iceberg.PrimitiveTypes.Int64, Required: true},
@@ -76,7 +62,7 @@ func TestConvertIcebergToArrowSchema_ComplexTypes(t *testing.T) {
 	)
 
 	// Convert to Arrow schema
-	arrowSchema, err := sm.ConvertIcebergToArrowSchema(schema)
+	arrowSchema, err := ConvertIcebergToArrowSchema(schema)
 	require.NoError(t, err)
 	assert.NotNil(t, arrowSchema)
 
@@ -97,9 +83,6 @@ func TestConvertIcebergToArrowSchema_ComplexTypes(t *testing.T) {
 }
 
 func TestValidateData_ValidData(t *testing.T) {
-	config := DefaultParquetConfig()
-	sm := NewManager(config)
-
 	// Create a simple schema
 	schema := arrow.NewSchema([]arrow.Field{
 		{Name: "id", Type: arrow.PrimitiveTypes.Int64, Nullable: false},
@@ -114,14 +97,11 @@ func TestValidateData_ValidData(t *testing.T) {
 		{int64(3), nil, true},
 	}
 
-	err := sm.ValidateData(data, schema)
+	err := ValidateData(data, schema)
 	assert.NoError(t, err)
 }
 
 func TestValidateData_InvalidData(t *testing.T) {
-	config := DefaultParquetConfig()
-	sm := NewManager(config)
-
 	// Create a simple schema
 	schema := arrow.NewSchema([]arrow.Field{
 		{Name: "id", Type: arrow.PrimitiveTypes.Int64, Nullable: false},
@@ -134,7 +114,7 @@ func TestValidateData_InvalidData(t *testing.T) {
 		{int64(2), "Bob"},
 	}
 
-	err := sm.ValidateData(data, schema)
+	err := ValidateData(data, schema)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "row has incorrect number of columns")
 
@@ -144,7 +124,7 @@ func TestValidateData_InvalidData(t *testing.T) {
 		{"invalid", "Bob"}, // id should be int64
 	}
 
-	err = sm.ValidateData(data, schema)
+	err = ValidateData(data, schema)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "expects int64")
 
@@ -154,38 +134,32 @@ func TestValidateData_InvalidData(t *testing.T) {
 		{int64(2), nil}, // name is required
 	}
 
-	err = sm.ValidateData(data, schema)
+	err = ValidateData(data, schema)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be null")
 }
 
 func TestValidateData_EmptyData(t *testing.T) {
-	config := DefaultParquetConfig()
-	sm := NewManager(config)
-
 	schema := arrow.NewSchema([]arrow.Field{
 		{Name: "id", Type: arrow.PrimitiveTypes.Int64, Nullable: false},
 	}, nil)
 
 	// Empty data should be valid
 	data := [][]interface{}{}
-	err := sm.ValidateData(data, schema)
+	err := ValidateData(data, schema)
 	assert.NoError(t, err)
 
 	// Nil data should be valid
-	err = sm.ValidateData(nil, schema)
+	err = ValidateData(nil, schema)
 	assert.NoError(t, err)
 }
 
 func TestValidateData_NilSchema(t *testing.T) {
-	config := DefaultParquetConfig()
-	sm := NewManager(config)
-
 	data := [][]interface{}{
 		{int64(1), "Alice"},
 	}
 
-	err := sm.ValidateData(data, nil)
+	err := ValidateData(data, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "schema cannot be nil")
 }

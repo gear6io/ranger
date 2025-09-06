@@ -92,7 +92,7 @@ func TestDetailedValidationErrors(t *testing.T) {
 func TestEnhancedValidationWithContext(t *testing.T) {
 	t.Run("TypeMismatchWithContext", func(t *testing.T) {
 		// Create schema validator
-		schemaValidator := NewManager(DefaultParquetConfig())
+		// No manager needed - using standalone functions
 
 		// Create Arrow schema
 		fields := []arrow.Field{
@@ -107,7 +107,7 @@ func TestEnhancedValidationWithContext(t *testing.T) {
 		}
 
 		// Validate with context
-		err := schemaValidator.ValidateDataWithContext(invalidData, arrowSchema, "testdb", "users")
+		err := ValidateDataWithContext(invalidData, arrowSchema, "testdb", "users")
 
 		// Verify error occurred
 		require.Error(t, err)
@@ -121,7 +121,7 @@ func TestEnhancedValidationWithContext(t *testing.T) {
 
 	t.Run("NullConstraintViolationWithContext", func(t *testing.T) {
 		// Create schema validator
-		schemaValidator := NewManager(DefaultParquetConfig())
+		// No manager needed - using standalone functions
 
 		// Create Arrow schema with non-nullable field
 		fields := []arrow.Field{
@@ -136,7 +136,7 @@ func TestEnhancedValidationWithContext(t *testing.T) {
 		}
 
 		// Validate with context
-		err := schemaValidator.ValidateDataWithContext(invalidData, arrowSchema, "testdb", "users")
+		err := ValidateDataWithContext(invalidData, arrowSchema, "testdb", "users")
 
 		// Verify error occurred
 		require.Error(t, err)
@@ -149,7 +149,7 @@ func TestEnhancedValidationWithContext(t *testing.T) {
 
 	t.Run("ColumnCountMismatchWithContext", func(t *testing.T) {
 		// Create schema validator
-		schemaValidator := NewManager(DefaultParquetConfig())
+		// No manager needed - using standalone functions
 
 		// Create Arrow schema
 		fields := []arrow.Field{
@@ -165,7 +165,7 @@ func TestEnhancedValidationWithContext(t *testing.T) {
 		}
 
 		// Validate with context
-		err := schemaValidator.ValidateDataWithContext(invalidData, arrowSchema, "testdb", "users")
+		err := ValidateDataWithContext(invalidData, arrowSchema, "testdb", "users")
 
 		// Verify error occurred
 		require.Error(t, err)
@@ -182,7 +182,7 @@ func TestEnhancedValidationWithContext(t *testing.T) {
 func TestFailFastValidation(t *testing.T) {
 	t.Run("FailOnFirstError", func(t *testing.T) {
 		// Create schema validator
-		schemaValidator := NewManager(DefaultParquetConfig())
+		// No manager needed - using standalone functions
 
 		// Create Arrow schema
 		fields := []arrow.Field{
@@ -198,7 +198,7 @@ func TestFailFastValidation(t *testing.T) {
 		}
 
 		// Validate with context
-		err := schemaValidator.ValidateDataWithContext(invalidData, arrowSchema, "testdb", "users")
+		err := ValidateDataWithContext(invalidData, arrowSchema, "testdb", "users")
 
 		// Verify error occurred
 		require.Error(t, err)
@@ -215,7 +215,7 @@ func TestFailFastValidation(t *testing.T) {
 func TestValidationErrorLogging(t *testing.T) {
 	t.Run("ValidationErrorsAreDetailed", func(t *testing.T) {
 		// Create schema validator
-		schemaValidator := NewManager(DefaultParquetConfig())
+		// No manager needed - using standalone functions
 
 		// Create Arrow schema
 		fields := []arrow.Field{
@@ -249,7 +249,7 @@ func TestValidationErrorLogging(t *testing.T) {
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
-				err := schemaValidator.ValidateDataWithContext(tc.data, arrowSchema, "testdb", "users")
+				err := ValidateDataWithContext(tc.data, arrowSchema, "testdb", "users")
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.expectedErr)
 			})

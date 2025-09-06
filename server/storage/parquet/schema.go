@@ -104,20 +104,8 @@ func NewNullValueValidationError(rowIndex, columnIndex int, columnName, database
 	}
 }
 
-// Manager handles schema conversion and validation
-type Manager struct {
-	config *ParquetConfig
-}
-
-// NewManager creates a new schema manager
-func NewManager(config *ParquetConfig) *Manager {
-	return &Manager{
-		config: config,
-	}
-}
-
 // ConvertIcebergToArrowSchema converts an Iceberg schema to an Arrow schema
-func (sm *Manager) ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*arrow.Schema, error) {
+func ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*arrow.Schema, error) {
 	if schema == nil {
 		return nil, errors.New(ParquetSchemaNilSchema, "iceberg schema cannot be nil", nil)
 	}
@@ -125,7 +113,7 @@ func (sm *Manager) ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*arrow.S
 	fields := make([]arrow.Field, 0, len(schema.Fields()))
 
 	for _, field := range schema.Fields() {
-		arrowField, err := sm.convertIcebergField(field)
+		arrowField, err := convertIcebergField(field)
 		if err != nil {
 			return nil, err
 		}
@@ -136,8 +124,8 @@ func (sm *Manager) ConvertIcebergToArrowSchema(schema *iceberg.Schema) (*arrow.S
 }
 
 // convertIcebergField converts a single Iceberg field to an Arrow field
-func (sm *Manager) convertIcebergField(field iceberg.NestedField) (arrow.Field, error) {
-	arrowType, err := sm.convertIcebergType(field.Type)
+func convertIcebergField(field iceberg.NestedField) (arrow.Field, error) {
+	arrowType, err := convertIcebergType(field.Type)
 	if err != nil {
 		return arrow.Field{}, err
 	}
@@ -154,7 +142,7 @@ func (sm *Manager) convertIcebergField(field iceberg.NestedField) (arrow.Field, 
 }
 
 // convertIcebergType converts an Iceberg type to an Arrow type
-func (sm *Manager) convertIcebergType(icebergType iceberg.Type) (arrow.DataType, error) {
+func convertIcebergType(icebergType iceberg.Type) (arrow.DataType, error) {
 	switch icebergType {
 	case iceberg.PrimitiveTypes.Bool:
 		return arrow.FixedWidthTypes.Boolean, nil
@@ -184,11 +172,11 @@ func (sm *Manager) convertIcebergType(icebergType iceberg.Type) (arrow.DataType,
 		// Handle complex types
 		switch t := icebergType.(type) {
 		case *iceberg.ListType:
-			return sm.convertListType(t)
+			return convertListType(t)
 		case *iceberg.MapType:
-			return sm.convertMapType(t)
+			return convertMapType(t)
 		case *iceberg.StructType:
-			return sm.convertStructType(t)
+			return convertStructType(t)
 		default:
 			return nil, errors.New(ParquetSchemaUnsupportedType, "unsupported iceberg type", nil).AddContext("type", fmt.Sprintf("%T", icebergType))
 		}
@@ -196,8 +184,8 @@ func (sm *Manager) convertIcebergType(icebergType iceberg.Type) (arrow.DataType,
 }
 
 // convertListType converts Iceberg list type to Arrow list type
-func (sm *Manager) convertListType(lt *iceberg.ListType) (arrow.DataType, error) {
-	elementType, err := sm.convertIcebergType(lt.Element)
+func convertListType(lt *iceberg.ListType) (arrow.DataType, error) {
+	elementType, err := convertIcebergType(lt.Element)
 	if err != nil {
 		return nil, err
 	}
@@ -206,13 +194,13 @@ func (sm *Manager) convertListType(lt *iceberg.ListType) (arrow.DataType, error)
 }
 
 // convertMapType converts Iceberg map type to Arrow map type
-func (sm *Manager) convertMapType(mt *iceberg.MapType) (arrow.DataType, error) {
-	keyType, err := sm.convertIcebergType(mt.KeyType)
+func convertMapType(mt *iceberg.MapType) (arrow.DataType, error) {
+	keyType, err := convertIcebergType(mt.KeyType)
 	if err != nil {
 		return nil, err
 	}
 
-	valueType, err := sm.convertIcebergType(mt.ValueType)
+	valueType, err := convertIcebergType(mt.ValueType)
 	if err != nil {
 		return nil, err
 	}
@@ -221,11 +209,11 @@ func (sm *Manager) convertMapType(mt *iceberg.MapType) (arrow.DataType, error) {
 }
 
 // convertStructType converts Iceberg struct type to Arrow struct type
-func (sm *Manager) convertStructType(st *iceberg.StructType) (arrow.DataType, error) {
+func convertStructType(st *iceberg.StructType) (arrow.DataType, error) {
 	fields := make([]arrow.Field, 0, len(st.Fields()))
 
 	for _, field := range st.Fields() {
-		arrowField, err := sm.convertIcebergField(field)
+		arrowField, err := convertIcebergField(field)
 		if err != nil {
 			return nil, err
 		}
@@ -236,7 +224,7 @@ func (sm *Manager) convertStructType(st *iceberg.StructType) (arrow.DataType, er
 }
 
 // ConvertRegistryDataToIcebergSchema converts registry SchemaData to Iceberg schema
-func (sm *Manager) ConvertRegistryDataToIcebergSchema(schemaData *registry.SchemaData) (*iceberg.Schema, error) {
+func ConvertRegistryDataToIcebergSchema(schemaData *registry.SchemaData) (*iceberg.Schema, error) {
 	if schemaData == nil {
 		return nil, errors.New(ParquetSchemaNilSchema, "schema data cannot be nil", nil)
 	}
@@ -246,7 +234,7 @@ func (sm *Manager) ConvertRegistryDataToIcebergSchema(schemaData *registry.Schem
 
 	for _, col := range schemaData.Columns {
 		// Parse the data type to Iceberg type
-		icebergType, err := sm.parseRegistryDataType(col.DataType)
+		icebergType, err := parseRegistryDataType(col.DataType)
 		if err != nil {
 			return nil, errors.New(ParquetSchemaTypeConversionFailed, "failed to parse registry data type", err).
 				AddContext("column", col.ColumnName).
@@ -273,7 +261,7 @@ func (sm *Manager) ConvertRegistryDataToIcebergSchema(schemaData *registry.Schem
 }
 
 // parseRegistryDataType converts string data type from registry to Iceberg type
-func (sm *Manager) parseRegistryDataType(dataType string) (iceberg.Type, error) {
+func parseRegistryDataType(dataType string) (iceberg.Type, error) {
 	switch strings.ToLower(dataType) {
 	case "boolean":
 		return iceberg.PrimitiveTypes.Bool, nil
@@ -336,7 +324,7 @@ func (sm *Manager) parseRegistryDataType(dataType string) (iceberg.Type, error) 
 // ValidateData validates data against a given schema
 // Requirement 3.4: Return immediately on first validation failure (fail-fast)
 // Requirement 4.1, 4.2, 4.3: Return detailed error information including row and column details
-func (sm *Manager) ValidateData(data [][]interface{}, schema *arrow.Schema) error {
+func ValidateData(data [][]interface{}, schema *arrow.Schema) error {
 	if len(data) == 0 {
 		return nil // Empty data is valid
 	}
@@ -357,7 +345,7 @@ func (sm *Manager) ValidateData(data [][]interface{}, schema *arrow.Schema) erro
 		}
 
 		// Validate each field in the row - fail fast on first error (Requirement 3.4)
-		if err := sm.validateRow(row, schema, rowIndex); err != nil {
+		if err := validateRow(row, schema, rowIndex); err != nil {
 			return err
 		}
 	}
@@ -367,7 +355,7 @@ func (sm *Manager) ValidateData(data [][]interface{}, schema *arrow.Schema) erro
 
 // ValidateDataWithContext validates data against a schema with table context for enhanced error reporting
 // Requirement 4.1, 4.2, 4.3: Include database and table context in validation errors
-func (sm *Manager) ValidateDataWithContext(data [][]interface{}, schema *arrow.Schema, database, tableName string) error {
+func ValidateDataWithContext(data [][]interface{}, schema *arrow.Schema, database, tableName string) error {
 	if len(data) == 0 {
 		return nil // Empty data is valid
 	}
@@ -391,7 +379,7 @@ func (sm *Manager) ValidateDataWithContext(data [][]interface{}, schema *arrow.S
 		}
 
 		// Validate each field in the row - fail fast on first error (Requirement 3.4)
-		if err := sm.validateRowWithContext(row, schema, rowIndex, database, tableName); err != nil {
+		if err := validateRowWithContext(row, schema, rowIndex, database, tableName); err != nil {
 			return err
 		}
 	}
@@ -400,11 +388,11 @@ func (sm *Manager) ValidateDataWithContext(data [][]interface{}, schema *arrow.S
 }
 
 // validateRow validates a single row against the schema
-func (sm *Manager) validateRow(row []interface{}, schema *arrow.Schema, rowIndex int) error {
+func validateRow(row []interface{}, schema *arrow.Schema, rowIndex int) error {
 	for colIndex, value := range row {
 		field := schema.Field(colIndex)
 
-		if err := sm.validateValue(value, field, rowIndex, colIndex); err != nil {
+		if err := validateValue(value, field, rowIndex, colIndex); err != nil {
 			return err
 		}
 	}
@@ -414,11 +402,11 @@ func (sm *Manager) validateRow(row []interface{}, schema *arrow.Schema, rowIndex
 
 // validateRowWithContext validates a single row against the schema with table context
 // Requirement 4.1, 4.2, 4.3: Include database and table context in validation errors
-func (sm *Manager) validateRowWithContext(row []interface{}, schema *arrow.Schema, rowIndex int, database, tableName string) error {
+func validateRowWithContext(row []interface{}, schema *arrow.Schema, rowIndex int, database, tableName string) error {
 	for colIndex, value := range row {
 		field := schema.Field(colIndex)
 
-		if err := sm.validateValueWithContext(value, field, rowIndex, colIndex, database, tableName); err != nil {
+		if err := validateValueWithContext(value, field, rowIndex, colIndex, database, tableName); err != nil {
 			return err
 		}
 	}
@@ -427,7 +415,7 @@ func (sm *Manager) validateRowWithContext(row []interface{}, schema *arrow.Schem
 }
 
 // validateValue validates a single value against a field
-func (sm *Manager) validateValue(value interface{}, field arrow.Field, rowIndex, colIndex int) error {
+func validateValue(value interface{}, field arrow.Field, rowIndex, colIndex int) error {
 	// Handle null values
 	if value == nil {
 		if !field.Nullable {
@@ -440,7 +428,7 @@ func (sm *Manager) validateValue(value interface{}, field arrow.Field, rowIndex,
 	}
 
 	// Validate type compatibility
-	if err := sm.validateType(value, field.Type, field.Name, rowIndex, colIndex); err != nil {
+	if err := validateType(value, field.Type, field.Name, rowIndex, colIndex); err != nil {
 		return err
 	}
 
@@ -449,7 +437,7 @@ func (sm *Manager) validateValue(value interface{}, field arrow.Field, rowIndex,
 
 // validateValueWithContext validates a single value against a field with table context
 // Requirement 4.1, 4.2, 4.3: Include detailed validation context including database and table
-func (sm *Manager) validateValueWithContext(value interface{}, field arrow.Field, rowIndex, colIndex int, database, tableName string) error {
+func validateValueWithContext(value interface{}, field arrow.Field, rowIndex, colIndex int, database, tableName string) error {
 	// Handle null values
 	if value == nil {
 		if !field.Nullable {
@@ -464,7 +452,7 @@ func (sm *Manager) validateValueWithContext(value interface{}, field arrow.Field
 	}
 
 	// Validate type compatibility with enhanced error context
-	if err := sm.validateTypeWithContext(value, field.Type, field.Name, rowIndex, colIndex, database, tableName); err != nil {
+	if err := validateTypeWithContext(value, field.Type, field.Name, rowIndex, colIndex, database, tableName); err != nil {
 		return err
 	}
 
@@ -472,7 +460,7 @@ func (sm *Manager) validateValueWithContext(value interface{}, field arrow.Field
 }
 
 // validateType validates that a value is compatible with an Arrow type
-func (sm *Manager) validateType(value interface{}, arrowType arrow.DataType, fieldName string, rowIndex, colIndex int) error {
+func validateType(value interface{}, arrowType arrow.DataType, fieldName string, rowIndex, colIndex int) error {
 	switch arrowType.(type) {
 	case *arrow.BooleanType:
 		if _, ok := value.(bool); !ok {
@@ -483,7 +471,7 @@ func (sm *Manager) validateType(value interface{}, arrowType arrow.DataType, fie
 				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Int32Type:
-		if !sm.isInt32Compatible(value) {
+		if !isInt32Compatible(value) {
 			return errors.New(ParquetSchemaTypeMismatch, "field expects int32", nil).
 				AddContext("field_name", fieldName).
 				AddContext("actual_type", fmt.Sprintf("%T", value)).
@@ -491,7 +479,7 @@ func (sm *Manager) validateType(value interface{}, arrowType arrow.DataType, fie
 				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Int64Type:
-		if !sm.isInt64Compatible(value) {
+		if !isInt64Compatible(value) {
 			return errors.New(ParquetSchemaTypeMismatch, "field expects int64", nil).
 				AddContext("field_name", fieldName).
 				AddContext("actual_type", fmt.Sprintf("%T", value)).
@@ -499,7 +487,7 @@ func (sm *Manager) validateType(value interface{}, arrowType arrow.DataType, fie
 				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Float32Type:
-		if !sm.isFloat32Compatible(value) {
+		if !isFloat32Compatible(value) {
 			return errors.New(ParquetSchemaTypeMismatch, "field expects float32", nil).
 				AddContext("field_name", fieldName).
 				AddContext("actual_type", fmt.Sprintf("%T", value)).
@@ -507,7 +495,7 @@ func (sm *Manager) validateType(value interface{}, arrowType arrow.DataType, fie
 				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Float64Type:
-		if !sm.isFloat64Compatible(value) {
+		if !isFloat64Compatible(value) {
 			return errors.New(ParquetSchemaTypeMismatch, "field expects float64", nil).
 				AddContext("field_name", fieldName).
 				AddContext("actual_type", fmt.Sprintf("%T", value)).
@@ -531,7 +519,7 @@ func (sm *Manager) validateType(value interface{}, arrowType arrow.DataType, fie
 				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.Date32Type:
-		if !sm.isDateCompatible(value) {
+		if !isDateCompatible(value) {
 			return errors.New(ParquetSchemaTypeMismatch, "field expects date", nil).
 				AddContext("field_name", fieldName).
 				AddContext("actual_type", fmt.Sprintf("%T", value)).
@@ -539,7 +527,7 @@ func (sm *Manager) validateType(value interface{}, arrowType arrow.DataType, fie
 				AddContext("col_index", fmt.Sprintf("%d", colIndex))
 		}
 	case *arrow.TimestampType:
-		if !sm.isTimestampCompatible(value) {
+		if !isTimestampCompatible(value) {
 			return errors.New(ParquetSchemaTypeMismatch, "field expects timestamp", nil).
 				AddContext("field_name", fieldName).
 				AddContext("actual_type", fmt.Sprintf("%T", value)).
@@ -556,7 +544,7 @@ func (sm *Manager) validateType(value interface{}, arrowType arrow.DataType, fie
 
 // validateTypeWithContext validates that a value is compatible with an Arrow type with enhanced error context
 // Requirement 4.1, 4.2, 4.3: Include detailed validation context with expected vs actual types
-func (sm *Manager) validateTypeWithContext(value interface{}, arrowType arrow.DataType, fieldName string, rowIndex, colIndex int, database, tableName string) error {
+func validateTypeWithContext(value interface{}, arrowType arrow.DataType, fieldName string, rowIndex, colIndex int, database, tableName string) error {
 	actualType := fmt.Sprintf("%T", value)
 
 	switch arrowType.(type) {
@@ -569,7 +557,7 @@ func (sm *Manager) validateTypeWithContext(value interface{}, arrowType arrow.Da
 				AddContext("validation_type", "type_mismatch")
 		}
 	case *arrow.Int32Type:
-		if !sm.isInt32Compatible(value) {
+		if !isInt32Compatible(value) {
 			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "int32", actualType, value, database, tableName)
 			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
 				AddContext("database", database).
@@ -577,7 +565,7 @@ func (sm *Manager) validateTypeWithContext(value interface{}, arrowType arrow.Da
 				AddContext("validation_type", "type_mismatch")
 		}
 	case *arrow.Int64Type:
-		if !sm.isInt64Compatible(value) {
+		if !isInt64Compatible(value) {
 			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "int64", actualType, value, database, tableName)
 			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
 				AddContext("database", database).
@@ -585,7 +573,7 @@ func (sm *Manager) validateTypeWithContext(value interface{}, arrowType arrow.Da
 				AddContext("validation_type", "type_mismatch")
 		}
 	case *arrow.Float32Type:
-		if !sm.isFloat32Compatible(value) {
+		if !isFloat32Compatible(value) {
 			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "float32", actualType, value, database, tableName)
 			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
 				AddContext("database", database).
@@ -593,7 +581,7 @@ func (sm *Manager) validateTypeWithContext(value interface{}, arrowType arrow.Da
 				AddContext("validation_type", "type_mismatch")
 		}
 	case *arrow.Float64Type:
-		if !sm.isFloat64Compatible(value) {
+		if !isFloat64Compatible(value) {
 			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "float64", actualType, value, database, tableName)
 			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
 				AddContext("database", database).
@@ -617,7 +605,7 @@ func (sm *Manager) validateTypeWithContext(value interface{}, arrowType arrow.Da
 				AddContext("validation_type", "type_mismatch")
 		}
 	case *arrow.Date32Type:
-		if !sm.isDateCompatible(value) {
+		if !isDateCompatible(value) {
 			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "date", actualType, value, database, tableName)
 			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
 				AddContext("database", database).
@@ -625,7 +613,7 @@ func (sm *Manager) validateTypeWithContext(value interface{}, arrowType arrow.Da
 				AddContext("validation_type", "type_mismatch")
 		}
 	case *arrow.TimestampType:
-		if !sm.isTimestampCompatible(value) {
+		if !isTimestampCompatible(value) {
 			validationErr := NewDetailedValidationError(rowIndex, colIndex, fieldName, "timestamp", actualType, value, database, tableName)
 			return errors.New(ParquetSchemaTypeMismatch, validationErr.Message, validationErr).
 				AddContext("database", database).
@@ -641,7 +629,7 @@ func (sm *Manager) validateTypeWithContext(value interface{}, arrowType arrow.Da
 }
 
 // Type compatibility helpers
-func (sm *Manager) isInt32Compatible(value interface{}) bool {
+func isInt32Compatible(value interface{}) bool {
 	switch value.(type) {
 	case int, int8, int16, int32, int64:
 		return true
@@ -655,7 +643,7 @@ func (sm *Manager) isInt32Compatible(value interface{}) bool {
 	}
 }
 
-func (sm *Manager) isInt64Compatible(value interface{}) bool {
+func isInt64Compatible(value interface{}) bool {
 	switch value.(type) {
 	case int, int8, int16, int32, int64:
 		return true
@@ -668,7 +656,7 @@ func (sm *Manager) isInt64Compatible(value interface{}) bool {
 	}
 }
 
-func (sm *Manager) isFloat32Compatible(value interface{}) bool {
+func isFloat32Compatible(value interface{}) bool {
 	switch value.(type) {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
 		return true
@@ -677,7 +665,7 @@ func (sm *Manager) isFloat32Compatible(value interface{}) bool {
 	}
 }
 
-func (sm *Manager) isFloat64Compatible(value interface{}) bool {
+func isFloat64Compatible(value interface{}) bool {
 	switch value.(type) {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
 		return true
@@ -686,7 +674,7 @@ func (sm *Manager) isFloat64Compatible(value interface{}) bool {
 	}
 }
 
-func (sm *Manager) isDateCompatible(value interface{}) bool {
+func isDateCompatible(value interface{}) bool {
 	switch value.(type) {
 	case time.Time, string:
 		return true
@@ -695,7 +683,7 @@ func (sm *Manager) isDateCompatible(value interface{}) bool {
 	}
 }
 
-func (sm *Manager) isTimestampCompatible(value interface{}) bool {
+func isTimestampCompatible(value interface{}) bool {
 	switch value.(type) {
 	case time.Time, string:
 		return true

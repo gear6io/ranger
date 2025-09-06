@@ -13,7 +13,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/gear6io/ranger/server/paths"
-	parquet "github.com/gear6io/ranger/server/storage/schema"
+	parquet "github.com/gear6io/ranger/server/storage/parquet"
 )
 
 // Package-specific error codes for filesystem parquet manager
@@ -107,8 +107,7 @@ func (fm *ParquetManager) StoreData(data [][]interface{}) error {
 	startTime := time.Now()
 
 	// Validate data against schema
-	Manager := parquet.NewManager(fm.config)
-	if err := Manager.ValidateData(data, fm.schema); err != nil {
+	if err := parquet.ValidateData(data, fm.schema); err != nil {
 		return err
 	}
 

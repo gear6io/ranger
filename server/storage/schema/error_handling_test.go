@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/apache/arrow-go/v18/arrow"
-	"github.com/gear6io/ranger/server/storage/schema"
+	"github.com/gear6io/ranger/server/storage/parquet"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,7 +14,7 @@ import (
 func TestDetailedValidationErrors(t *testing.T) {
 	t.Run("ValidationErrorWithContext", func(t *testing.T) {
 		// Test creating a detailed validation error
-		validationErr := schema.NewDetailedValidationError(
+		validationErr := parquet.NewDetailedValidationError(
 			1,        // rowIndex
 			2,        // columnIndex
 			"email",  // columnName
@@ -43,7 +43,7 @@ func TestDetailedValidationErrors(t *testing.T) {
 
 	t.Run("ColumnCountValidationError", func(t *testing.T) {
 		// Test creating a column count validation error
-		validationErr := schema.NewColumnCountValidationError(
+		validationErr := parquet.NewColumnCountValidationError(
 			0,        // rowIndex
 			2,        // actualColumns
 			3,        // expectedColumns
@@ -66,7 +66,7 @@ func TestDetailedValidationErrors(t *testing.T) {
 
 	t.Run("NullValueValidationError", func(t *testing.T) {
 		// Test creating a null value validation error
-		validationErr := schema.NewNullValueValidationError(
+		validationErr := parquet.NewNullValueValidationError(
 			5,        // rowIndex
 			1,        // columnIndex
 			"name",   // columnName
@@ -178,9 +178,6 @@ func TestBatchValidationError(t *testing.T) {
 // Requirement 4.1, 4.2, 4.3: Include database and table context in validation errors
 func TestEnhancedValidationWithContext(t *testing.T) {
 	t.Run("TypeMismatchWithContext", func(t *testing.T) {
-		// Create schema validator
-		schemaValidator := schema.NewManager(schema.DefaultParquetConfig())
-
 		// Create Arrow schema
 		fields := []arrow.Field{
 			{Name: "id", Type: arrow.PrimitiveTypes.Int64, Nullable: false},
@@ -194,7 +191,7 @@ func TestEnhancedValidationWithContext(t *testing.T) {
 		}
 
 		// Validate with context
-		err := schemaValidator.ValidateDataWithContext(invalidData, arrowSchema, "testdb", "users")
+		err := parquet.ValidateDataWithContext(invalidData, arrowSchema, "testdb", "users")
 
 		// Verify error occurred
 		require.Error(t, err)
@@ -207,9 +204,6 @@ func TestEnhancedValidationWithContext(t *testing.T) {
 	})
 
 	t.Run("NullConstraintViolationWithContext", func(t *testing.T) {
-		// Create schema validator
-		schemaValidator := schema.NewManager(schema.DefaultParquetConfig())
-
 		// Create Arrow schema with non-nullable field
 		fields := []arrow.Field{
 			{Name: "id", Type: arrow.PrimitiveTypes.Int64, Nullable: false},
@@ -223,7 +217,7 @@ func TestEnhancedValidationWithContext(t *testing.T) {
 		}
 
 		// Validate with context
-		err := schemaValidator.ValidateDataWithContext(invalidData, arrowSchema, "testdb", "users")
+		err := parquet.ValidateDataWithContext(invalidData, arrowSchema, "testdb", "users")
 
 		// Verify error occurred
 		require.Error(t, err)
@@ -235,9 +229,6 @@ func TestEnhancedValidationWithContext(t *testing.T) {
 	})
 
 	t.Run("ColumnCountMismatchWithContext", func(t *testing.T) {
-		// Create schema validator
-		schemaValidator := schema.NewManager(schema.DefaultParquetConfig())
-
 		// Create Arrow schema
 		fields := []arrow.Field{
 			{Name: "id", Type: arrow.PrimitiveTypes.Int64, Nullable: false},
@@ -252,7 +243,7 @@ func TestEnhancedValidationWithContext(t *testing.T) {
 		}
 
 		// Validate with context
-		err := schemaValidator.ValidateDataWithContext(invalidData, arrowSchema, "testdb", "users")
+		err := parquet.ValidateDataWithContext(invalidData, arrowSchema, "testdb", "users")
 
 		// Verify error occurred
 		require.Error(t, err)
@@ -268,9 +259,6 @@ func TestEnhancedValidationWithContext(t *testing.T) {
 // Requirement 3.4: Return immediately on first validation failure
 func TestFailFastValidation(t *testing.T) {
 	t.Run("FailOnFirstError", func(t *testing.T) {
-		// Create schema validator
-		schemaValidator := schema.NewManager(schema.DefaultParquetConfig())
-
 		// Create Arrow schema
 		fields := []arrow.Field{
 			{Name: "id", Type: arrow.PrimitiveTypes.Int64, Nullable: false},
@@ -285,7 +273,7 @@ func TestFailFastValidation(t *testing.T) {
 		}
 
 		// Validate with context
-		err := schemaValidator.ValidateDataWithContext(invalidData, arrowSchema, "testdb", "users")
+		err := parquet.ValidateDataWithContext(invalidData, arrowSchema, "testdb", "users")
 
 		// Verify error occurred
 		require.Error(t, err)

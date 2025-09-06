@@ -2,39 +2,34 @@ package schema
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/apache/iceberg-go"
 	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/gear6io/ranger/server/metadata/registry"
-	"github.com/gear6io/ranger/server/storage/schema"
+	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
+	"github.com/gear6io/ranger/server/storage/parquet"
 	"github.com/rs/zerolog"
 )
 
 // SchemaLoaderFunc is a function type for loading schemas from registry
 type SchemaLoaderFunc = registry.SchemaLoaderFunc
 
-// RegistryStoreInterface defines the interface we need from the registry store
-type RegistryStoreInterface interface {
-	RetrieveAllSchemas(ctx context.Context) (map[string]*registry.SchemaData, error)
-	CreateSchemaDataLoader() func(ctx context.Context, database, tableName string) (*registry.SchemaData, error)
-}
-
 // Manager implements the SchemaManager interface with caching and registry-based retrieval
 type Manager struct {
-	cache            *SchemaCache
-	schemaDataLoader func(ctx context.Context, database, tableName string) (*registry.SchemaData, error)
-	schemaConverter  *schema.Manager
-	config           *SchemaManagerConfig
-	logger           zerolog.Logger
-	initialData      map[string]*registry.SchemaData
+	cache        *SchemaCache
+	schemaLoader SchemaLoaderFunc
+	config       *SchemaManagerConfig
+	logger       zerolog.Logger
+	initialData  map[string]*registry.SchemaData
 
 	// Background cleanup
 	stopCleanup chan struct{}
 }
 
 // NewManager creates a new schema manager with registry data and schema converter
-func NewManager(registryStore RegistryStoreInterface, config *SchemaManagerConfig, logger zerolog.Logger) (*Manager, error) {
+func NewManager(ctx context.Context, initialData map[string]*registry.SchemaData, config *SchemaManagerConfig, logger zerolog.Logger, schemaLoader SchemaLoaderFunc) (*Manager, error) {
 	if config == nil {
 		config = DefaultSchemaManagerConfig()
 	}
@@ -42,27 +37,14 @@ func NewManager(registryStore RegistryStoreInterface, config *SchemaManagerConfi
 	// Create cache
 	cache := NewSchemaCache(config)
 
-	// Create schema data loader function
-	schemaDataLoader := registryStore.CreateSchemaDataLoader()
-
-	// Create schema converter
-	schemaConverter := schema.NewManager(schema.DefaultParquetConfig())
-
 	// Load all schema data at initialization
-	ctx := context.Background()
-	initialData, err := registryStore.RetrieveAllSchemas(ctx)
-	if err != nil {
-		return nil, errors.New(errors.CommonInternal, "failed to load initial schema data", err)
-	}
-
 	manager := &Manager{
-		cache:            cache,
-		schemaDataLoader: schemaDataLoader,
-		schemaConverter:  schemaConverter,
-		config:           config,
-		logger:           logger,
-		initialData:      initialData,
-		stopCleanup:      make(chan struct{}),
+		cache:        cache,
+		schemaLoader: schemaLoader,
+		config:       config,
+		logger:       logger,
+		initialData:  initialData,
+		stopCleanup:  make(chan struct{}),
 	}
 
 	// Pre-populate cache with initial data
@@ -77,16 +59,12 @@ func NewManager(registryStore RegistryStoreInterface, config *SchemaManagerConfi
 }
 
 // prePopulateCache loads all initial schema data into the cache
-func (m *Manager) prePopulateCache(ctx context.Context) {
+func (m *Manager) prePopulateCache(ctx context.Context) error {
 	for cacheKey, schemaData := range m.initialData {
-		// Convert to Iceberg schema using schema converter
-		schema, err := m.schemaConverter.ConvertRegistryDataToIcebergSchema(schemaData)
+		// Convert to Iceberg schema using utility function
+		schema, err := parquet.ConvertRegistryDataToIcebergSchema(schemaData)
 		if err != nil {
-			m.logger.Error().Err(err).
-				Str("database", schemaData.Database).
-				Str("table", schemaData.Table).
-				Msg("Failed to convert schema during pre-population")
-			continue
+			return err
 		}
 
 		// Cache the schema
@@ -100,9 +78,7 @@ func (m *Manager) prePopulateCache(ctx context.Context) {
 		)
 	}
 
-	m.logger.Info().
-		Int("schema_count", len(m.initialData)).
-		Msg("Pre-populated schema cache with initial data")
+	return nil
 }
 
 // GetSchema retrieves schema from cache or database
@@ -112,77 +88,33 @@ func (m *Manager) GetSchema(ctx context.Context, database, tableName string) (*i
 
 	// Try to get from cache first
 	if schema, found := m.cache.Get(cacheKey); found {
-		m.logger.Debug().
-			Str("database", database).
-			Str("table", tableName).
-			Str("cache_key", cacheKey).
-			Msg("Schema retrieved from cache")
 		return schema, nil
 	}
 
-	// Cache miss - retrieve from registry using schema data loader
-	m.logger.Debug().
-		Str("database", database).
-		Str("table", tableName).
-		Str("cache_key", cacheKey).
-		Msg("Schema cache miss, retrieving from registry")
-
 	// Get schema data from registry
-	schemaData, err := m.schemaDataLoader(ctx, database, tableName)
+	schemaData, err := m.schemaLoader(ctx, database, tableName)
 	if err != nil {
 		// Track error in cache metrics
 		metrics := m.cache.GetMetrics()
 		metrics.ErrorCount++
 
-		// Log error with appropriate severity level (Requirement 4.7)
-		m.logger.Error().
-			Err(err).
-			Str("database", database).
-			Str("table", tableName).
-			Str("cache_key", cacheKey).
-			Msg("Failed to retrieve schema data from registry")
-
-		// Return enhanced error with context
-		return nil, errors.New(SchemaManagerRetrievalError, "failed to retrieve schema data", err).
-			AddContext("database", database).
-			AddContext("table", tableName).
-			AddContext("cache_key", cacheKey).
-			AddContext("error_severity", "error")
+		// Return error
+		return nil, err
 	}
 
-	// Convert to Iceberg schema using schema converter
-	schema, err := m.schemaConverter.ConvertRegistryDataToIcebergSchema(schemaData)
+	// Convert to Iceberg schema using utility function
+	schema, err := parquet.ConvertRegistryDataToIcebergSchema(schemaData)
 	if err != nil {
 		// Track error in cache metrics
 		metrics := m.cache.GetMetrics()
 		metrics.ErrorCount++
 
-		// Log error with appropriate severity level (Requirement 4.7)
-		m.logger.Error().
-			Err(err).
-			Str("database", database).
-			Str("table", tableName).
-			Str("cache_key", cacheKey).
-			Msg("Failed to convert schema data to Iceberg schema")
-
-		// Return enhanced error with context
-		return nil, errors.New(SchemaManagerRetrievalError, "failed to convert schema data", err).
-			AddContext("database", database).
-			AddContext("table", tableName).
-			AddContext("cache_key", cacheKey).
-			AddContext("error_severity", "error")
+		// Return error
+		return nil, err
 	}
 
 	// Store in cache
 	m.cache.Put(cacheKey, schema)
-
-	m.logger.Info().
-		Str("database", database).
-		Str("table", tableName).
-		Str("cache_key", cacheKey).
-		Int("field_count", len(schema.Fields())).
-		Msg("Schema retrieved from database and cached successfully")
-
 	return schema, nil
 }
 
@@ -207,64 +139,27 @@ func (m *Manager) InvalidateCache(database, tableName string) {
 func (m *Manager) CacheNewTableSchema(ctx context.Context, database, tableName string, tableID int64) error {
 	cacheKey := generateCacheKey(database, tableName)
 
-	m.logger.Debug().
-		Str("database", database).
-		Str("table", tableName).
-		Int64("table_id", tableID).
-		Str("cache_key", cacheKey).
-		Msg("Proactively caching schema for new table")
-
 	// Check if already cached
 	if schema, found := m.cache.Get(cacheKey); found {
 		// Update existing entry to mark as new table with high priority
 		m.cache.PutWithMetadata(cacheKey, schema, "astha_event", "proactive_cache", tableID, true)
-
-		m.logger.Debug().
-			Str("database", database).
-			Str("table", tableName).
-			Int64("table_id", tableID).
-			Msg("Updated existing cache entry for new table with high priority")
 		return nil
 	}
 
 	// Get schema data from registry
-	schemaData, err := m.schemaDataLoader(ctx, database, tableName)
+	schemaData, err := m.schemaLoader(ctx, database, tableName)
 	if err != nil {
-		m.logger.Error().Err(err).
-			Str("database", database).
-			Str("table", tableName).
-			Int64("table_id", tableID).
-			Msg("Failed to fetch schema data for new table")
-		return errors.New(SchemaManagerRetrievalError, "failed to fetch schema data for new table", err).
-			AddContext("database", database).
-			AddContext("table", tableName).
-			AddContext("table_id", tableID)
+		return err
 	}
 
-	// Convert to Iceberg schema using schema converter
-	schema, err := m.schemaConverter.ConvertRegistryDataToIcebergSchema(schemaData)
+	// Convert to Iceberg schema using utility function
+	schema, err := parquet.ConvertRegistryDataToIcebergSchema(schemaData)
 	if err != nil {
-		m.logger.Error().Err(err).
-			Str("database", database).
-			Str("table", tableName).
-			Int64("table_id", tableID).
-			Msg("Failed to convert schema data for new table")
-		return errors.New(SchemaManagerRetrievalError, "failed to convert schema data for new table", err).
-			AddContext("database", database).
-			AddContext("table", tableName).
-			AddContext("table_id", tableID)
+		return err
 	}
 
 	// Store in cache with high priority metadata
 	m.cache.PutWithMetadata(cacheKey, schema, "astha_event", "proactive_cache", tableID, true)
-
-	m.logger.Info().
-		Str("database", database).
-		Str("table", tableName).
-		Int64("table_id", tableID).
-		Int("field_count", len(schema.Fields())).
-		Msg("Successfully cached schema for new table")
-
 	return nil
 }
 
@@ -273,49 +168,23 @@ func (m *Manager) CacheNewTableSchema(ctx context.Context, database, tableName s
 func (m *Manager) InvalidateAndRefreshSchema(ctx context.Context, database, tableName string) error {
 	cacheKey := generateCacheKey(database, tableName)
 
-	m.logger.Debug().
-		Str("database", database).
-		Str("table", tableName).
-		Str("cache_key", cacheKey).
-		Msg("Invalidating and refreshing cached schema")
-
 	// Invalidate existing cache entry
 	m.cache.InvalidateAndRefresh(cacheKey)
 
 	// Get updated schema data from registry
-	schemaData, err := m.schemaDataLoader(ctx, database, tableName)
+	schemaData, err := m.schemaLoader(ctx, database, tableName)
 	if err != nil {
-		m.logger.Error().Err(err).
-			Str("database", database).
-			Str("table", tableName).
-			Msg("Failed to refresh schema data after invalidation")
-		return errors.New(SchemaManagerRetrievalError, "failed to refresh schema data", err).
-			AddContext("database", database).
-			AddContext("table", tableName).
-			AddContext("operation", "refresh")
+		return err
 	}
 
-	// Convert to Iceberg schema using schema converter
-	schema, err := m.schemaConverter.ConvertRegistryDataToIcebergSchema(schemaData)
+	// Convert to Iceberg schema using utility function
+	schema, err := parquet.ConvertRegistryDataToIcebergSchema(schemaData)
 	if err != nil {
-		m.logger.Error().Err(err).
-			Str("database", database).
-			Str("table", tableName).
-			Msg("Failed to convert refreshed schema data")
-		return errors.New(SchemaManagerRetrievalError, "failed to convert refreshed schema data", err).
-			AddContext("database", database).
-			AddContext("table", tableName).
-			AddContext("operation", "refresh")
+		return err
 	}
 
 	// Store refreshed schema in cache
 	m.cache.PutWithMetadata(cacheKey, schema, "registry", "refresh", 0, false)
-
-	m.logger.Info().
-		Str("database", database).
-		Str("table", tableName).
-		Int("field_count", len(schema.Fields())).
-		Msg("Successfully refreshed cached schema")
 
 	return nil
 }
@@ -327,11 +196,6 @@ func (m *Manager) CleanupDeletedTable(database, tableName string) {
 
 	m.cache.Delete(cacheKey)
 
-	m.logger.Info().
-		Str("database", database).
-		Str("table", tableName).
-		Str("cache_key", cacheKey).
-		Msg("Cleaned up cache for deleted table")
 }
 
 // GetCacheMetrics returns detailed cache metrics
@@ -360,10 +224,6 @@ func (m *Manager) RegisterWithAstha(asthaInstance AsthaInterface) error {
 
 	err := asthaInstance.RegisterComponentWithInstance(componentInfo, subscriber)
 	if err != nil {
-		m.logger.Error().Err(err).
-			Str("component", componentInfo.Name).
-			Strs("subscriptions", componentInfo.Subscriptions).
-			Msg("Failed to register schema manager with Astha")
 		return err
 	}
 
@@ -375,45 +235,95 @@ func (m *Manager) RegisterWithAstha(asthaInstance AsthaInterface) error {
 	return nil
 }
 
-// GetCacheEntryDetails returns detailed information about a specific cache entry
-// Requirement 6.1: Update cache entries to track schema source and metadata
-func (m *Manager) GetCacheEntryDetails(database, tableName string) (*SchemaCacheEntry, bool) {
-	cacheKey := generateCacheKey(database, tableName)
-	return m.cache.GetCacheEntryMetadata(cacheKey)
-}
-
-// GetCacheOverview returns an overview of cache contents with metadata
-func (m *Manager) GetCacheOverview() map[string]SchemaCacheEntry {
-	// Note: ttlcache doesn't provide a way to iterate over all entries
-	// This is a limitation of the ttlcache library
-	// For now, we return an empty map as this functionality is not critical
-	overview := make(map[string]SchemaCacheEntry)
-	return overview
-}
-
 // PerformMaintenanceCleanup performs comprehensive cache maintenance
 // Requirement 6.4: WHEN cache refresh fails THEN the system SHALL retry with exponential backoff
 func (m *Manager) PerformMaintenanceCleanup() error {
-	m.logger.Info().Msg("Starting comprehensive cache maintenance")
-
 	// Perform cleanup with retry logic
 	err := m.cache.CleanupWithRetry(5, 200*time.Millisecond)
 	if err != nil {
-		m.logger.Error().Err(err).
-			Msg("Cache maintenance failed")
+
 		return err
 	}
 
-	// Log maintenance results
-	stats := m.cache.GetStats()
-	metrics := m.cache.GetMetrics()
+	return nil
+}
 
-	m.logger.Info().
-		Int("cache_size", stats.CacheSize).
-		Int64("memory_usage_bytes", stats.MemoryUsage).
-		Float64("memory_usage_percent", stats.MemoryPercent).
-		Int64("total_evictions", metrics.Evictions).
-		Msg("Cache maintenance completed successfully")
+// GetParquetConfigForTable returns the resolved parquet configuration for a table
+// This is the main function that storage managers will use to get parquet config
+func (m *Manager) GetParquetConfigForTable(ctx context.Context, database, tableName string) (*parquet.ParquetConfig, error) {
+	// Get schema data to extract table metadata
+	schemaData, err := m.schemaLoader(ctx, database, tableName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Start with default parquet config
+	config := parquet.DefaultParquetConfig()
+
+	// Override with table metadata settings
+	if err := m.applyTableMetadataToConfig(config, schemaData.Metadata); err != nil {
+		return nil, err
+	}
+
+	return config, nil
+}
+
+// applyTableMetadataToConfig applies table metadata settings to parquet config
+func (m *Manager) applyTableMetadataToConfig(config *parquet.ParquetConfig, metadata *regtypes.TableMetadata) error {
+	// Apply compression setting
+	if metadata.Compression != "" {
+		config.Compression = metadata.Compression
+	}
+
+	// Apply batch size setting
+	if metadata.BatchSize > 0 {
+		config.BatchSize = metadata.BatchSize
+	}
+
+	// Parse Settings JSON for additional parquet-specific settings
+	if metadata.Settings != "" {
+		var settings map[string]interface{}
+		if err := json.Unmarshal([]byte(metadata.Settings), &settings); err != nil {
+			return errors.New(ErrSchemaManagerRetrievalError, "failed to parse table settings JSON", err).
+				AddContext("settings", metadata.Settings)
+		}
+
+		// Apply parquet-specific settings from JSON
+		if maxMemory, ok := settings["max_memory_usage"].(float64); ok {
+			config.MaxMemoryUsage = int64(maxMemory)
+		}
+		if streaming, ok := settings["streaming_enabled"].(bool); ok {
+			config.StreamingEnabled = streaming
+		}
+		if chunkSize, ok := settings["chunk_size"].(float64); ok {
+			config.ChunkSize = int(chunkSize)
+		}
+		if compressionLevel, ok := settings["compression_level"].(float64); ok {
+			config.CompressionLevel = int(compressionLevel)
+		}
+		if enableStats, ok := settings["enable_stats"].(bool); ok {
+			config.EnableStats = enableStats
+		}
+		if memoryPoolSize, ok := settings["memory_pool_size"].(float64); ok {
+			config.MemoryPoolSize = int64(memoryPoolSize)
+		}
+		if maxFileSize, ok := settings["max_file_size"].(float64); ok {
+			config.MaxFileSize = int64(maxFileSize)
+		}
+		if rotationTimeout, ok := settings["rotation_timeout"].(float64); ok {
+			config.RotationTimeout = int64(rotationTimeout)
+		}
+
+		// Handle column-specific compression
+		if columnCompression, ok := settings["column_compression"].(map[string]interface{}); ok {
+			config.ColumnCompression = make(map[string]string)
+			for col, comp := range columnCompression {
+				if compStr, ok := comp.(string); ok {
+					config.ColumnCompression[col] = compStr
+				}
+			}
+		}
+	}
 
 	return nil
 }

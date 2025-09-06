@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/apache/iceberg-go"
 	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
 )
@@ -451,10 +450,10 @@ func (sm *Store) RetrieveSchema(ctx context.Context, database, tableName string)
 }
 
 // SchemaLoaderFunc is a function type for loading schemas
-type SchemaLoaderFunc func(ctx context.Context, database, tableName string) (*iceberg.Schema, error)
+type SchemaLoaderFunc func(ctx context.Context, database, tableName string) (*SchemaData, error)
 
 // CreateSchemaDataLoader creates a schema data loader function that returns raw registry data
-func (sm *Store) CreateSchemaDataLoader() func(ctx context.Context, database, tableName string) (*SchemaData, error) {
+func (sm *Store) CreateSchemaDataLoader() SchemaLoaderFunc {
 	return func(ctx context.Context, database, tableName string) (*SchemaData, error) {
 		return sm.RetrieveSchema(ctx, database, tableName)
 	}
