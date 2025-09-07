@@ -61,15 +61,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info().Msg("Shutting down server...")
 
 	s.cancel()
-
-	// Stop the Gateway first (which stops all protocol servers)
-	gateway := s.loader.GetGateway()
-	if gateway != nil {
-		if err := gateway.Stop(); err != nil {
-			s.logger.Error().Err(err).Msg("Error stopping gateway")
-		}
-	}
-
 	if err := s.loader.Shutdown(ctx); err != nil {
 		s.logger.Error().Err(err).Msg("Error stopping loader")
 	}

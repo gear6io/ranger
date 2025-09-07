@@ -139,7 +139,7 @@ func (g *Gateway) start(ctx context.Context) error {
 }
 
 // Stop gracefully shuts down all servers
-func (g *Gateway) Stop() error {
+func (g *Gateway) Shutdown(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -217,19 +217,6 @@ func (g *Gateway) GetQueryEngine() *query.Engine {
 // GetType returns the component type identifier
 func (g *Gateway) GetType() string {
 	return ComponentType
-}
-
-// Shutdown gracefully shuts down the gateway
-func (g *Gateway) Shutdown(ctx context.Context) error {
-	g.logger.Info().Msg("Shutting down gateway")
-
-	// Stop gateway
-	if err := g.Stop(); err != nil {
-		return errors.New(ErrGatewayStopFailed, "failed to stop gateway", err)
-	}
-
-	g.logger.Info().Msg("Gateway shut down successfully")
-	return nil
 }
 
 // Helper methods to check server enabled states
