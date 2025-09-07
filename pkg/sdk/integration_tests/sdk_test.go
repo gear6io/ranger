@@ -30,8 +30,8 @@ func TestSDKBasics(t *testing.T) {
 	assert.Equal(t, []string{"127.0.0.1:2849"}, options.Addr)
 	assert.Equal(t, "default", options.Auth.Database)
 	assert.Equal(t, "default", options.Auth.Username)
-	assert.Equal(t, 3*time.Second, options.ReadTimeout)
 	assert.Equal(t, 30*time.Second, options.DialTimeout)
+	assert.Equal(t, 30*time.Second, options.ReadTimeout)
 	assert.Equal(t, sdk.Native, options.Protocol)
 }
 

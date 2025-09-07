@@ -86,7 +86,7 @@ func TestConnectionErrorHandling(t *testing.T) {
 				Password: "test",
 				Database: "test",
 			},
-			DialTimeout: 100 * time.Millisecond, // Short timeout for testing
+			DialTimeout: 100 * time.Millisecond, // Short dial timeout for testing
 		})
 		require.NoError(t, err)
 		defer client.Close()
@@ -115,7 +115,7 @@ func TestConnectionErrorHandling(t *testing.T) {
 				Password: "test",
 				Database: "test",
 			},
-			DialTimeout: 5 * time.Second, // Long timeout to test cancellation
+			DialTimeout: 5 * time.Second, // Long dial timeout to test cancellation
 		})
 		require.NoError(t, err)
 		defer client.Close()

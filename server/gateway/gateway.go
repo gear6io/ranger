@@ -36,8 +36,8 @@ type Gateway struct {
 }
 
 // NewGateway creates a new gateway instance
-func NewGateway(queryEngine *query.Engine, logger zerolog.Logger) (*Gateway, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+func NewGateway(ctx context.Context, queryEngine *query.Engine, logger zerolog.Logger) (*Gateway, error) {
+	ctx, cancel := context.WithCancel(ctx)
 
 	// Create all servers with the shared QueryEngine
 	httpServer, err := http.NewServer(queryEngine, logger)
@@ -58,7 +58,7 @@ func NewGateway(queryEngine *query.Engine, logger zerolog.Logger) (*Gateway, err
 		return nil, errors.New(ErrNativeServerCreationFailed, "failed to create native server", err)
 	}
 
-	return &Gateway{
+	gateway := &Gateway{
 		queryEngine:       queryEngine,
 		httpServer:        httpServer,
 		jdbcServer:        jdbcServer,
@@ -68,11 +68,12 @@ func NewGateway(queryEngine *query.Engine, logger zerolog.Logger) (*Gateway, err
 		cancel:            cancel,
 		maxConnections:    1000, // Default max connections
 		activeConnections: 0,
-	}, nil
+	}
+	return gateway, gateway.start(ctx)
 }
 
 // Start starts all enabled servers
-func (g *Gateway) Start(ctx context.Context) error {
+func (g *Gateway) start(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -138,7 +139,7 @@ func (g *Gateway) Start(ctx context.Context) error {
 }
 
 // Stop gracefully shuts down all servers
-func (g *Gateway) Stop() error {
+func (g *Gateway) Shutdown(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -216,19 +217,6 @@ func (g *Gateway) GetQueryEngine() *query.Engine {
 // GetType returns the component type identifier
 func (g *Gateway) GetType() string {
 	return ComponentType
-}
-
-// Shutdown gracefully shuts down the gateway
-func (g *Gateway) Shutdown(ctx context.Context) error {
-	g.logger.Info().Msg("Shutting down gateway")
-
-	// Stop gateway
-	if err := g.Stop(); err != nil {
-		return errors.New(ErrGatewayStopFailed, "failed to stop gateway", err)
-	}
-
-	g.logger.Info().Msg("Gateway shut down successfully")
-	return nil
 }
 
 // Helper methods to check server enabled states

@@ -27,6 +27,8 @@ type DataBlock struct {
 // Protocol constants for backward compatibility
 const (
 	DBMS_TCP_PROTOCOL_VERSION = 54460
+	READ_TIMEOUT              = 30 * time.Second
+	IDLE_TIMEOUT              = 30 * time.Second
 )
 
 // ConnectionHandler handles a single client connection
@@ -46,6 +48,11 @@ type ConnectionHandler struct {
 
 	// Server context for graceful shutdown
 	serverCtx context.Context
+
+	// Timeout configuration
+	idleTimeout  time.Duration
+	readTimeout  time.Duration
+	lastActivity time.Time
 }
 
 // NewConnectionHandler creates a new connection handler
@@ -68,6 +75,7 @@ func NewConnectionHandler(conn net.Conn, queryEngine *query.Engine, logger zerol
 		&signals.ServerPong{},
 		&signals.ServerEndOfStream{},
 		&signals.ServerProfileInfo{},
+		&signals.ServerClose{},
 	}
 
 	// Auto-register all signals with proper error handling
@@ -89,14 +97,17 @@ func NewConnectionHandler(conn net.Conn, queryEngine *query.Engine, logger zerol
 	}
 
 	return &ConnectionHandler{
-		conn:        conn,
-		queryEngine: queryEngine,
-		logger:      logger,
-		codec:       codec,
-		tables:      make(map[string][][]interface{}),
-		connCtx:     connCtx,
-		middleware:  middlewareChain,
-		serverCtx:   serverCtx,
+		conn:         conn,
+		queryEngine:  queryEngine,
+		logger:       logger,
+		codec:        codec,
+		tables:       make(map[string][][]interface{}),
+		connCtx:      connCtx,
+		middleware:   middlewareChain,
+		serverCtx:    serverCtx,
+		idleTimeout:  IDLE_TIMEOUT, // Will be overridden by ClientHello
+		readTimeout:  READ_TIMEOUT, // Will be overridden by ClientHello
+		lastActivity: time.Now(),
 	}
 }
 
@@ -122,6 +133,9 @@ func (h *ConnectionHandler) Handle() error {
 
 	h.logger.Debug().Str("client", h.conn.RemoteAddr().String()).Msg("New client connected")
 
+	// Idle timeout timer will be started after ClientHello is processed
+	var idleTimer *time.Timer
+
 	for {
 		// Check if server is shutting down
 		select {
@@ -132,15 +146,15 @@ func (h *ConnectionHandler) Handle() error {
 			// Continue with normal operation
 		}
 
-		// Set a read timeout to allow graceful shutdown
-		if err := h.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
-			h.logger.Error().Err(err).Msg("Failed to set read deadline")
-			return err
-		}
-
 		// Notify middleware before read
 		if err := h.middleware.ExecuteRead(context.Background(), h.connCtx); err != nil {
 			h.logger.Error().Err(err).Msg("Middleware rejected read operation")
+			return err
+		}
+
+		// Set read deadline if configured
+		if err := h.conn.SetReadDeadline(time.Now().Add(h.readTimeout)); err != nil {
+			h.logger.Error().Err(err).Msg("Failed to set read deadline")
 			return err
 		}
 
@@ -152,23 +166,23 @@ func (h *ConnectionHandler) Handle() error {
 				return nil
 			}
 
-			// Check for timeout errors (these are expected during shutdown)
+			// Check for timeout errors
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				// This is a timeout, check if server is shutting down
-				select {
-				case <-h.serverCtx.Done():
-					h.logger.Debug().Str("client", h.conn.RemoteAddr().String()).Msg("Server shutting down, closing connection")
-					return nil
-				default:
-					// Not shutting down, continue with next iteration
-					continue
-				}
+				h.logger.Debug().Str("client", h.conn.RemoteAddr().String()).Msg("Read timeout - connection still usable")
+				// Connection is still usable, continue with next iteration
+				continue
 			}
 
 			// Notify middleware of read error
 			h.middleware.ExecuteError(context.Background(), h.connCtx, err)
 			h.logger.Error().Err(err).Msg("Failed to read message")
 			return err
+		}
+
+		// Update last activity time and reset idle timer
+		h.lastActivity = time.Now()
+		if idleTimer != nil {
+			idleTimer.Reset(h.idleTimeout)
 		}
 
 		// Unpack the message into a signal
@@ -189,6 +203,13 @@ func (h *ConnectionHandler) Handle() error {
 			if err := h.handleClientHelloSignal(signal.(*signals.ClientHello)); err != nil {
 				h.logger.Error().Err(err).Msg("Failed to handle client hello")
 				return err
+			}
+			// Start idle timer after ClientHello is processed
+			if idleTimer == nil {
+				idleTimer = h.startIdleTimer()
+				if idleTimer != nil {
+					defer idleTimer.Stop()
+				}
 			}
 		case protocol.ClientQuery:
 			h.logger.Debug().Msg("Handling ClientQuery message")
@@ -338,7 +359,14 @@ func (h *ConnectionHandler) handleClientHelloSignal(hello *signals.ClientHello) 
 		Uint64("protocol_version", hello.ProtocolVersion).
 		Str("database", hello.Database).
 		Str("user", hello.User).
+		Uint64("idle_timeout", hello.IdleTimeout).
+		Uint64("read_timeout", hello.ReadTimeout).
 		Msg("Processing ClientHello signal")
+
+	// Set idle timeout from client hello message
+	h.idleTimeout = time.Duration(hello.IdleTimeout) * time.Second
+	// Set read timeout from client hello message
+	h.readTimeout = time.Duration(hello.ReadTimeout) * time.Second
 
 	// Send server hello response
 	return h.sendServerHelloSignal()
@@ -524,4 +552,26 @@ func (h *ConnectionHandler) sendServerPongSignal() error {
 	}
 
 	return h.codec.WriteMessage(h.conn, message)
+}
+
+// sendServerCloseSignal sends server close using unified protocol
+func (h *ConnectionHandler) sendServerCloseSignal(reason string) error {
+	close := signals.NewServerClose(reason)
+
+	message, err := h.codec.EncodeMessage(close)
+	if err != nil {
+		return errors.New(ErrInvalidMessageFormat, "failed to encode server close", err)
+	}
+
+	return h.codec.WriteMessage(h.conn, message)
+}
+
+// startIdleTimer starts the idle timeout timer
+func (h *ConnectionHandler) startIdleTimer() *time.Timer {
+	return time.AfterFunc(h.idleTimeout, func() {
+		h.logger.Debug().Str("client", h.conn.RemoteAddr().String()).Msg("Connection idle timeout, sending close signal")
+		if err := h.sendServerCloseSignal("Connection idle timeout"); err != nil {
+			h.logger.Error().Err(err).Msg("Failed to send server close signal")
+		}
+	})
 }

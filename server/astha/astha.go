@@ -89,11 +89,6 @@ func (a *Astha) Stop() error {
 		a.logger.Error().Err(err).Msg("Failed to stop scheduler")
 	}
 
-	// Teardown CDC infrastructure
-	if err := a.cdcSetup.TeardownCDC(a.ctx); err != nil {
-		a.logger.Error().Err(err).Msg("Failed to teardown CDC infrastructure")
-	}
-
 	// Cancel context
 	a.cancel()
 
@@ -134,11 +129,6 @@ func (a *Astha) GetAllComponents() []ComponentInfo {
 // GetTableSubscribers returns all components subscribed to a specific table
 func (a *Astha) GetTableSubscribers(table string) []string {
 	return a.scheduler.GetTableSubscribers(table)
-}
-
-// GetCDCLogTable returns the CDC log table name
-func (a *Astha) GetCDCLogTable() string {
-	return a.cdcSetup.GetCDCLogTable()
 }
 
 // GetMonitoredTables returns the list of monitored tables

@@ -2,9 +2,10 @@ package jdbc
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
+
+	"github.com/gear6io/ranger/pkg/errors"
 )
 
 // PostgreSQL message types

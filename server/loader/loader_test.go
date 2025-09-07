@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"context"
 	"testing"
 
 	"github.com/gear6io/ranger/server/config"
@@ -23,7 +24,7 @@ func TestNewLoader(t *testing.T) {
 	logger := zerolog.New(zerolog.NewConsoleWriter())
 
 	// Test creating a new loader
-	loader, err := NewLoader(cfg, logger)
+	loader, err := NewLoader(context.Background(), cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to create loader: %v", err)
 	}

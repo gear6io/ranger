@@ -82,11 +82,11 @@ func NewStoreWithOptions(dbPath, basePath string, useBun bool) (*Store, error) {
 		return nil, errors.New(RegistrySchemaVerification, "bun schema verification failed", err).AddContext("path", dbPath)
 	}
 
-	// Initialize system manager
-	store.system = system.NewManager(db)
-	if err := store.system.Initialize(ctx); err != nil {
+	// Initialize system manager (views are now created in migration)
+	store.system, err = system.NewManager(ctx, db)
+	if err != nil {
 		db.Close()
-		return nil, errors.New(RegistrySchemaVerification, "system database initialization failed", err).AddContext("path", dbPath)
+		return nil, errors.New(RegistryMigrationFailed, "failed to initialize system manager", err).AddContext("path", dbPath)
 	}
 
 	return store, nil

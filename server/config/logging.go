@@ -237,13 +237,11 @@ func SetupLogger(cfg *Config) (zerolog.Logger, error) {
 	var writers []io.Writer
 
 	// Console writer
-	if cfg.Log.Console {
-		consoleWriter := zerolog.ConsoleWriter{
-			Out:        os.Stdout,
-			TimeFormat: time.RFC3339,
-		}
-		writers = append(writers, consoleWriter)
+	consoleWriter := zerolog.ConsoleWriter{
+		Out:        os.Stdout,
+		TimeFormat: time.RFC3339,
 	}
+	writers = append(writers, consoleWriter)
 
 	// File writer with rotation
 	if cfg.Log.FilePath != "" {

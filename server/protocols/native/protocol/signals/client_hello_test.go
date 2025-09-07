@@ -8,7 +8,7 @@ import (
 
 func TestClientHello(t *testing.T) {
 	// Test creating a new client hello
-	hello := NewClientHello("TestClient", "testdb", "testuser", "testpass")
+	hello := NewClientHello("TestClient", "testdb", "testuser", "testpass", 0, 0)
 
 	// Test Type method
 	if hello.Type() != protocol.ClientHello {
@@ -16,7 +16,7 @@ func TestClientHello(t *testing.T) {
 	}
 
 	// Test Size method
-	expectedSize := 1 + len("TestClient") + 1 + len("testdb") + 1 + len("testuser") + 1 + len("testpass") + 12
+	expectedSize := 1 + len("TestClient") + 1 + len("testdb") + 1 + len("testuser") + 1 + len("testpass") + 20
 	if hello.Size() != expectedSize {
 		t.Errorf("Expected Size() to return %d, got %d", expectedSize, hello.Size())
 	}

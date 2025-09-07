@@ -170,7 +170,7 @@ func TestManager_NewManager_NilConfig(t *testing.T) {
 	}
 
 	// Should use default config when nil is passed
-	manager, err := NewManager(context.Background(), map[string]*registry.SchemaData{}, nil, logger, mockSchemaLoader)
+	manager, err := NewSchema(context.Background(), map[string]*registry.SchemaData{}, nil, logger, mockSchemaLoader)
 	require.NoError(t, err)
 
 	assert.NotNil(t, manager)

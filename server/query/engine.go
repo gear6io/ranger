@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 	"time"
 
@@ -24,7 +23,7 @@ const ComponentType = "query"
 // Engine represents the shared query engine service with embedded storage
 type Engine struct {
 	duckdbEngine *duckdb.Engine
-	storageMgr   *storage.Manager
+	storageMgr   *storage.Storage
 	logger       zerolog.Logger
 	queryManager *ExecutionManager
 }
@@ -40,7 +39,7 @@ type QueryResult struct {
 }
 
 // NewEngine creates a new shared query engine service with storage
-func NewEngine(cfg *config.Config, storageMgr *storage.Manager, logger zerolog.Logger) (*Engine, error) {
+func NewEngine(cfg *config.Config, storageMgr *storage.Storage, logger zerolog.Logger) (*Engine, error) {
 	// Get catalog from storage manager
 	catalogInstance := storageMgr.GetCatalog()
 
@@ -288,7 +287,7 @@ func (e *Engine) executeShowDatabases(ctx context.Context) (*QueryResult, error)
 	return &QueryResult{
 		Data:     rows,
 		RowCount: int64(len(rows)),
-		Columns:  []string{"Database"},
+		Columns:  []string{"database"},
 		Message:  fmt.Sprintf("Found %d database(s)", len(rows)),
 	}, nil
 }
@@ -311,7 +310,7 @@ func (e *Engine) executeShowTables(ctx context.Context, stmt *parser.ShowStmt, q
 	e.logger.Debug().Str("database", database).Msg("Executing SHOW TABLES")
 
 	// Get tables from storage manager for the specific database
-	tables, err := e.storageMgr.ListTablesForDatabase(ctx, database)
+	tables, err := e.storageMgr.ListTables(ctx, database)
 	if err != nil {
 		return nil, errors.New(ErrTableListFailed, "failed to list tables", err)
 	}
@@ -633,28 +632,6 @@ func (e *Engine) executeExplainStmt(ctx context.Context, stmt *parser.ExplainStm
 	}, nil
 }
 
-// CreateTable creates a new table with the given schema (legacy method for backward compatibility)
-func (e *Engine) CreateTable(ctx context.Context, database, tableName, storageEngine string, schema *parser.TableSchema) error {
-	e.logger.Info().Str("database", database).Str("table", tableName).Str("engine", storageEngine).Msg("Creating table (legacy method)")
-
-	// Store table schema in storage using Storage Manager legacy method
-	schemaData := e.serializeTableSchema(schema)
-	if err := e.storageMgr.CreateTableLegacy(ctx, database, tableName, schemaData, storageEngine, nil); err != nil {
-		return err
-	}
-
-	// Register table with DuckDB engine for query execution
-	// Build CREATE TABLE SQL for DuckDB
-	createTableSQL := e.buildCreateTableSQL(fmt.Sprintf("%s.%s", database, tableName), schema)
-	if _, err := e.duckdbEngine.ExecuteQuery(ctx, createTableSQL); err != nil {
-		e.logger.Warn().Err(err).Str("database", database).Str("table", tableName).Msg("Failed to register table with DuckDB - queries may fail")
-		// Don't fail table creation if DuckDB registration fails
-	}
-
-	e.logger.Info().Str("database", database).Str("table", tableName).Str("engine", storageEngine).Msg("Table created successfully")
-	return nil
-}
-
 // InsertData inserts data into the specified table
 func (e *Engine) InsertData(ctx context.Context, tableName string, data [][]interface{}) error {
 	e.logger.Info().Str("table", tableName).Int("rows", len(data)).Msg("Inserting data")
@@ -725,46 +702,6 @@ func (e *Engine) GetTableData(ctx context.Context, database, tableName string, l
 	return data, nil
 }
 
-// GetTableDataStreaming retrieves data using streaming for memory efficiency
-func (e *Engine) GetTableDataStreaming(ctx context.Context, database, tableName string) (io.ReadCloser, error) {
-	e.logger.Info().Str("database", database).Str("table", tableName).Msg("Retrieving table data using streaming")
-
-	// Get storage engine for the table
-	engine, err := e.storageMgr.GetEngineForTable(ctx, database, tableName)
-	if err != nil {
-		return nil, err
-	}
-
-	// Open streaming reader for the table
-	reader, err := engine.OpenTableForRead(database, tableName)
-	if err != nil {
-		return nil, err
-	}
-
-	e.logger.Info().Str("database", database).Str("table", tableName).Msg("Table opened for streaming read")
-	return reader, nil
-}
-
-// GetTableSchema retrieves the schema for the specified table
-func (e *Engine) GetTableSchema(ctx context.Context, tableName string) (*parser.TableSchema, error) {
-	e.logger.Info().Str("table", tableName).Msg("Retrieving table schema")
-
-	// Get schema from storage using Storage Manager
-	schemaData, err := e.storageMgr.GetTableSchema(ctx, "default", tableName)
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse schema from storage
-	schema, err := e.deserializeTableSchema(schemaData)
-	if err != nil {
-		return nil, err
-	}
-
-	e.logger.Info().Str("table", tableName).Msg("Schema retrieved from storage")
-	return schema, nil
-}
-
 // buildCreateTableSQL builds CREATE TABLE SQL from schema
 func (e *Engine) buildCreateTableSQL(tableName string, schema *parser.TableSchema) string {
 	sql := fmt.Sprintf("CREATE TABLE %s (", tableName)
@@ -798,62 +735,6 @@ func (e *Engine) buildCreateTableSQL(tableName string, schema *parser.TableSchem
 
 	sql += strings.Join(columns, ", ") + ")"
 	return sql
-}
-
-// buildInsertSQL builds INSERT SQL from data
-func (e *Engine) buildInsertSQL(tableName string, data [][]interface{}) string {
-	if len(data) == 0 {
-		return ""
-	}
-
-	// Get table schema to use actual column names
-	var columns []string
-	schema, err := e.GetTableSchema(context.Background(), tableName)
-	if err != nil || schema == nil {
-		// Fallback to descriptive column names if schema not available
-		columns = make([]string, len(data[0]))
-		for i := range data[0] {
-			// Use meaningful column names if available, otherwise generate descriptive names
-			switch i {
-			case 0:
-				columns[i] = "id"
-			case 1:
-				columns[i] = "name"
-			case 2:
-				columns[i] = "value"
-			default:
-				columns[i] = fmt.Sprintf("column_%d", i+1)
-			}
-		}
-	} else {
-		// Use actual column names from schema
-		columns = make([]string, 0, len(schema.ColumnDefinitions))
-		for colName := range schema.ColumnDefinitions {
-			columns = append(columns, colName)
-		}
-		// Sort columns to ensure consistent order
-		sort.Strings(columns)
-	}
-
-	// Build VALUES clause
-	var values []string
-	for _, row := range data {
-		var rowValues []string
-		for _, val := range row {
-			switch v := val.(type) {
-			case string:
-				rowValues = append(rowValues, fmt.Sprintf("'%s'", v))
-			default:
-				rowValues = append(rowValues, fmt.Sprintf("%v", v))
-			}
-		}
-		values = append(values, fmt.Sprintf("(%s)", strings.Join(rowValues, ", ")))
-	}
-
-	return fmt.Sprintf("INSERT INTO %s (%s) VALUES %s",
-		tableName,
-		strings.Join(columns, ", "),
-		strings.Join(values, ", "))
 }
 
 // serializeTableSchema converts TableSchema to JSON bytes
@@ -1004,28 +885,9 @@ func (e *Engine) deserializeTableSchema(data []byte) (*parser.TableSchema, error
 	return schema, nil
 }
 
-// convertDuckDBSchemaToTableSchema converts DuckDB schema to TableSchema
-func (e *Engine) convertDuckDBSchemaToTableSchema(result interface{}) *parser.TableSchema {
-	// Placeholder implementation - convert DuckDB schema format to our TableSchema
-	// This would need to be implemented based on actual DuckDB result structure
-	return &parser.TableSchema{
-		ColumnDefinitions: make(map[string]*parser.ColumnDefinition),
-	}
-}
-
 // GetDuckDBEngine returns the underlying DuckDB engine for direct access
 func (e *Engine) GetDuckDBEngine() *duckdb.Engine {
 	return e.duckdbEngine
-}
-
-// GetStorageManager returns the storage manager for direct access
-func (e *Engine) GetStorageManager() *storage.Manager {
-	return e.storageMgr
-}
-
-// GetExecutionManager returns the execution manager for external access
-func (e *Engine) GetExecutionManager() *ExecutionManager {
-	return e.queryManager
 }
 
 // CancelQuery cancels a running query by ID

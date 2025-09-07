@@ -52,7 +52,7 @@ func main() {
     // Create client options
     opt := &sdk.Options{
         Logger: logger,
-        Addr:   []string{"127.0.0.1:9000"},
+        Addr:   []string{"127.0.0.1:2849"},
         Auth: sdk.Auth{
             Username: "default",
             Password: "",
@@ -311,6 +311,56 @@ if err != nil {
 defer rows.Close()
 ```
 
+### Idle Timeout Configuration
+
+The SDK supports server-side idle timeout configuration. When a connection is idle for the specified duration, the server will send a close signal and terminate the connection.
+
+```go
+// Create client with idle timeout
+client, err := sdk.Open(&sdk.Options{
+    Addr:        []string{"127.0.0.1:2849"},
+    IdleTimeout: 5 * time.Minute, // Connection will be closed after 5 minutes of inactivity
+    Auth: sdk.Auth{
+        Database: "default",
+        Username: "default",
+        Password: "",
+    },
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer client.Close()
+```
+
+**Note**: If no `IdleTimeout` is specified, the connection will remain open indefinitely until explicitly closed or the server shuts down.
+
+### Read Timeout Configuration
+
+The SDK supports server-side read timeout configuration. When a `ReadTimeout` is specified, the server will set a read deadline for each message read operation. If no message is received within the specified duration, the read operation will timeout, but the connection remains usable.
+
+```go
+// Create client with read timeout
+client, err := sdk.Open(&sdk.Options{
+    Addr:        []string{"127.0.0.1:2849"},
+    ReadTimeout: 5 * time.Second, // Server will timeout reads after 5 seconds
+    Auth: sdk.Auth{
+        Database: "default",
+        Username: "default",
+        Password: "",
+    },
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer client.Close()
+```
+
+**Important Notes**:
+- Read timeouts are **acknowledged by the server** - the server respects the client's ReadTimeout setting
+- When a read timeout occurs, **the connection remains usable** - only the specific read operation fails
+- Read timeouts help detect unresponsive clients without breaking the connection
+- If no `ReadTimeout` is specified, the default is 3 seconds
+
 ## Configuration Options
 
 ### Options Structure
@@ -337,9 +387,8 @@ type Options struct {
     ConnOpenStrategy ConnOpenStrategy
     
     // Timeouts
-    DialTimeout  time.Duration // default 30 seconds
-    ReadTimeout  time.Duration // default 3 seconds
-    WriteTimeout time.Duration // default 3 seconds
+    DialTimeout time.Duration // default 30 seconds
+    ReadTimeout time.Duration // default 3 seconds
     
     // Settings and configuration
     Settings Settings

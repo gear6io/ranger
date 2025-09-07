@@ -51,7 +51,6 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Client, error) {
 		},
 		DialTimeout:  cfg.Server.Timeout,
 		ReadTimeout:  cfg.Server.Timeout,
-		WriteTimeout: cfg.Server.Timeout,
 		MaxOpenConns: 10,
 		MaxIdleConns: 5,
 		Settings: sdk.Settings{

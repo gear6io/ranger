@@ -16,11 +16,11 @@ import (
 )
 
 // InitFunction defines the function type for initializing components
-type InitFunction func(loader LoaderInterface) (shared.Component, error)
+type InitFunction func(ctx context.Context, loader LoaderInterface) (shared.Component, error)
 
 // LoaderInterface defines the interface that components can use to access other components
 type LoaderInterface interface {
-	GetStorage() *storage.Manager
+	GetStorage() *storage.Storage
 	GetCatalog() catalog.CatalogInterface
 	GetQueryEngine() *query.Engine
 	GetGateway() *gateway.Gateway
@@ -42,10 +42,10 @@ type Loader struct {
 }
 
 // NewLoader creates a new Loader instance
-func NewLoader(cfg *config.Config, logger zerolog.Logger) (*Loader, error) {
+func NewLoader(ctx context.Context, cfg *config.Config, logger zerolog.Logger) (*Loader, error) {
 	loader := &Loader{
 		config:        cfg,
-		logger:        logger.With().Str("component", "loader").Logger(),
+		logger:        logger,
 		initFunctions: make([]InitFunction, 0),
 		components:    make(map[string]shared.Component),
 		initOrder:     make([]string, 0),
@@ -53,11 +53,6 @@ func NewLoader(cfg *config.Config, logger zerolog.Logger) (*Loader, error) {
 
 	// Register components in initialization order
 	loader.registerComponents()
-
-	// Initialize all components
-	if err := loader.Initialize(); err != nil {
-		return nil, errors.New(ErrComponentInitializationFailed, "failed to initialize components", err)
-	}
 
 	return loader, nil
 }
@@ -71,40 +66,40 @@ func (l *Loader) RegisterComponent(name string, initFunc InitFunction) {
 // registerComponents registers all components in the correct initialization order
 func (l *Loader) registerComponents() {
 	// This order determines initialization sequence
-	l.RegisterComponent("paths", func(loader LoaderInterface) (shared.Component, error) {
+	l.RegisterComponent("paths", func(ctx context.Context, loader LoaderInterface) (shared.Component, error) {
 		return paths.NewManager(loader.GetConfig().GetStoragePath()), nil
 	})
 
-	l.RegisterComponent("catalog", func(loader LoaderInterface) (shared.Component, error) {
+	l.RegisterComponent("catalog", func(ctx context.Context, loader LoaderInterface) (shared.Component, error) {
 		return catalog.NewCatalog(loader.GetConfig(), loader.GetPathManager())
 	})
 
-	l.RegisterComponent("metadata", func(loader LoaderInterface) (shared.Component, error) {
-		return metadata.NewMetadataManager(loader.GetCatalog(),
+	l.RegisterComponent("metadata", func(ctx context.Context, loader LoaderInterface) (shared.Component, error) {
+		return metadata.NewMetadataManager(ctx, loader.GetCatalog(),
 			loader.GetPathManager().GetInternalMetadataDBPath(),
 			loader.GetConfig().GetStoragePath(),
 			loader.GetLogger())
 	})
 
-	l.RegisterComponent("storage", func(loader LoaderInterface) (shared.Component, error) {
-		return storage.NewManager(loader.GetConfig(), loader.GetLogger(), loader.GetMetadataManager())
+	l.RegisterComponent("storage", func(ctx context.Context, loader LoaderInterface) (shared.Component, error) {
+		return storage.NewStorage(ctx, loader.GetConfig(), loader.GetLogger(), loader.GetMetadataManager())
 	})
 
-	l.RegisterComponent("query", func(loader LoaderInterface) (shared.Component, error) {
+	l.RegisterComponent("query", func(ctx context.Context, loader LoaderInterface) (shared.Component, error) {
 		return query.NewEngine(loader.GetConfig(), loader.GetStorage(), loader.GetLogger())
 	})
 
-	l.RegisterComponent("gateway", func(loader LoaderInterface) (shared.Component, error) {
-		return gateway.NewGateway(loader.GetQueryEngine(), loader.GetLogger())
+	l.RegisterComponent("gateway", func(ctx context.Context, loader LoaderInterface) (shared.Component, error) {
+		return gateway.NewGateway(ctx, loader.GetQueryEngine(), loader.GetLogger())
 	})
 }
 
 // Initialize initializes all components in registration order
-func (l *Loader) Initialize() error {
+func (l *Loader) Start(ctx context.Context) error {
 	l.logger.Info().Msg("Initializing components...")
 
 	for i, initFunc := range l.initFunctions {
-		component, err := initFunc(l)
+		component, err := initFunc(ctx, l)
 		if err != nil {
 			return errors.New(ErrComponentInitFailed, "failed to initialize component", err).AddContext("component_index", i)
 		}
@@ -116,22 +111,6 @@ func (l *Loader) Initialize() error {
 	}
 
 	l.logger.Info().Msg("All components initialized successfully")
-	return nil
-}
-
-// Start initializes and starts all components
-func (l *Loader) Start() error {
-	l.logger.Info().Msg("Starting Loader...")
-
-	// Start the Gateway (which manages all servers)
-	gateway := l.GetGateway()
-	if gateway != nil {
-		if err := gateway.Start(l.logger.WithContext(context.Background())); err != nil {
-			return errors.New(ErrGatewayStartFailed, "failed to start gateway", err)
-		}
-	}
-
-	l.logger.Info().Msg("Loader started successfully")
 	return nil
 }
 
@@ -174,7 +153,7 @@ func (l *Loader) GetLogger() zerolog.Logger {
 func (l *Loader) GetCatalog() catalog.CatalogInterface {
 	if comp, exists := l.components[storage.ComponentType]; exists {
 		// Catalog comes from storage manager
-		storageManager := comp.(*storage.Manager)
+		storageManager := comp.(*storage.Storage)
 		return storageManager.GetCatalog()
 	}
 	return nil
@@ -197,9 +176,9 @@ func (l *Loader) GetGateway() *gateway.Gateway {
 }
 
 // GetStorage returns the storage manager
-func (l *Loader) GetStorage() *storage.Manager {
+func (l *Loader) GetStorage() *storage.Storage {
 	if comp, exists := l.components[storage.ComponentType]; exists {
-		return comp.(*storage.Manager)
+		return comp.(*storage.Storage)
 	}
 	return nil
 }

@@ -196,6 +196,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	s.logger.Debug().Str("client", clientAddr).Msg("New client connected")
 
 	// Create a new connection handler with the QueryEngine and middleware chain
+	// Note: idleTimeout is set to 0 (no timeout) - client must specify timeout in connection options
 	handler := NewConnectionHandler(conn, s.queryEngine, s.logger, s.middlewareChain, s.ctx)
 
 	// Handle the connection

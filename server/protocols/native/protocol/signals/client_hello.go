@@ -15,6 +15,8 @@ type ClientHello struct {
 	Database        string
 	User            string
 	Password        string
+	IdleTimeout     uint64 // Idle timeout in seconds (0 means no timeout)
+	ReadTimeout     uint64 // Read timeout in seconds (0 means no timeout)
 }
 
 // Type returns the signal type
@@ -68,6 +70,20 @@ func (h *ClientHello) Pack() ([]byte, error) {
 	pwdBytes := []byte(h.Password)
 	buf = append(buf, byte(len(pwdBytes)))
 	buf = append(buf, pwdBytes...)
+
+	// Pack idle timeout (varint)
+	for h.IdleTimeout >= 0x80 {
+		buf = append(buf, byte(h.IdleTimeout)|0x80)
+		h.IdleTimeout >>= 7
+	}
+	buf = append(buf, byte(h.IdleTimeout))
+
+	// Pack read timeout (varint)
+	for h.ReadTimeout >= 0x80 {
+		buf = append(buf, byte(h.ReadTimeout)|0x80)
+		h.ReadTimeout >>= 7
+	}
+	buf = append(buf, byte(h.ReadTimeout))
 
 	return buf, nil
 }
@@ -154,6 +170,24 @@ func (h *ClientHello) Unpack(data []byte) error {
 		return fmt.Errorf("insufficient data for password")
 	}
 	h.Password = string(data[pos : pos+pwdLen])
+	pos += pwdLen
+
+	// Read idle timeout (varint) - optional field for backward compatibility
+	if pos < len(data) {
+		idleTimeout, bytesRead := h.readVarint(data[pos:])
+		if bytesRead > 0 {
+			h.IdleTimeout = idleTimeout
+			pos += bytesRead
+		}
+	}
+
+	// Read read timeout (varint) - optional field for backward compatibility
+	if pos < len(data) {
+		readTimeout, bytesRead := h.readVarint(data[pos:])
+		if bytesRead > 0 {
+			h.ReadTimeout = readTimeout
+		}
+	}
 
 	return nil
 }
@@ -161,7 +195,7 @@ func (h *ClientHello) Unpack(data []byte) error {
 // Size returns the estimated size of the packed message
 func (h *ClientHello) Size() int {
 	// Rough estimate: 1 byte per length + string lengths + varint sizes
-	return 1 + len(h.ClientName) + 1 + len(h.Database) + 1 + len(h.User) + 1 + len(h.Password) + 12 // 12 for varints
+	return 1 + len(h.ClientName) + 1 + len(h.Database) + 1 + len(h.User) + 1 + len(h.Password) + 20 // 20 for varints (including idle timeout and read timeout)
 }
 
 // readVarint reads a variable-length integer from the beginning of data
@@ -184,7 +218,7 @@ func (h *ClientHello) readVarint(data []byte) (uint64, int) {
 }
 
 // NewClientHello creates a new hello message
-func NewClientHello(clientName, database, user, password string) *ClientHello {
+func NewClientHello(clientName, database, user, password string, idleTimeout, readTimeout uint64) *ClientHello {
 	return &ClientHello{
 		ClientName:      clientName,
 		MajorVersion:    1,
@@ -193,6 +227,8 @@ func NewClientHello(clientName, database, user, password string) *ClientHello {
 		Database:        database,
 		User:            user,
 		Password:        password,
+		IdleTimeout:     idleTimeout,
+		ReadTimeout:     readTimeout,
 	}
 }
 
