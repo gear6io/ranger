@@ -19,7 +19,7 @@ func TestShowDatabases(t *testing.T) {
 		defer cancel()
 
 		// Execute SHOW DATABASES
-		result, err := client.Query(ctx, "SHOW DATABASES")
+		result, err := client.Query(ctx, "SHOW DATABASES;")
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
@@ -59,24 +59,24 @@ func TestShowTables(t *testing.T) {
 		defer cancel()
 
 		// First create a test database and table
-		_, err := client.Query(ctx, "CREATE DATABASE IF NOT EXISTS testdb")
+		_, err := client.Query(ctx, "CREATE DATABASE IF NOT EXISTS testdb;")
 		require.NoError(t, err)
 
 		_, err = client.Query(ctx, `CREATE TABLE IF NOT EXISTS testdb.users (
-			id INT PRIMARY KEY,
-			name STRING,
-			email STRING
-		)`)
+		id int32 PRIMARY KEY,
+		name string,
+		email string
+		) STORAGE FILESYSTEM;`)
 		require.NoError(t, err)
 
 		// Test SHOW TABLES without database
-		result, err := client.Query(ctx, "SHOW TABLES")
+		result, err := client.Query(ctx, "SHOW TABLES;")
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.True(t, len(result.Data) >= 0)
 
 		// Test SHOW TABLES FROM specific database
-		result, err = client.Query(ctx, "SHOW TABLES FROM testdb")
+		result, err = client.Query(ctx, "SHOW TABLES FROM testdb;")
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.True(t, len(result.Data) >= 0)
@@ -113,20 +113,20 @@ func TestShowColumns(t *testing.T) {
 		defer cancel()
 
 		// Create test database and table with known columns
-		_, err := client.Query(ctx, "CREATE DATABASE IF NOT EXISTS testdb")
+		_, err := client.Query(ctx, "CREATE DATABASE IF NOT EXISTS testdb;")
 		require.NoError(t, err)
 
 		_, err = client.Query(ctx, `CREATE TABLE IF NOT EXISTS testdb.users (
-			id INT PRIMARY KEY,
-			name STRING NOT NULL,
-			email STRING UNIQUE,
-			age INT,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		)`)
+			id int32 PRIMARY KEY,
+		name string NOT NULL,
+		email string UNIQUE,
+		age int32,
+		created_at timestamp
+		) STORAGE FILESYSTEM;`)
 		require.NoError(t, err)
 
 		// Test SHOW COLUMNS FROM table
-		result, err := client.Query(ctx, "SHOW COLUMNS FROM testdb.users")
+		result, err := client.Query(ctx, "SHOW COLUMNS FROM testdb.users;")
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.True(t, len(result.Data) >= 0)
@@ -170,20 +170,20 @@ func TestShowCreateTable(t *testing.T) {
 		defer cancel()
 
 		// Create test database and table
-		_, err := client.Query(ctx, "CREATE DATABASE IF NOT EXISTS testdb")
+		_, err := client.Query(ctx, "CREATE DATABASE IF NOT EXISTS testdb;")
 		require.NoError(t, err)
 
 		_, err = client.Query(ctx, `CREATE TABLE IF NOT EXISTS testdb.users (
-			id INT PRIMARY KEY,
-			name STRING NOT NULL,
-			email STRING UNIQUE,
-			age INT,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		)`)
+			id int32 PRIMARY KEY,
+		name string NOT NULL,
+		email string UNIQUE,
+		age int32,
+		created_at timestamp
+		) STORAGE FILESYSTEM;`)
 		require.NoError(t, err)
 
 		// Test SHOW CREATE TABLE
-		result, err := client.Query(ctx, "SHOW CREATE TABLE testdb.users")
+		result, err := client.Query(ctx, "SHOW CREATE TABLE testdb.users;")
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.True(t, len(result.Data) >= 0)
@@ -197,10 +197,11 @@ func TestShowCreateTable(t *testing.T) {
 			if ok {
 				assert.Contains(t, ddl, "CREATE TABLE", "DDL should contain CREATE TABLE")
 				assert.Contains(t, ddl, "testdb.users", "DDL should contain table name")
-				assert.Contains(t, ddl, "id INT", "DDL should contain id column")
-				assert.Contains(t, ddl, "name STRING", "DDL should contain name column")
-				assert.Contains(t, ddl, "email STRING", "DDL should contain email column")
-				assert.Contains(t, ddl, "PRIMARY KEY", "DDL should contain PRIMARY KEY")
+				assert.Contains(t, ddl, "id int32", "DDL should contain id column")
+				assert.Contains(t, ddl, "name string", "DDL should contain name column")
+				assert.Contains(t, ddl, "email string", "DDL should contain email column")
+				assert.Contains(t, ddl, "age int32", "DDL should contain age column")
+				assert.Contains(t, ddl, "created_at timestamp", "DDL should contain created_at column")
 			}
 		}
 
@@ -221,7 +222,7 @@ func TestShowUsers(t *testing.T) {
 		defer cancel()
 
 		// Execute SHOW USERS
-		result, err := client.Query(ctx, "SHOW USERS")
+		result, err := client.Query(ctx, "SHOW USERS;")
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
@@ -248,24 +249,24 @@ func TestSystemDatabaseQueries(t *testing.T) {
 		defer cancel()
 
 		// Create test database and table first
-		_, err := client.Query(ctx, "CREATE DATABASE IF NOT EXISTS testdb")
+		_, err := client.Query(ctx, "CREATE DATABASE IF NOT EXISTS testdb;")
 		require.NoError(t, err)
 
 		_, err = client.Query(ctx, `CREATE TABLE IF NOT EXISTS testdb.users (
-			id INT PRIMARY KEY,
-			name STRING,
-			email STRING
-		)`)
+		id int32 PRIMARY KEY,
+		name string,
+		email string
+		) STORAGE FILESYSTEM;`)
 		require.NoError(t, err)
 
 		// Test SELECT from system.databases
-		result, err := client.Query(ctx, "SELECT * FROM system.databases")
+		result, err := client.Query(ctx, "SELECT * FROM system_databases;")
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.True(t, len(result.Data) >= 0)
 
 		// Test SELECT from system.tables
-		result, err = client.Query(ctx, "SELECT * FROM system.tables WHERE database_name = 'testdb'")
+		result, err = client.Query(ctx, "SELECT * FROM system_tables WHERE database_name = 'testdb';")
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.True(t, len(result.Data) >= 0)
@@ -281,10 +282,10 @@ func TestSystemDatabaseQueries(t *testing.T) {
 				}
 			}
 		}
-		assert.True(t, foundUsers, "Should find 'users' table in system.tables")
+		assert.True(t, foundUsers, "Should find 'users' table in system_tables")
 
 		// Test SELECT from system.columns
-		result, err = client.Query(ctx, "SELECT * FROM system.columns WHERE table_name = 'users' AND database_name = 'testdb'")
+		result, err = client.Query(ctx, "SELECT * FROM system_columns WHERE table_name = 'users' AND database_name = 'testdb';")
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.True(t, len(result.Data) >= 0)
@@ -306,15 +307,15 @@ func TestShowStatementsErrorHandling(t *testing.T) {
 		defer cancel()
 
 		// Test SHOW COLUMNS with non-existent table
-		_, err := client.Query(ctx, "SHOW COLUMNS FROM nonexistent_table")
+		_, err := client.Query(ctx, "SHOW COLUMNS FROM nonexistent_table;")
 		assert.Error(t, err, "Should error for non-existent table")
 
 		// Test SHOW CREATE TABLE with non-existent table
-		_, err = client.Query(ctx, "SHOW CREATE TABLE nonexistent_table")
+		_, err = client.Query(ctx, "SHOW CREATE TABLE nonexistent_table;")
 		assert.Error(t, err, "Should error for non-existent table")
 
 		// Test SHOW TABLES FROM non-existent database
-		_, err = client.Query(ctx, "SHOW TABLES FROM nonexistent_database")
+		_, err = client.Query(ctx, "SHOW TABLES FROM nonexistent_database;")
 		assert.Error(t, err, "Should error for non-existent database")
 
 		t.Log("Error handling tests completed")
@@ -331,13 +332,13 @@ func TestShowStatementsCaseInsensitive(t *testing.T) {
 		defer cancel()
 
 		// Create test database and table
-		_, err := client.Query(ctx, "CREATE DATABASE IF NOT EXISTS testdb")
+		_, err := client.Query(ctx, "CREATE DATABASE IF NOT EXISTS testdb;")
 		require.NoError(t, err)
 
 		_, err = client.Query(ctx, `CREATE TABLE IF NOT EXISTS testdb.users (
-			id INT PRIMARY KEY,
-			name STRING
-		)`)
+			id int32 PRIMARY KEY,
+			name string
+		) STORAGE FILESYSTEM;`)
 		require.NoError(t, err)
 
 		// Test various case combinations
@@ -346,7 +347,7 @@ func TestShowStatementsCaseInsensitive(t *testing.T) {
 			"SHOW DATABASES",
 			"Show Databases",
 			"show tables from testdb",
-			"SHOW TABLES FROM testdb",
+			"SHOW TABLES FROM testdb;",
 			"Show Tables From testdb",
 			"show columns from testdb.users",
 			"SHOW COLUMNS FROM testdb.users",

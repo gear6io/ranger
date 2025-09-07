@@ -13,16 +13,17 @@ type Code struct {
 
 // Common error codes that can be used across packages
 var (
-	CommonInternal      = MustNewCode("common.internal")
-	CommonNotFound      = MustNewCode("common.not_found")
-	CommonValidation    = MustNewCode("common.validation")
-	CommonTimeout       = MustNewCode("common.timeout")
-	CommonUnauthorized  = MustNewCode("common.unauthorized")
-	CommonForbidden     = MustNewCode("common.forbidden")
-	CommonConflict      = MustNewCode("common.conflict")
-	CommonUnsupported   = MustNewCode("common.unsupported")
-	CommonInvalidInput  = MustNewCode("common.invalid_input")
-	CommonAlreadyExists = MustNewCode("common.already_exists")
+	CommonInternal       = MustNewCode("common.internal")
+	CommonNotFound       = MustNewCode("common.not_found")
+	CommonValidation     = MustNewCode("common.validation")
+	CommonTimeout        = MustNewCode("common.timeout")
+	CommonUnauthorized   = MustNewCode("common.unauthorized")
+	CommonForbidden      = MustNewCode("common.forbidden")
+	CommonConflict       = MustNewCode("common.conflict")
+	CommonUnsupported    = MustNewCode("common.unsupported")
+	CommonInvalidInput   = MustNewCode("common.invalid_input")
+	CommonAlreadyExists  = MustNewCode("common.already_exists")
+	CommonNotImplemented = MustNewCode("common.not_implemented")
 )
 
 // Validation regex: package.sub_component.error_code format (supports 2-3 levels)

@@ -8,13 +8,12 @@ import (
 	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/gear6io/ranger/server/astha"
 	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
-	"github.com/gear6io/ranger/server/types"
 	"github.com/rs/zerolog"
 )
 
 // SchemaManagerSubscriber implements Astha Subscriber interface for schema cache management
 type SchemaManagerSubscriber struct {
-	schemaManager SchemaManager
+	schemaManager *Schema
 	logger        zerolog.Logger
 	retryConfig   *RetryConfig
 	healthChecker *HealthChecker
@@ -37,7 +36,7 @@ type HealthChecker struct {
 }
 
 // NewSchemaManagerSubscriber creates a new Astha subscriber for schema management
-func NewSchemaManagerSubscriber(schemaManager SchemaManager, logger zerolog.Logger) *SchemaManagerSubscriber {
+func NewSchemaManagerSubscriber(schemaManager *Schema, logger zerolog.Logger) *SchemaManagerSubscriber {
 	return &SchemaManagerSubscriber{
 		schemaManager: schemaManager,
 		logger:        logger,
@@ -126,28 +125,8 @@ func (sms *SchemaManagerSubscriber) OnEvent(ctx context.Context, event astha.Eve
 	if err != nil {
 		sms.healthChecker.failureCount++
 
-		// Create comprehensive Astha event processing error
-		createTableErr := types.NewCreateTableRegistryError(
-			fmt.Sprintf("failed to process Astha event: %s", err.Error()),
-			"", // Table name will be extracted from event data
-			"", // Database will be extracted from event data
-			"", // Transaction ID
-			"", // Request ID
-			err,
-		).AddContext("event_id", event.ID).
-			AddContext("event_table", event.Table).
-			AddContext("event_operation", event.Operation).
-			AddContext("failure_count", sms.healthChecker.failureCount)
-
-		// Extract table and database info from event data if available
-		if eventData, ok := event.Data.(map[string]interface{}); ok {
-			if tableName, exists := eventData["name"].(string); exists {
-				createTableErr.AddContext("table_name", tableName)
-			}
-			if database, exists := eventData["database"].(string); exists {
-				createTableErr.AddContext("database", database)
-			}
-		}
+		// Create simple error for Astha event processing failure
+		createTableErr := fmt.Errorf("failed to process Astha event: %w", err)
 
 		sms.logger.Error().Err(err).
 			Int64("event_id", event.ID).

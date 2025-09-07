@@ -232,7 +232,7 @@ func (m *SQLParserMiddleware) analyzeAlterTableStatement(stmt *parser.AlterTable
 	analysis.StatementType = "ALTER TABLE"
 
 	if stmt.TableName != nil {
-		analysis.Tables = append(analysis.Tables, stmt.TableName.Value)
+		analysis.Tables = append(analysis.Tables, stmt.TableName.GetFullName())
 	}
 
 	return analysis

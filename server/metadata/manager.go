@@ -50,8 +50,8 @@ func (n *noOpDiagLogger) LogSummary() {}
 
 // MetadataManager coordinates between Iceberg catalog and personal metadata storage
 type MetadataManager struct {
-	iceberg        catalog.CatalogInterface
-	storage        *registry.Store
+	iceberg catalog.CatalogInterface
+	*registry.Store
 	hybrid         *registry.HybridDeploymentManager
 	icebergManager *iceberg.Manager
 	astha          *astha.Astha
@@ -62,7 +62,7 @@ type MetadataManager struct {
 }
 
 // NewMetadataManager creates a new metadata manager with bun migrations
-func NewMetadataManager(catalog catalog.CatalogInterface, dbPath, basePath string, logger zerolog.Logger) (*MetadataManager, error) {
+func NewMetadataManager(ctx context.Context, catalog catalog.CatalogInterface, dbPath, basePath string, logger zerolog.Logger) (*MetadataManager, error) {
 	// Create storage with bun migrations
 	storage, err := registry.NewStore(dbPath, basePath)
 	if err != nil {
@@ -77,7 +77,7 @@ func NewMetadataManager(catalog catalog.CatalogInterface, dbPath, basePath strin
 
 	manager := &MetadataManager{
 		iceberg:        catalog,
-		storage:        storage,
+		Store:          storage,
 		icebergManager: icebergManager,
 		pathManager:    pathManager,
 		logger:         logger,
@@ -90,11 +90,11 @@ func NewMetadataManager(catalog catalog.CatalogInterface, dbPath, basePath strin
 	}
 	manager.hybrid = registry.NewHybridDeploymentManager(storage, bunMigrator)
 
-	return manager, nil
+	return manager, manager.start(ctx)
 }
 
 // Start starts the MetadataManager and its components
-func (mm *MetadataManager) Start(ctx context.Context) error {
+func (mm *MetadataManager) start(ctx context.Context) error {
 	mm.mu.Lock()
 	defer mm.mu.Unlock()
 
@@ -194,7 +194,7 @@ func (mm *MetadataManager) initializeAstha(ctx context.Context) error {
 // loadPendingFiles loads files that need Iceberg metadata generation during startup
 func (mm *MetadataManager) loadPendingFiles(ctx context.Context) error {
 	// Get pending files from Registry
-	pendingFiles, err := mm.storage.GetPendingFilesForIceberg(ctx)
+	pendingFiles, err := mm.GetPendingFilesForIceberg(ctx)
 	if err != nil {
 		return err
 	}
@@ -224,48 +224,10 @@ func (mm *MetadataManager) EnsureDeploymentReady(ctx context.Context) error {
 	return mm.hybrid.EnsureDeploymentReady(ctx)
 }
 
-// CreateDatabase creates a new database
-func (mm *MetadataManager) CreateDatabase(ctx context.Context, dbName string) error {
-	// Create in personal metadata storage
-	if err := mm.storage.CreateDatabase(ctx, dbName); err != nil {
-		return err
-	}
-
-	// Create in Iceberg catalog if needed
-	// This is where you'd coordinate with the Iceberg catalog
-	log.Printf("Created database %s in personal metadata", dbName)
-
-	return nil
-}
-
-// DropDatabase drops a database
-func (mm *MetadataManager) DropDatabase(ctx context.Context, dbName string) error {
-	// Drop from personal metadata storage
-	if err := mm.storage.DropDatabase(ctx, dbName); err != nil {
-		return err
-	}
-
-	// Drop from Iceberg catalog if needed
-	// This is where you'd coordinate with the Iceberg catalog
-	log.Printf("Dropped database %s from personal metadata", dbName)
-
-	return nil
-}
-
-// ListDatabases returns a list of all databases
-func (mm *MetadataManager) ListDatabases(ctx context.Context) ([]string, error) {
-	return mm.storage.ListDatabases(ctx)
-}
-
-// DatabaseExists checks if a database exists
-func (mm *MetadataManager) DatabaseExists(ctx context.Context, dbName string) bool {
-	return mm.storage.DatabaseExists(ctx, dbName)
-}
-
 // CreateTable creates a new table with complete metadata
 func (mm *MetadataManager) CreateTable(ctx context.Context, dbName, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) error {
 	// Create table with complete metadata in a single operation
-	_, err := mm.storage.CreateTable(ctx, dbName, tableName, schema, storageEngine, engineConfig)
+	_, err := mm.Store.CreateTable(ctx, dbName, tableName, schema, storageEngine, engineConfig)
 	if err != nil {
 		return err
 	}
@@ -280,7 +242,7 @@ func (mm *MetadataManager) CreateTable(ctx context.Context, dbName, tableName st
 // DropTable drops a table
 func (mm *MetadataManager) DropTable(ctx context.Context, dbName, tableName string) error {
 	// Drop from personal metadata storage
-	if err := mm.storage.DropTable(ctx, dbName, tableName); err != nil {
+	if err := mm.DropTable(ctx, dbName, tableName); err != nil {
 		return err
 	}
 
@@ -293,18 +255,18 @@ func (mm *MetadataManager) DropTable(ctx context.Context, dbName, tableName stri
 
 // ListTables returns a list of tables in a database
 func (mm *MetadataManager) ListTables(ctx context.Context, dbName string) ([]string, error) {
-	return mm.storage.ListTables(ctx, dbName)
+	return mm.ListTables(ctx, dbName)
 }
 
 // TableExists checks if a table exists
 func (mm *MetadataManager) TableExists(ctx context.Context, dbName, tableName string) bool {
-	return mm.storage.TableExists(ctx, dbName, tableName)
+	return mm.TableExists(ctx, dbName, tableName)
 }
 
 // Close releases resources
 func (mm *MetadataManager) Close() error {
-	if mm.storage != nil {
-		return mm.storage.Close()
+	if mm != nil {
+		return mm.Store.Close()
 	}
 	return nil
 }
@@ -316,8 +278,6 @@ func (mm *MetadataManager) GetType() string {
 
 // Shutdown gracefully shuts down the metadata manager
 func (mm *MetadataManager) Shutdown(ctx context.Context) error {
-	log.Printf("Shutting down metadata manager")
-
 	// Stop the manager first
 	if err := mm.Stop(ctx); err != nil {
 		return err
@@ -328,48 +288,13 @@ func (mm *MetadataManager) Shutdown(ctx context.Context) error {
 		return err
 	}
 
-	log.Printf("Metadata manager shut down successfully")
+	mm.logger.Info().Msg("Metadata manager shut down successfully")
 	return nil
 }
 
 // GetCatalog returns the Iceberg catalog
 func (mm *MetadataManager) GetCatalog() catalog.CatalogInterface {
 	return mm.iceberg
-}
-
-// LoadTableMetadata loads detailed metadata for a table
-func (mm *MetadataManager) LoadTableMetadata(ctx context.Context, database, tableName string) (*registry.TableMetadata, error) {
-	return mm.storage.LoadTableMetadata(ctx, database, tableName)
-}
-
-// ListAllTables returns a list of all tables across all databases (for storage manager)
-func (mm *MetadataManager) ListAllTables(ctx context.Context) ([]string, error) {
-	return mm.storage.ListAllTables(ctx)
-}
-
-// UpdateTableAfterInsertion performs metadata updates after successful data insertion
-func (mm *MetadataManager) UpdateTableAfterInsertion(ctx context.Context, database, tableName string, fileInfo registry.FileInsertionInfo) error {
-	return mm.storage.UpdateTableAfterInsertion(ctx, database, tableName, fileInfo)
-}
-
-// GetCompleteTableInfoByID retrieves complete table information by table ID
-func (mm *MetadataManager) GetCompleteTableInfoByID(ctx context.Context, tableID int64) (*registry.CompleteTableInfo, error) {
-	return mm.storage.GetCompleteTableInfoByID(ctx, tableID)
-}
-
-// GetTableReferenceByID retrieves basic table reference (database + table name) by table ID
-func (mm *MetadataManager) GetTableReferenceByID(ctx context.Context, tableID int64) (*registry.TableReference, error) {
-	return mm.storage.GetTableReferenceByID(ctx, tableID)
-}
-
-// ValidateTableMetadata validates that a table has complete metadata for Iceberg operations
-func (mm *MetadataManager) ValidateTableMetadata(ctx context.Context, tableID int64) error {
-	return mm.storage.ValidateTableMetadata(ctx, tableID)
-}
-
-// GetPendingFilesForIceberg retrieves files that need Iceberg metadata generation
-func (mm *MetadataManager) GetPendingFilesForIceberg(ctx context.Context) ([]*regtypes.TableFile, error) {
-	return mm.storage.GetPendingFilesForIceberg(ctx)
 }
 
 // CreateTableWithSchema creates a table with schema in a single transaction
@@ -396,21 +321,7 @@ func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseNa
 	if !mm.running {
 		mm.mu.RUnlock()
 
-		err := types.NewCreateTableRegistryError(
-			"metadata manager is not running",
-			table.Name,
-			databaseName,
-			transactionID,
-			transactionID,
-			errors.New(MetadataManagerNotRunning, "metadata manager is not running", nil),
-		).AddSuggestion("Start the metadata manager before creating tables").
-			AddRecoveryHint(types.RecoveryHint{
-				Type:        "restart_service",
-				Description: "Restart the metadata manager service",
-				Action:      "Check metadata manager status and restart if necessary",
-				Automatic:   false,
-			})
-
+		err := errors.New(MetadataManagerNotRunning, "metadata manager is not running", nil)
 		diagLogger.LogOperationEnd("check_manager_status", false, err, nil)
 		return 0, err
 	}
@@ -424,43 +335,19 @@ func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseNa
 	})
 
 	if databaseName == "" {
-		err := types.NewCreateTableRegistryError(
-			"database name is required",
-			table.Name,
-			databaseName,
-			transactionID,
-			transactionID,
-			errors.New(MetadataOperationFailed, "database name is required", nil),
-		).AddSuggestion("Provide a valid database name")
-
+		err := errors.New(MetadataOperationFailed, "database name is required", nil)
 		diagLogger.LogOperationEnd("validate_input_parameters", false, err, nil)
 		return 0, err
 	}
 
 	if table == nil {
-		err := types.NewCreateTableRegistryError(
-			"table metadata cannot be nil",
-			"",
-			databaseName,
-			transactionID,
-			transactionID,
-			errors.New(MetadataOperationFailed, "table cannot be nil", nil),
-		).AddSuggestion("Provide valid table metadata")
-
+		err := errors.New(MetadataOperationFailed, "table cannot be nil", nil)
 		diagLogger.LogOperationEnd("validate_input_parameters", false, err, nil)
 		return 0, err
 	}
 
 	if len(columns) == 0 {
-		err := types.NewCreateTableRegistryError(
-			"table must have at least one column",
-			table.Name,
-			databaseName,
-			transactionID,
-			transactionID,
-			errors.New(MetadataOperationFailed, "table must have at least one column", nil),
-		).AddSuggestion("Add at least one column definition to the table")
-
+		err := errors.New(MetadataOperationFailed, "table must have at least one column", nil)
 		diagLogger.LogOperationEnd("validate_input_parameters", false, err, nil)
 		return 0, err
 	}
@@ -476,29 +363,8 @@ func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseNa
 	})
 
 	if err := mm.validateSchemaWithIcebergTypes(table, columns); err != nil {
-		// Extract validation details for comprehensive error
-		var invalidTypes []string
-
-		// Parse validation error to extract specific issues
-		errorMsg := err.Error()
-		if strings.Contains(errorMsg, "invalid type") {
-			// Extract invalid types from error message
-			// This is simplified - in practice, you'd want more sophisticated parsing
-			invalidTypes = append(invalidTypes, "extracted_from_error")
-		}
-
-		createTableErr := types.NewCreateTableTypeValidationError(
-			"schema validation failed - invalid Iceberg types detected",
-			table.Name,
-			invalidTypes,
-			err,
-		).AddContext("database", databaseName).
-			AddContext("transaction_id", transactionID).
-			AddSuggestion("Use only supported Iceberg data types").
-			AddSuggestion("Check the centralized Iceberg type system documentation")
-
-		diagLogger.LogValidationError("validate_schema_iceberg_types", createTableErr.Diagnostics.ValidationDetails)
-		diagLogger.LogOperationEnd("validate_schema_iceberg_types", false, createTableErr, nil)
+		diagLogger.LogValidationError("validate_schema_iceberg_types", err)
+		diagLogger.LogOperationEnd("validate_schema_iceberg_types", false, err, nil)
 
 		mm.logger.Error().Err(err).
 			Str("database", databaseName).
@@ -507,7 +373,7 @@ func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseNa
 			Str("transaction_id", transactionID).
 			Msg("Schema validation failed")
 
-		return 0, createTableErr
+		return 0, err
 	}
 
 	diagLogger.LogOperationEnd("validate_schema_iceberg_types", true, nil, map[string]interface{}{
@@ -520,17 +386,7 @@ func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseNa
 	})
 
 	if err := mm.validateTableMetadata(table); err != nil {
-		createTableErr := types.NewCreateTableRegistryError(
-			"table metadata validation failed",
-			table.Name,
-			databaseName,
-			transactionID,
-			transactionID,
-			err,
-		).AddSuggestion("Check table metadata for consistency").
-			AddSuggestion("Verify storage engine and configuration settings")
-
-		diagLogger.LogOperationEnd("validate_table_metadata", false, createTableErr, nil)
+		diagLogger.LogOperationEnd("validate_table_metadata", false, err, nil)
 
 		mm.logger.Error().Err(err).
 			Str("database", databaseName).
@@ -538,7 +394,7 @@ func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseNa
 			Str("transaction_id", transactionID).
 			Msg("Table metadata validation failed")
 
-		return 0, createTableErr
+		return 0, err
 	}
 
 	diagLogger.LogOperationEnd("validate_table_metadata", true, nil, map[string]interface{}{
@@ -554,68 +410,9 @@ func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseNa
 		"transaction_id": transactionID,
 	})
 
-	tableID, err := mm.storage.CreateTableWithColumns(ctx, databaseName, table, columns)
+	tableID, err := mm.CreateTableWithColumns(ctx, databaseName, table, columns)
 	if err != nil {
-		// Enhanced error handling with comprehensive context and recovery suggestions
-		registryDiagnostics := &types.RegistryDiagnostics{
-			TransactionID:     transactionID,
-			TablesCreated:     []string{}, // No tables created due to failure
-			ColumnsCreated:    0,
-			RollbackPerformed: true, // Assume rollback was performed
-			DatabaseState: map[string]string{
-				"database": databaseName,
-				"status":   "transaction_failed",
-			},
-		}
-
-		var createTableErr *types.CreateTableError
-
-		// Check for specific error types and provide better error messages
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "already exists") {
-			registryDiagnostics.ConstraintViolations = []string{
-				fmt.Sprintf("UNIQUE constraint violation: table '%s' already exists", table.Name),
-			}
-		} else if strings.Contains(err.Error(), "database does not exist") {
-			// Database doesn't exist
-		} else if strings.Contains(err.Error(), "transaction") {
-			createTableErr = types.NewCreateTableRegistryError(
-				"transaction failed during table creation",
-				table.Name,
-				databaseName,
-				transactionID,
-				transactionID,
-				errors.New(RegistryTransactionFailed, "transaction failed during table creation", err),
-			).AddSuggestion("Check database connectivity and locks").
-				AddSuggestion("Retry the operation with a new transaction").
-				AddRecoveryHint(types.RecoveryHint{
-					Type:        "retry",
-					Description: "Retry with a new transaction",
-					Action:      "Start a new transaction and retry the table creation",
-					Automatic:   true,
-				})
-		} else {
-			createTableErr = types.NewCreateTableRegistryError(
-				"failed to create table with schema in registry",
-				table.Name,
-				databaseName,
-				transactionID,
-				transactionID,
-				err,
-			).AddSuggestion("Check database connectivity").
-				AddSuggestion("Verify registry schema integrity").
-				AddRecoveryHint(types.RecoveryHint{
-					Type:        "check_database",
-					Description: "Verify database connectivity and state",
-					Action:      "Check database connection and schema integrity",
-					Automatic:   false,
-				})
-		}
-
-		// Add registry diagnostics to the error
-		createTableErr.Diagnostics.RegistryState = registryDiagnostics
-
-		diagLogger.LogRegistryOperation("create_table_registry_transaction", registryDiagnostics)
-		diagLogger.LogOperationEnd("create_table_registry_transaction", false, createTableErr, nil)
+		diagLogger.LogOperationEnd("create_table_registry_transaction", false, err, nil)
 
 		mm.logger.Error().Err(err).
 			Str("database", databaseName).
@@ -624,23 +421,10 @@ func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseNa
 			Str("transaction_id", transactionID).
 			Msg("Failed to create table with schema in registry")
 
-		return 0, createTableErr
+		return 0, err
 	}
 
 	// Success - log comprehensive information
-	successDiagnostics := &types.RegistryDiagnostics{
-		TransactionID:     transactionID,
-		TablesCreated:     []string{table.Name},
-		ColumnsCreated:    len(columns),
-		RollbackPerformed: false,
-		DatabaseState: map[string]string{
-			"database": databaseName,
-			"status":   "transaction_successful",
-			"table_id": fmt.Sprintf("%d", tableID),
-		},
-	}
-
-	diagLogger.LogRegistryOperation("create_table_registry_transaction", successDiagnostics)
 	diagLogger.LogOperationEnd("create_table_registry_transaction", true, nil, map[string]interface{}{
 		"table_id":       tableID,
 		"transaction_id": transactionID,

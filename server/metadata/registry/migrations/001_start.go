@@ -41,7 +41,6 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	// Users table (for authentication and access control)
 	if _, err := tx.NewCreateTable().
 		Model((*regtypes.User)(nil)).
-		IfNotExists().
 		Exec(ctx); err != nil {
 		return errors.New(MigrationTableCreationFailed, "failed to create users table", err)
 	}
@@ -49,7 +48,6 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	// Databases table (for organizing tables)
 	if _, err := tx.NewCreateTable().
 		Model((*regtypes.Database)(nil)).
-		IfNotExists().
 		Exec(ctx); err != nil {
 		return errors.New(MigrationTableCreationFailed, "failed to create databases table", err)
 	}
@@ -63,7 +61,6 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	if _, err := tx.NewCreateTable().
 		Model((*regtypes.Table)(nil)).
 		ForeignKey(`("database_id") REFERENCES "databases" ("id") ON DELETE CASCADE`).
-		IfNotExists().
 		Exec(ctx); err != nil {
 		return errors.New(MigrationTableCreationFailed, "failed to create tables table", err)
 	}
@@ -82,7 +79,6 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	if _, err := tx.NewCreateTable().
 		Model((*regtypes.TableMetadata)(nil)).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
-		IfNotExists().
 		Exec(ctx); err != nil {
 		return errors.New(MigrationTableCreationFailed, "failed to create table_metadata table", err)
 	}
@@ -100,7 +96,6 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	if _, err := tx.NewCreateTable().
 		Model((*regtypes.TableFile)(nil)).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
-		IfNotExists().
 		Exec(ctx); err != nil {
 		return errors.New(MigrationTableCreationFailed, "failed to create table_files table", err)
 	}
@@ -116,7 +111,6 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	if _, err := tx.NewCreateTable().
 		Model((*regtypes.TablePartition)(nil)).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
-		IfNotExists().
 		Exec(ctx); err != nil {
 		return errors.New(MigrationTableCreationFailed, "failed to create table_partitions table", err)
 	}
@@ -130,7 +124,6 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	if _, err := tx.NewCreateTable().
 		Model((*regtypes.TableColumn)(nil)).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
-		IfNotExists().
 		Exec(ctx); err != nil {
 		return errors.New(MigrationTableCreationFailed, "failed to create table_columns table", err)
 	}
@@ -147,7 +140,6 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	if _, err := tx.NewCreateTable().
 		Model((*regtypes.TableIndex)(nil)).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
-		IfNotExists().
 		Exec(ctx); err != nil {
 		return errors.New(MigrationTableCreationFailed, "failed to create table_indexes table", err)
 	}
@@ -159,7 +151,6 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	if _, err := tx.NewCreateTable().
 		Model((*regtypes.TableConstraint)(nil)).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
-		IfNotExists().
 		Exec(ctx); err != nil {
 		return errors.New(MigrationTableCreationFailed, "failed to create table_constraints table", err)
 	}
@@ -171,7 +162,6 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	if _, err := tx.NewCreateTable().
 		Model((*regtypes.TableStatistic)(nil)).
 		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
-		IfNotExists().
 		Exec(ctx); err != nil {
 		return errors.New(MigrationTableCreationFailed, "failed to create table_statistics table", err)
 	}
@@ -187,7 +177,6 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	if _, err := tx.NewCreateTable().
 		Model((*regtypes.AccessLog)(nil)).
 		ForeignKey(`("user_id") REFERENCES "users" ("id") ON DELETE SET NULL`).
-		IfNotExists().
 		Exec(ctx); err != nil {
 		return errors.New(MigrationTableCreationFailed, "failed to create access_log table", err)
 	}
@@ -201,13 +190,27 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	// Schema versions table (migration tracking)
 	if _, err := tx.NewCreateTable().
 		Model((*regtypes.SchemaVersion)(nil)).
-		IfNotExists().
 		Exec(ctx); err != nil {
 		return errors.New(MigrationTableCreationFailed, "failed to create schema_versions table", err)
 	}
 
 	// Schema versions indexes (no specific indexes needed for this table)
 	schemaVersionsIndexes := []string{}
+
+	// CDC log table (change data capture)
+	if _, err := tx.NewCreateTable().
+		Model((*regtypes.ChangeLog)(nil)).
+		Exec(ctx); err != nil {
+		return errors.New(MigrationTableCreationFailed, "failed to create __cdc_log table", err)
+	}
+
+	// CDC log indexes
+	cdcLogIndexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_cdc_log_timestamp ON __cdc_log(timestamp)`,
+		`CREATE INDEX IF NOT EXISTS idx_cdc_log_tablename ON __cdc_log(tablename)`,
+		`CREATE INDEX IF NOT EXISTS idx_cdc_log_operation ON __cdc_log(operation)`,
+		`CREATE INDEX IF NOT EXISTS idx_cdc_log_created ON __cdc_log(created_at)`,
+	}
 
 	// Combine all index groups
 	allIndexes := [][]string{
@@ -222,6 +225,7 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 		tableStatisticsIndexes,
 		accessLogIndexes,
 		schemaVersionsIndexes,
+		cdcLogIndexes,
 	}
 
 	// Create all indexes
@@ -238,10 +242,18 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 
 	// Insert default system user
 	if _, err := tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO users (username, email, display_name, is_active, created_at, updated_at)
+			INSERT INTO users (username, email, display_name, is_active, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?)
 		`, "system", "system@ranger.local", "System User", true, now, now); err != nil {
 		return errors.New(MigrationDataInsertionFailed, "failed to insert default user", err)
+	}
+
+	// Insert default database
+	if _, err := tx.ExecContext(ctx, `
+			INSERT INTO databases (name, description, is_system, is_read_only, table_count, total_size, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, "default", "Default database", false, false, 0, 0, now, now); err != nil {
+		return errors.New(MigrationDataInsertionFailed, "failed to insert default database", err)
 	}
 
 	// Insert initial schema version

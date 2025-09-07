@@ -2,12 +2,12 @@ package jdbc
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 
+	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/gear6io/ranger/server/query/duckdb"
 	"github.com/rs/zerolog"
 )

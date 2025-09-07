@@ -64,7 +64,6 @@ func TestAsthaCreation(t *testing.T) {
 	assert.NotNil(t, astha)
 
 	// Verify configuration
-	assert.Equal(t, "__cdc_log", astha.GetCDCLogTable())
 	assert.Equal(t, []string{"tables", "table_files", "table_statistics", "table_metadata"}, astha.GetMonitoredTables())
 }
 

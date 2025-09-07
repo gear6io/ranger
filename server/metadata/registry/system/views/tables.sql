@@ -1,5 +1,5 @@
 -- System view for tables metadata
-CREATE VIEW IF NOT EXISTS system.tables AS
+CREATE VIEW IF NOT EXISTS system_tables AS
 SELECT 
     d.name as database_name,
     t.name as table_name,

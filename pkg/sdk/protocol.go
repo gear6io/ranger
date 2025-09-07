@@ -432,6 +432,11 @@ func (c *connection) readExecResponse() error {
 			// Handle exception signal
 			exception := signal.(*signals.ServerException)
 			return fmt.Errorf("server exception [%s]: %s", exception.ErrorCode, exception.ErrorMessage)
+		case protocol.ServerClose:
+			// Handle server close signal
+			close := signal.(*signals.ServerClose)
+			c.bad = true // Mark connection as bad
+			return fmt.Errorf("server closed connection: %s", close.Reason)
 		case protocol.ServerData:
 			// Handle data signal - just continue reading
 			continue
@@ -505,6 +510,11 @@ func (c *connection) sendBatchData(batch *Batch) error {
 			// Handle exception signal
 			exception := signal.(*signals.ServerException)
 			return fmt.Errorf("server exception [%s]: %s", exception.ErrorCode, exception.ErrorMessage)
+		case protocol.ServerClose:
+			// Handle server close signal
+			close := signal.(*signals.ServerClose)
+			c.bad = true // Mark connection as bad
+			return fmt.Errorf("server closed connection: %s", close.Reason)
 		case protocol.ServerData:
 			// Handle data signal - just continue reading for batch operations
 			continue

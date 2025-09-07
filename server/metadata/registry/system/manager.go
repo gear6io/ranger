@@ -18,14 +18,15 @@ type Manager struct {
 }
 
 // NewManager creates a new system database manager
-func NewManager(db *sql.DB) *Manager {
-	return &Manager{
+func NewManager(ctx context.Context, db *sql.DB) (*Manager, error) {
+	mgr := &Manager{
 		db: db,
 	}
+	return mgr, mgr.init(ctx)
 }
 
 // Initialize creates or recreates all system views from embedded SQL files
-func (m *Manager) Initialize(ctx context.Context) error {
+func (m *Manager) init(ctx context.Context) error {
 	// Get all SQL files from embedded FS
 	entries, err := fs.ReadDir(ViewsFS, "views")
 	if err != nil {
@@ -119,7 +120,7 @@ func (m *Manager) Query(ctx context.Context, query string) (*QueryResult, error)
 
 // GetSystemDatabases returns all databases from the system view
 func (m *Manager) GetSystemDatabases(ctx context.Context) ([]*SystemDatabase, error) {
-	query := `SELECT database_name, display_name, description, is_system, is_read_only, table_count, total_size, created_at, updated_at FROM system.databases`
+	query := `SELECT database_name, display_name, description, is_system, is_read_only, table_count, total_size, created_at, updated_at FROM system_databases`
 
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
@@ -152,7 +153,7 @@ func (m *Manager) GetSystemDatabases(ctx context.Context) ([]*SystemDatabase, er
 
 // GetSystemTables returns all tables from the system view
 func (m *Manager) GetSystemTables(ctx context.Context, databaseName string) ([]*SystemTable, error) {
-	query := `SELECT database_name, table_name, display_name, description, table_type, is_temporary, is_external, row_count, file_count, total_size, created_at, updated_at FROM system.tables WHERE database_name = ?`
+	query := `SELECT database_name, table_name, display_name, description, table_type, is_temporary, is_external, row_count, file_count, total_size, created_at, updated_at FROM system_tables WHERE database_name = ?`
 
 	rows, err := m.db.QueryContext(ctx, query, databaseName)
 	if err != nil {
@@ -188,7 +189,7 @@ func (m *Manager) GetSystemTables(ctx context.Context, databaseName string) ([]*
 
 // GetSystemColumns returns all columns from the system view
 func (m *Manager) GetSystemColumns(ctx context.Context, databaseName, tableName string) ([]*SystemColumn, error) {
-	query := `SELECT database_name, table_name, column_name, display_name, data_type, is_nullable, is_primary, is_unique, default_value, description, ordinal_position, max_length, precision, scale, created_at, updated_at FROM system.columns WHERE database_name = ? AND table_name = ? ORDER BY ordinal_position`
+	query := `SELECT database_name, table_name, column_name, display_name, data_type, is_nullable, is_primary, is_unique, default_value, description, ordinal_position, max_length, precision, scale, created_at, updated_at FROM system_columns WHERE database_name = ? AND table_name = ? ORDER BY ordinal_position`
 
 	rows, err := m.db.QueryContext(ctx, query, databaseName, tableName)
 	if err != nil {
@@ -229,7 +230,7 @@ func (m *Manager) GetSystemColumns(ctx context.Context, databaseName, tableName 
 // GenerateCreateTableDDL generates CREATE TABLE DDL from metadata
 func (m *Manager) GenerateCreateTableDDL(ctx context.Context, databaseName, tableName string) (string, error) {
 	// Get table metadata first
-	tableQuery := `SELECT table_type, is_temporary, is_external FROM system.tables WHERE database_name = ? AND table_name = ?`
+	tableQuery := `SELECT table_type, is_temporary, is_external FROM system_tables WHERE database_name = ? AND table_name = ?`
 	var tableType string
 	var isTemporary, isExternal bool
 	err := m.db.QueryRowContext(ctx, tableQuery, databaseName, tableName).Scan(&tableType, &isTemporary, &isExternal)
@@ -361,4 +362,3 @@ type SystemColumn struct {
 	CreatedAt       string
 	UpdatedAt       string
 }
-

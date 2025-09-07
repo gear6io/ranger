@@ -8,7 +8,7 @@ require (
 	github.com/c-bata/go-prompt v0.2.6
 	github.com/go-faster/errors v0.7.1
 	github.com/google/uuid v1.6.0
-	github.com/hamba/avro/v2 v2.29.0
+	github.com/jellydator/ttlcache/v3 v3.4.0
 	github.com/johannesboyne/gofakes3 v0.0.0-20250402064820-d479899d8cbe
 	github.com/marcboeker/go-duckdb/v2 v2.3.0
 	github.com/mattn/go-sqlite3 v1.14.28
@@ -104,8 +104,8 @@ require (
 	github.com/googleapis/gax-go/v2 v2.15.0 // indirect
 	github.com/gookit/color v1.5.4 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/hamba/avro/v2 v2.29.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/jellydator/ttlcache/v3 v3.4.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect

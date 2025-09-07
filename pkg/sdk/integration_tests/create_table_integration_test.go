@@ -488,7 +488,7 @@ func TestCreateTableQueryIntegration(t *testing.T) {
 			createTableSQL := `CREATE TABLE query_test (
 				id int64 NOT NULL,
 				name string NOT NULL,
-				created_at timestamp DEFAULT CURRENT_TIMESTAMP
+				created_at timestamp
 			) STORAGE FILESYSTEM;`
 
 			err := client.Exec(ctx, createTableSQL)

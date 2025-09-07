@@ -3,7 +3,6 @@ package astha
 import (
 	"testing"
 
-	"github.com/gear6io/ranger/server/metadata/registry"
 	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
 	"github.com/stretchr/testify/assert"
 )
@@ -11,7 +10,7 @@ import (
 func TestGenericEventConversion(t *testing.T) {
 	// Create a sample CDC change for table_files
 	// Note: We'll use simple fields that don't have time.Time to avoid parsing issues
-	change := registry.CDCLogEntry{
+	change := regtypes.ChangeLog{
 		ID:        1,
 		Timestamp: "2024-01-01 12:00:00.000000000",
 		CreatedAt: "2024-01-01 12:00:00.000000000",
@@ -50,7 +49,7 @@ func TestGenericEventConversion(t *testing.T) {
 	t.Run("ConvertToTableEvent maintains type safety", func(t *testing.T) {
 		// Create a sample CDC change for tables
 		// Note: We'll use simple fields that don't have time.Time to avoid parsing issues
-		tableChange := registry.CDCLogEntry{
+		tableChange := regtypes.ChangeLog{
 			ID:        2,
 			Timestamp: "2024-01-01 12:00:00.000000000",
 			CreatedAt: "2024-01-01 12:00:00.000000000",
@@ -99,7 +98,7 @@ func TestGenericEventConversion(t *testing.T) {
 }
 
 func TestParseDataToType(t *testing.T) {
-	change := registry.CDCLogEntry{
+	change := regtypes.ChangeLog{
 		Operation: "INSERT",
 		After:     `{"id": 1, "database_id": 1, "name": "test", "display_name": "Test", "description": "Test table", "table_type": "user", "is_temporary": false, "is_external": false, "row_count": 0, "file_count": 0, "total_size": 0}`,
 	}

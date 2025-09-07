@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"testing"
 
 	"github.com/gear6io/ranger/server/catalog"
@@ -43,7 +44,7 @@ func TestNewGateway(t *testing.T) {
 	}
 
 	// Create storage manager
-	storageMgr, err := storage.NewManager(cfg, logger, metadataMgr)
+	storageMgr, err := storage.NewStorage(context.Background(), cfg, logger, metadataMgr)
 	if err != nil {
 		t.Fatalf("Failed to create storage manager: %v", err)
 	}

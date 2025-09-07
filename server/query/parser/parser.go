@@ -870,38 +870,6 @@ func (p *Parser) expectDataType(found *Token) *ParseError {
 	return p.newTypeError(ErrInvalidIcebergType, message, found, suggestions)
 }
 
-// getLegacySQLTypeMapping returns the Iceberg equivalent for legacy SQL types
-func (p *Parser) getLegacySQLTypeMapping(legacyType string) string {
-	// Map common legacy SQL types to their Iceberg equivalents
-	mappings := map[string]string{
-		"VARCHAR":   "string",
-		"CHAR":      "string",
-		"TEXT":      "string",
-		"INT":       "int32",
-		"INTEGER":   "int32",
-		"BIGINT":    "int64",
-		"SMALLINT":  "int32",
-		"TINYINT":   "int32",
-		"FLOAT":     "float32",
-		"DOUBLE":    "float64",
-		"REAL":      "float32",
-		"NUMERIC":   "decimal",
-		"DECIMAL":   "decimal",
-		"BOOL":      "boolean",
-		"DATETIME":  "timestamp",
-		"TIMESTAMP": "timestamp",
-		"DATE":      "date",
-		"TIME":      "time",
-		"BLOB":      "binary",
-		"BINARY":    "binary",
-		"VARBINARY": "binary",
-	}
-
-	// Convert to uppercase for case-insensitive matching
-	upperType := strings.ToUpper(legacyType)
-	return mappings[upperType]
-}
-
 // expectLiteral creates a syntax error for missing literals
 func (p *Parser) expectLiteral(found *Token) *ParseError {
 	return p.newSyntaxError(ErrExpectedLiteral, "expected literal value", []string{"literal"}, found)
@@ -3525,21 +3493,6 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 				}
 				dataType = complexType
 			}
-		} else if p.peek(0).tokenT == KEYWORD_TOK {
-			// Handle legacy SQL types that come through as keywords - reject with descriptive error
-			legacyType := p.peek(0).value.(string)
-			currentToken := p.peekToken(0)
-
-			// Map legacy SQL types to Iceberg equivalents
-			icebergEquivalent := p.getLegacySQLTypeMapping(legacyType)
-			if icebergEquivalent != "" {
-				message := fmt.Sprintf("unsupported SQL type '%s'. Use Iceberg type '%s' instead", legacyType, icebergEquivalent)
-				return nil, p.newTypeError(ErrUnsupportedSQLType, message, currentToken, []string{icebergEquivalent})
-			}
-
-			// Generic error for unknown legacy types
-			message := fmt.Sprintf("legacy SQL type '%s' is not supported. Only Iceberg types are allowed", legacyType)
-			return nil, p.newTypeError(ErrUnsupportedSQLType, message, currentToken, []string{"valid Iceberg type"})
 		} else {
 			return nil, p.expectDataType(p.peekToken(0))
 		}
@@ -3652,11 +3605,11 @@ func (p *Parser) parseCreateTableStmt() (Node, error) {
 	// Validate storage engine if specified
 	if createTableStmt.StorageEngine != nil {
 		validEngines := map[string]bool{
-			"filesystem": true,
-			"memory":     true,
-			"s3":         true,
+			"FILESYSTEM": true,
+			"MEMORY":     true,
+			"S3":         true,
 		}
-		if !validEngines[strings.ToLower(createTableStmt.StorageEngine.Value)] {
+		if !validEngines[createTableStmt.StorageEngine.Value] {
 			return nil, errors.New(ErrExpectedIdentifier, fmt.Sprintf("invalid storage engine: %s", createTableStmt.StorageEngine.Value), nil)
 		}
 	}
@@ -3675,13 +3628,6 @@ func (p *Parser) validateIcebergType(typeStr string) error {
 	if !validator.IsValidType(typeStr) {
 		// Get the current token for error context
 		currentToken := &p.lexer.tokens[p.pos-1] // Previous token was the type
-
-		// Check if it's a legacy SQL type and provide specific mapping
-		icebergEquivalent := p.getLegacySQLTypeMapping(typeStr)
-		if icebergEquivalent != "" {
-			message := fmt.Sprintf("unsupported SQL type '%s'. Use Iceberg type '%s' instead", typeStr, icebergEquivalent)
-			return p.newTypeError(ErrUnsupportedSQLType, message, currentToken, []string{icebergEquivalent})
-		}
 
 		// Provide comprehensive Iceberg type suggestions including complex types
 		suggestions := []string{

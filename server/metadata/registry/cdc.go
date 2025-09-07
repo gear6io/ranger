@@ -17,31 +17,18 @@ var (
 	RegistryCDCTriggerFailed  = errors.MustNewCode("registry.cdc_trigger_failed")
 )
 
-// CDCLogEntry represents a raw change from the CDC log table
-type CDCLogEntry struct {
-	ID        int64  `json:"id"`
-	Timestamp string `json:"timestamp"`
-	TableName string `json:"tablename"`
-	Operation string `json:"operation"`
-	Before    string `json:"before"` // JSON string of OLD values
-	After     string `json:"after"`  // JSON string of NEW values
-	CreatedAt string `json:"created_at"`
-}
-
 // CDCSetup manages the CDC table and triggers
 type CDCSetup struct {
 	db              *sql.DB
 	logger          zerolog.Logger
-	logTable        string
 	monitoredTables []string
 }
 
 // NewCDCSetup creates a new CDC setup manager
 func NewCDCSetup(db *sql.DB, logger zerolog.Logger) *CDCSetup {
 	return &CDCSetup{
-		db:       db,
-		logger:   logger,
-		logTable: "__cdc_log",
+		db:     db,
+		logger: logger,
 		monitoredTables: []string{
 			"tables",
 			"table_files",
@@ -55,11 +42,6 @@ func NewCDCSetup(db *sql.DB, logger zerolog.Logger) *CDCSetup {
 func (c *CDCSetup) SetupCDC(ctx context.Context) error {
 	c.logger.Info().Msg("Setting up CDC infrastructure")
 
-	// Create CDC log table
-	if err := c.createCDCLogTable(ctx); err != nil {
-		return errors.New(RegistryCDCCreationFailed, "failed to create CDC log table", err)
-	}
-
 	// Create triggers for each monitored table
 	for _, table := range c.monitoredTables {
 		if err := c.createTableTriggers(ctx, table); err != nil {
@@ -68,75 +50,6 @@ func (c *CDCSetup) SetupCDC(ctx context.Context) error {
 	}
 
 	c.logger.Info().Msg("CDC infrastructure setup completed")
-	return nil
-}
-
-// TeardownCDC removes CDC triggers and table
-func (c *CDCSetup) TeardownCDC(ctx context.Context) error {
-	c.logger.Info().Msg("Tearing down CDC infrastructure")
-
-	// Drop triggers for each monitored table
-	for _, table := range c.monitoredTables {
-		if err := c.dropTableTriggers(ctx, table); err != nil {
-			c.logger.Warn().Err(err).Str("table", table).Msg("Failed to drop triggers for table")
-		}
-	}
-
-	// Drop CDC log table
-	if err := c.dropCDCLogTable(ctx); err != nil {
-		return errors.New(RegistryCDCCreationFailed, "failed to drop CDC log table", err)
-	}
-
-	c.logger.Info().Msg("CDC infrastructure teardown completed")
-	return nil
-}
-
-// createCDCLogTable creates the CDC log table
-func (c *CDCSetup) createCDCLogTable(ctx context.Context) error {
-	query := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			timestamp TEXT NOT NULL,
-			tablename TEXT NOT NULL,
-			operation TEXT NOT NULL,
-			before TEXT,
-			after TEXT,
-			created_at TEXT NOT NULL
-		)
-	`, c.logTable)
-
-	_, err := c.db.ExecContext(ctx, query)
-	if err != nil {
-		return errors.New(RegistryCDCCreationFailed, "failed to create CDC log table", err)
-	}
-
-	// Create indexes for performance
-	indexes := []string{
-		fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_timestamp ON %s(timestamp)", c.logTable, c.logTable),
-		fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_tablename ON %s(tablename)", c.logTable, c.logTable),
-		fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_operation ON %s(operation)", c.logTable, c.logTable),
-		fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_created ON %s(created_at)", c.logTable, c.logTable),
-	}
-
-	for _, index := range indexes {
-		if _, err := c.db.ExecContext(ctx, index); err != nil {
-			return errors.New(RegistryCDCIndexFailed, "failed to create CDC index", err)
-		}
-	}
-
-	c.logger.Debug().Str("table", c.logTable).Msg("Created CDC log table with indexes")
-	return nil
-}
-
-// dropCDCLogTable drops the CDC log table
-func (c *CDCSetup) dropCDCLogTable(ctx context.Context) error {
-	query := fmt.Sprintf("DROP TABLE IF EXISTS %s", c.logTable)
-	_, err := c.db.ExecContext(ctx, query)
-	if err != nil {
-		return errors.New(RegistryCDCCreationFailed, "failed to drop CDC log table", err)
-	}
-
-	c.logger.Debug().Str("table", c.logTable).Msg("Dropped CDC log table")
 	return nil
 }
 
@@ -173,25 +86,6 @@ func (c *CDCSetup) createTableTriggers(ctx context.Context, tableName string) er
 	}
 
 	c.logger.Debug().Str("table", tableName).Msg("Created CDC triggers for table")
-	return nil
-}
-
-// dropTableTriggers drops CDC triggers for a specific table
-func (c *CDCSetup) dropTableTriggers(ctx context.Context, tableName string) error {
-	triggers := []string{
-		fmt.Sprintf("DROP TRIGGER IF EXISTS %s__cdc_insert", tableName),
-		fmt.Sprintf("DROP TRIGGER IF EXISTS %s__cdc_update", tableName),
-		fmt.Sprintf("DROP TRIGGER IF EXISTS %s__cdc_delete", tableName),
-		fmt.Sprintf("DROP TRIGGER IF EXISTS %s__updated_at", tableName),
-	}
-
-	for _, trigger := range triggers {
-		if _, err := c.db.ExecContext(ctx, trigger); err != nil {
-			c.logger.Warn().Err(err).Str("trigger", trigger).Msg("Failed to drop trigger")
-		}
-	}
-
-	c.logger.Debug().Str("table", tableName).Msg("Dropped CDC triggers for table")
 	return nil
 }
 
@@ -233,7 +127,7 @@ func (c *CDCSetup) buildInsertTrigger(tableName string, columns []string) string
 			INSERT INTO %s (timestamp, tablename, operation, before, after, created_at) 
 			VALUES (datetime('now', 'subsec'), '%s', 'INSERT', NULL, %s, datetime('now'));
 		END
-	`, tableName, tableName, c.logTable, tableName, jsonObject)
+	`, tableName, tableName, CDCLogTableName, tableName, jsonObject)
 }
 
 // buildUpdateTrigger builds the UPDATE trigger SQL
@@ -247,7 +141,7 @@ func (c *CDCSetup) buildUpdateTrigger(tableName string, columns []string) string
 			INSERT INTO %s (timestamp, tablename, operation, before, after, created_at) 
 			VALUES (datetime('now', 'subsec'), '%s', 'UPDATE', %s, %s, datetime('now'));
 		END
-	`, tableName, tableName, c.logTable, tableName, oldJSON, newJSON)
+	`, tableName, tableName, CDCLogTableName, tableName, oldJSON, newJSON)
 }
 
 // buildDeleteTrigger builds the DELETE trigger SQL
@@ -260,7 +154,7 @@ func (c *CDCSetup) buildDeleteTrigger(tableName string, columns []string) string
 			INSERT INTO %s (timestamp, tablename, operation, before, after, created_at) 
 			VALUES (datetime('now', 'subsec'), '%s', 'DELETE', %s, NULL, datetime('now'));
 		END
-	`, tableName, tableName, c.logTable, tableName, jsonObject)
+	`, tableName, tableName, CDCLogTableName, tableName, jsonObject)
 }
 
 // buildUpdatedAtTrigger builds the updated_at trigger SQL
@@ -281,11 +175,6 @@ func (c *CDCSetup) buildJSONObject(prefix string, columns []string) string {
 		pairs = append(pairs, fmt.Sprintf("'%s', %s%s", col, prefix, col))
 	}
 	return fmt.Sprintf("json_object(%s)", strings.Join(pairs, ", "))
-}
-
-// GetCDCLogTable returns the CDC log table name
-func (c *CDCSetup) GetCDCLogTable() string {
-	return c.logTable
 }
 
 // GetMonitoredTables returns the list of monitored tables

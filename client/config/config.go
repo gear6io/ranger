@@ -56,7 +56,7 @@ func DefaultConfig() *Config {
 		Server: ServerConfig{
 			Address: "localhost",
 			Port:    2849, // Native protocol server port
-			Timeout: 30 * time.Second,
+			Timeout: 30 * time.Minute,
 		},
 		Auth: AuthConfig{
 			Username: "",

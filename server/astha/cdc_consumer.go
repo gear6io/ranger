@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/gear6io/ranger/pkg/errors"
-	"github.com/gear6io/ranger/server/metadata/registry"
 	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
 	"github.com/rs/zerolog"
 )
@@ -111,7 +110,7 @@ func (c *CDCConsumer) processChanges(ctx context.Context) error {
 }
 
 // getUnprocessedChanges retrieves unprocessed changes from CDC log
-func (c *CDCConsumer) getUnprocessedChanges(ctx context.Context) ([]registry.CDCLogEntry, error) {
+func (c *CDCConsumer) getUnprocessedChanges(ctx context.Context) ([]regtypes.ChangeLog, error) {
 	query := "SELECT id, timestamp, tablename, operation, before, after, created_at FROM " + c.logTable + " ORDER BY id ASC LIMIT ?"
 
 	rows, err := c.db.QueryContext(ctx, query, c.batchSize)
@@ -120,9 +119,9 @@ func (c *CDCConsumer) getUnprocessedChanges(ctx context.Context) ([]registry.CDC
 	}
 	defer rows.Close()
 
-	var changes []registry.CDCLogEntry
+	var changes []regtypes.ChangeLog
 	for rows.Next() {
-		var change registry.CDCLogEntry
+		var change regtypes.ChangeLog
 		if err := rows.Scan(&change.ID, &change.Timestamp, &change.TableName,
 			&change.Operation, &change.Before, &change.After, &change.CreatedAt); err != nil {
 			return nil, errors.New(ErrCDCScanLogFailed, "failed to scan CDC log entry", err)
@@ -134,7 +133,7 @@ func (c *CDCConsumer) getUnprocessedChanges(ctx context.Context) ([]registry.CDC
 }
 
 // processBatch processes a batch of CDC changes
-func (c *CDCConsumer) processBatch(ctx context.Context, changes []registry.CDCLogEntry) error {
+func (c *CDCConsumer) processBatch(ctx context.Context, changes []regtypes.ChangeLog) error {
 	for _, change := range changes {
 		// Convert CDC change to Astha event
 		event, err := c.convertChangeToEvent(change)
@@ -169,7 +168,7 @@ func (c *CDCConsumer) processBatch(ctx context.Context, changes []registry.CDCLo
 }
 
 // deleteProcessedLogs deletes processed logs (immediate cleanup)
-func (c *CDCConsumer) deleteProcessedLogs(ctx context.Context, changes []registry.CDCLogEntry) error {
+func (c *CDCConsumer) deleteProcessedLogs(ctx context.Context, changes []regtypes.ChangeLog) error {
 	if len(changes) == 0 {
 		return nil
 	}
@@ -209,7 +208,7 @@ func (c *CDCConsumer) deleteProcessedLogs(ctx context.Context, changes []registr
 }
 
 // convertChangeToEvent converts a CDC change to an Astha event with type safety
-func (c *CDCConsumer) convertChangeToEvent(change registry.CDCLogEntry) (any, error) {
+func (c *CDCConsumer) convertChangeToEvent(change regtypes.ChangeLog) (any, error) {
 
 	// Use the new generic functions for full type safety
 	switch change.TableName {
@@ -271,7 +270,7 @@ func (c *CDCConsumer) convertChangeToEvent(change registry.CDCLogEntry) (any, er
 // =============================================================================
 
 // convertChangeToEventGeneric is a standalone generic function that converts CDC changes to typed events
-func convertChangeToEventGeneric[T any](change registry.CDCLogEntry) (Event[T], error) {
+func convertChangeToEventGeneric[T any](change regtypes.ChangeLog) (Event[T], error) {
 	// Parse timestamp with subsecond precision
 	timestamp, err := time.Parse("2006-01-02 15:04:05.999999999", change.Timestamp)
 	if err != nil {
@@ -308,7 +307,7 @@ func convertChangeToEventGeneric[T any](change registry.CDCLogEntry) (Event[T], 
 }
 
 // parseDataToType is a standalone generic function that parses JSON data to any type T
-func parseDataToType[T any](change registry.CDCLogEntry, result *T) error {
+func parseDataToType[T any](change regtypes.ChangeLog, result *T) error {
 	// Determine which data to parse based on operation
 	var jsonData string
 	switch change.Operation {
@@ -337,22 +336,22 @@ func parseDataToType[T any](change registry.CDCLogEntry, result *T) error {
 // =============================================================================
 
 // ConvertToTableEvent converts a CDC change to a TableEvent with type safety
-func ConvertToTableEvent(change registry.CDCLogEntry) (TableEvent, error) {
+func ConvertToTableEvent(change regtypes.ChangeLog) (TableEvent, error) {
 	return convertChangeToEventGeneric[regtypes.Table](change)
 }
 
 // ConvertToTableFileEvent converts a CDC change to a TableFileEvent with type safety
-func ConvertToTableFileEvent(change registry.CDCLogEntry) (TableFileEvent, error) {
+func ConvertToTableFileEvent(change regtypes.ChangeLog) (TableFileEvent, error) {
 	return convertChangeToEventGeneric[regtypes.TableFile](change)
 }
 
 // ConvertToTableMetadataEvent converts a CDC change to a TableMetadataEvent with type safety
-func ConvertToTableMetadataEvent(change registry.CDCLogEntry) (TableMetadataEvent, error) {
+func ConvertToTableMetadataEvent(change regtypes.ChangeLog) (TableMetadataEvent, error) {
 	return convertChangeToEventGeneric[regtypes.TableMetadata](change)
 }
 
 // ConvertToTableStatisticEvent converts a CDC change to a TableStatisticEvent with type safety
-func ConvertToTableStatisticEvent(change registry.CDCLogEntry) (TableStatisticEvent, error) {
+func ConvertToTableStatisticEvent(change regtypes.ChangeLog) (TableStatisticEvent, error) {
 	return convertChangeToEventGeneric[regtypes.TableStatistic](change)
 }
 

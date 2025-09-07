@@ -27,6 +27,7 @@ const (
 	ServerReadTaskRequest     SignalType = 113
 	ServerProfileEvents       SignalType = 114
 	ServerTreeReadTaskRequest SignalType = 115
+	ServerClose               SignalType = 116
 
 	// Protocol versions
 	DBMS_TCP_PROTOCOL_VERSION = 54460
@@ -55,6 +56,7 @@ var SignalTypeNames = map[SignalType]string{
 	ServerReadTaskRequest:     "ServerReadTaskRequest",
 	ServerProfileEvents:       "ServerProfileEvents",
 	ServerTreeReadTaskRequest: "ServerTreeReadTaskRequest",
+	ServerClose:               "ServerClose",
 }
 
 // GetSignalName returns the human-readable name for a signal type

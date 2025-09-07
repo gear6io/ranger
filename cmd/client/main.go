@@ -412,8 +412,8 @@ func executor(client *client.Client, history *[]string, sigChan chan os.Signal) 
 		formattedQuery, err := parseAndFormatQuery(query)
 		if err != nil {
 			// Log warning but continue with original query
-			fmt.Printf("⚠️  Warning: Could not format query (%v)\n", err)
-			formattedQuery = query
+			fmt.Printf("❌ Warning: invalid query (%v)\n", err)
+			return
 		}
 
 		// Show the formatted query that will be executed

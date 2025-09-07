@@ -26,7 +26,7 @@ func New(cfg *config.Config, logger zerolog.Logger) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create Loader which initializes all components
-	loaderInstance, err := loader.NewLoader(cfg, logger)
+	loaderInstance, err := loader.NewLoader(ctx, cfg, logger)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -48,7 +48,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.logger.Info().Msg("Starting Data Lakehouse server...")
 
 	// Start the Loader which will start all components including servers
-	if err := s.loader.Start(); err != nil {
+	if err := s.loader.Start(ctx); err != nil {
 		return err
 	}
 
@@ -61,6 +61,14 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info().Msg("Shutting down server...")
 
 	s.cancel()
+
+	// Stop the Gateway first (which stops all protocol servers)
+	gateway := s.loader.GetGateway()
+	if gateway != nil {
+		if err := gateway.Stop(); err != nil {
+			s.logger.Error().Err(err).Msg("Error stopping gateway")
+		}
+	}
 
 	if err := s.loader.Shutdown(ctx); err != nil {
 		s.logger.Error().Err(err).Msg("Error stopping loader")

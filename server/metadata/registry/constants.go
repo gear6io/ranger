@@ -2,6 +2,10 @@ package registry
 
 import "time"
 
+const (
+	CDCLogTableName = "__cdc_log"
+)
+
 // IcebergMetadataGenerationState constants for tracking file processing status
 const (
 	IcebergMetadataGenerationStatePending    = "pending"

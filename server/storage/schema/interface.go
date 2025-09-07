@@ -52,30 +52,6 @@ type CacheStats struct {
 	LastUpdated   time.Time `json:"last_updated"`
 }
 
-// SchemaManagerConfig holds configuration for the schema manager
-type SchemaManagerConfig struct {
-	CacheTTL        time.Duration `json:"cache_ttl"`         // Default: 5 minutes
-	MaxCacheSize    int           `json:"max_cache_size"`    // Default: 1000 schemas
-	MaxMemoryBytes  int64         `json:"max_memory_bytes"`  // Default: 100MB
-	StatsInterval   time.Duration `json:"stats_interval"`    // Default: 1 minute
-	EnableMetrics   bool          `json:"enable_metrics"`    // Default: true
-	EnableLRU       bool          `json:"enable_lru"`        // Default: true
-	EnableMemoryLRU bool          `json:"enable_memory_lru"` // Default: true
-}
-
-// DefaultSchemaManagerConfig returns default configuration
-func DefaultSchemaManagerConfig() *SchemaManagerConfig {
-	return &SchemaManagerConfig{
-		CacheTTL:        5 * time.Minute,
-		MaxCacheSize:    1000,
-		MaxMemoryBytes:  100 * 1024 * 1024, // 100MB
-		StatsInterval:   1 * time.Minute,
-		EnableMetrics:   true,
-		EnableLRU:       true,
-		EnableMemoryLRU: true,
-	}
-}
-
 // AsthaInterface defines the interface for Astha integration
 type AsthaInterface interface {
 	RegisterComponentWithInstance(info astha.ComponentInfo, instance astha.Subscriber[any]) error

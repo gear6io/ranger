@@ -318,11 +318,15 @@ type SchemaVersion struct {
 // CDC AND EVENT TYPES
 // =============================================================================
 
-// CDCLogEntry represents a change data capture log entry
-type CDCLogEntry struct {
-	ID        int64     `json:"id"`
-	TableID   int64     `json:"table_id"`
-	Operation string    `json:"operation"`
-	Data      string    `json:"data"`
-	Timestamp time.Time `json:"timestamp"`
+// ChangeLog represents a raw change from the CDC log table
+type ChangeLog struct {
+	bun.BaseModel `bun:"table:__cdc_log"`
+
+	ID        int64  `bun:"id,pk,autoincrement" json:"id"`
+	Timestamp string `bun:"timestamp,notnull" json:"timestamp"`
+	TableName string `bun:"tablename,notnull" json:"tablename"`
+	Operation string `bun:"operation,notnull" json:"operation"`
+	Before    string `bun:"before" json:"before"` // JSON string of OLD values
+	After     string `bun:"after" json:"after"`   // JSON string of NEW values
+	CreatedAt string `bun:"created_at,notnull" json:"created_at"`
 }

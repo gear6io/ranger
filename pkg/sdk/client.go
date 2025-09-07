@@ -186,9 +186,9 @@ type Options struct {
 	ConnOpenStrategy ConnOpenStrategy
 
 	// Timeouts
-	DialTimeout  time.Duration // default 30 seconds
-	ReadTimeout  time.Duration // default 3 seconds
-	WriteTimeout time.Duration // default 3 seconds
+	DialTimeout time.Duration // default 30 seconds
+	ReadTimeout time.Duration // default 30 seconds
+	IdleTimeout time.Duration // no default - client must specify
 
 	// Settings and configuration
 	Settings Settings
@@ -307,11 +307,11 @@ func (o *Options) SetDefaults() *Options {
 	}
 
 	if o.ReadTimeout == 0 {
-		o.ReadTimeout = 3 * time.Second
+		o.ReadTimeout = 30 * time.Second
 	}
 
-	if o.WriteTimeout == 0 {
-		o.WriteTimeout = 3 * time.Second
+	if o.IdleTimeout == 0 {
+		o.IdleTimeout = 30 * time.Second
 	}
 
 	if o.MaxOpenConns == 0 {
@@ -562,7 +562,7 @@ func (c *Client) Stats() Stats {
 	return Stats{
 		MaxOpenConnections: c.opt.MaxOpenConns,
 		OpenConnections:    len(c.open),
-		InUse:              c.opt.MaxOpenConns - len(c.open),
+		InUse:              len(c.open) - len(c.idle),
 		Idle:               len(c.idle),
 	}
 }
@@ -595,7 +595,7 @@ func (c *Client) acquire(ctx context.Context) (*connection, error) {
 	// Try to get an idle connection
 	select {
 	case conn := <-c.idle:
-		if conn.isBad() {
+		if conn.isBad() || !conn.isAlive() {
 			conn.close()
 			return c.dial(ctx)
 		}
@@ -613,7 +613,7 @@ func (c *Client) acquire(ctx context.Context) (*connection, error) {
 		// Wait for a connection to become available
 		select {
 		case conn := <-c.idle:
-			if conn.isBad() {
+			if conn.isBad() || !conn.isAlive() {
 				conn.close()
 				return c.dial(ctx)
 			}
@@ -628,6 +628,13 @@ func (c *Client) acquire(ctx context.Context) (*connection, error) {
 func (c *Client) release(conn *connection, err error) {
 	if err != nil {
 		conn.markBad()
+		conn.close()
+		<-c.open
+		return
+	}
+
+	// Check if connection is bad before returning to pool
+	if conn.isBad() {
 		conn.close()
 		<-c.open
 		return
@@ -662,6 +669,12 @@ func (c *Client) dial(ctx context.Context) (*connection, error) {
 
 	if err != nil {
 		return nil, err
+	}
+
+	// Enable TCP keepalive to detect dead connections
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		tcpConn.SetKeepAlive(true)
+		tcpConn.SetKeepAlivePeriod(30 * time.Second)
 	}
 
 	connection := newConnection(conn, c, connID)
@@ -709,6 +722,8 @@ func (c *connection) handshake(ctx context.Context) error {
 		c.client.opt.Auth.Database,
 		c.client.opt.Auth.Username,
 		c.client.opt.Auth.Password,
+		uint64(c.client.opt.IdleTimeout.Seconds()),
+		uint64(c.client.opt.ReadTimeout.Seconds()),
 	)
 
 	// Encode and send the message
@@ -755,6 +770,7 @@ func (c *connection) registerSignalConstructors() {
 		&signals.ServerPong{},
 		&signals.ServerEndOfStream{},
 		&signals.ServerProfileInfo{},
+		&signals.ServerClose{},
 	}
 
 	// Register signals
@@ -871,11 +887,18 @@ func (c *connection) ping(ctx context.Context) error {
 		return errors.Wrap(err, "failed to unpack server pong")
 	}
 
-	if signal.Type() != protocol.ServerPong {
+	switch signal.Type() {
+	case protocol.ServerPong:
+		// Normal pong response
+		return nil
+	case protocol.ServerClose:
+		// Server closed connection
+		close := signal.(*signals.ServerClose)
+		c.bad = true // Mark connection as bad
+		return errors.Errorf("server closed connection: %s", close.Reason)
+	default:
 		return errors.Errorf("expected server pong, got signal type %d", signal.Type())
 	}
-
-	return nil
 }
 
 // query executes a query using unified protocol
@@ -931,6 +954,11 @@ func (c *connection) query(ctx context.Context, queryStr string, args ...interfa
 			// Handle exception signal
 			exception := signal.(*signals.ServerException)
 			return nil, fmt.Errorf("server exception [%s]: %s", exception.ErrorCode, exception.ErrorMessage)
+		case protocol.ServerClose:
+			// Handle server close signal
+			close := signal.(*signals.ServerClose)
+			c.bad = true // Mark connection as bad
+			return nil, fmt.Errorf("server closed connection: %s", close.Reason)
 		case protocol.ServerData:
 			// Handle data signal - extract column information and data
 			serverData := signal.(*signals.ServerData)
@@ -1004,6 +1032,11 @@ func (c *connection) exec(ctx context.Context, queryStr string, args ...interfac
 			// Handle exception signal
 			exception := signal.(*signals.ServerException)
 			return fmt.Errorf("server exception [%s]: %s", exception.ErrorCode, exception.ErrorMessage)
+		case protocol.ServerClose:
+			// Handle server close signal
+			close := signal.(*signals.ServerClose)
+			c.bad = true // Mark connection as bad
+			return fmt.Errorf("server closed connection: %s", close.Reason)
 		case protocol.ServerData:
 			// Handle data signal - just continue reading for exec
 			continue
@@ -1069,6 +1102,26 @@ func (c *connection) isBad() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.bad
+}
+
+// isAlive checks if the connection is actually alive
+func (c *connection) isAlive() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.conn == nil || c.bad {
+		return false
+	}
+
+	// Check if connection has been idle for too long
+	// If it's been idle for more than 5 minutes, consider it potentially dead
+	if time.Since(c.lastUsed) > 5*time.Minute {
+		return false
+	}
+
+	// For now, assume alive if not marked bad and not too old
+	// TCP keepalive will be set during connection creation
+	return true
 }
 
 // markBad marks the connection as bad

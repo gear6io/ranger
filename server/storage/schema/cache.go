@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/apache/iceberg-go"
+	"github.com/gear6io/ranger/server/config"
 	"github.com/jellydator/ttlcache/v3"
 )
 
@@ -35,17 +36,17 @@ type CacheMetrics struct {
 // SchemaCache provides thread-safe caching of Iceberg schemas using ttlcache
 type SchemaCache struct {
 	cache    *ttlcache.Cache[string, *SchemaCacheEntry]
-	config   *SchemaManagerConfig
+	config   *config.SchemaManagerConfig
 	stats    CacheStats
 	statsMux sync.RWMutex
 	metrics  *CacheMetrics
 }
 
 // NewSchemaCache creates a new schema cache with the given configuration
-func NewSchemaCache(config *SchemaManagerConfig) *SchemaCache {
+func NewSchemaCache(config *config.SchemaManagerConfig) *SchemaCache {
 	// Configure ttlcache with appropriate options
 	cache := ttlcache.New[string, *SchemaCacheEntry](
-		ttlcache.WithTTL[string, *SchemaCacheEntry](config.CacheTTL),
+		ttlcache.WithTTL[string, *SchemaCacheEntry](time.Duration(config.CacheTTLMinutes)*time.Minute),
 		ttlcache.WithCapacity[string, *SchemaCacheEntry](uint64(config.MaxCacheSize)),
 	)
 
@@ -182,11 +183,6 @@ func (sc *SchemaCache) GetStats() CacheStats {
 	stats.CacheSize = sc.Size()
 	stats.MemoryUsage = sc.GetMemoryUsage()
 
-	// Calculate memory percentage
-	if sc.config.MaxMemoryBytes > 0 {
-		stats.MemoryPercent = float64(stats.MemoryUsage) / float64(sc.config.MaxMemoryBytes) * 100.0
-	}
-
 	// Calculate hit ratio
 	total := stats.HitCount + stats.MissCount
 	if total > 0 {
@@ -230,7 +226,7 @@ func (sc *SchemaCache) getTTLForEntry(sourceType string, isNewTable bool) time.D
 		return 6 * time.Hour
 	default:
 		// Default TTL from config
-		return sc.config.CacheTTL
+		return time.Duration(sc.config.CacheTTLMinutes) * time.Minute
 	}
 }
 
