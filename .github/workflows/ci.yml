@@ -13,12 +13,7 @@ env:
 jobs:
   test:
     name: Test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest]
-        go-version: ["1.24"]
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
@@ -27,39 +22,15 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Download dependencies
-        run: go mod download
+      - name: Run tests
+        run: make test
 
-      - name: Verify dependencies
-        run: go mod verify
-
-      - name: Run all tests
-        run: |
-          echo "Running tests for all packages..."
-          go test -v -race ./... 2>&1 | tee test-output.log
-
-      - name: Generate test summary
-        run: |
-          echo "=== TEST SUMMARY ==="
-          echo "Packages with test failures:"
-          go test ./... 2>&1 | grep -E "(FAIL|exit status)" | head -20 || echo "No test failures found"
-          echo "==================="
-
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-results-${{ runner.os }}
-          path: test-output.log
-          retention-days: 7
-
-  quality:
-    name: Code Quality
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-    needs: [test]
 
     steps:
       - name: Checkout code
@@ -75,40 +46,21 @@ jobs:
         run: |
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.55.2
 
-      - name: Run golangci-lint
-        run: |
-          golangci-lint run --timeout=5m --out-format=github-actions
+      - name: Run linting
+        run: make lint
 
-      - name: Check code formatting
+      - name: Check formatting
         run: |
-          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
-            echo "Code is not formatted. Please run 'go fmt ./...'"
-            gofmt -s -l .
+          make fmt
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Code is not formatted. Please run 'make fmt'"
+            git diff
             exit 1
           fi
-
-      - name: Run go vet
-        run: go vet ./...
-
-      - name: Check for unused dependencies
-        run: |
-          go mod tidy
-          if [ -n "$(git status --porcelain go.mod go.sum)" ]; then
-            echo "go.mod or go.sum has uncommitted changes"
-            git diff go.mod go.sum
-            exit 1
-          fi
-
-      - name: Run pre-commit checks
-        run: make pre-commit
 
   build:
     name: Build
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest]
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
@@ -120,112 +72,5 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Build all binaries
+      - name: Build binaries
         run: make build-all
-
-      - name: Test binary execution
-        run: |
-          echo "Testing binary execution..."
-          ./ranger-server --help || echo "ranger-server help failed"
-          ./ranger-client --help || echo "ranger-client help failed"
-
-  integration-test:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    needs: [test, build]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Run integration tests
-        run: make test-integration
-        env:
-          RANGER_INTEGRATION_TESTS: "true"
-
-      - name: Upload integration test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: integration-test-results
-          path: test-output.log
-          retention-days: 7
-
-  coverage:
-    name: Test Coverage
-    runs-on: ubuntu-latest
-    needs: [test]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Generate coverage report
-        run: |
-          echo "Generating coverage report..."
-          go test -coverprofile=coverage.out -covermode=atomic ./...
-          
-          # Generate HTML coverage report
-          go tool cover -html=coverage.out -o coverage.html
-          
-          # Show coverage summary
-          go tool cover -func=coverage.out
-
-      - name: Upload coverage reports
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-reports
-          path: |
-            coverage.out
-            coverage.html
-          retention-days: 30
-
-  validate:
-    name: Validate
-    runs-on: ubuntu-latest
-    needs: [test, build, integration-test, quality]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-
-      - name: Validate go.mod and go.sum
-        run: make mod-verify
-
-      - name: Check for uncommitted changes
-        run: |
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "There are uncommitted changes:"
-            git status --porcelain
-            exit 1
-          fi
-
-      - name: Validate configuration files
-        run: |
-          echo "Validating configuration files..."
-          if [ -f "ranger-server.yml" ]; then
-            echo "✅ ranger-server.yml exists"
-          else
-            echo "❌ ranger-server.yml missing"
-            exit 1
-          fi

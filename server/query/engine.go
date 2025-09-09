@@ -108,7 +108,7 @@ func (e *Engine) ExecuteQuery(ctx context.Context, queryCtx *types.QueryContext)
 	stmt, err := parser.Parse(queryCtx.Query)
 	if err != nil {
 		e.queryManager.CompleteQuery(queryID, 0, err)
-		return nil, errors.New(ErrQueryParseValidationFailed, "failed to parse and validate query", err)
+		return nil, err
 	}
 
 	// Debug: Log the parsed statement type

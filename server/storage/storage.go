@@ -542,11 +542,6 @@ func (s *Storage) InsertData(ctx context.Context, database, tableName string, da
 	return nil
 }
 
-// GetTableMetadata returns metadata for a table
-func (s *Storage) GetTableMetadata(ctx context.Context, database, tableName string) (*registry.TableMetadata, error) {
-	return s.LoadTableMetadata(ctx, database, tableName)
-}
-
 // Note: Individual metadata update methods have been replaced with a single
 // atomic Registry call in updateMetadataAfterInsertion()
 
@@ -598,21 +593,6 @@ func (s *Storage) updateMetadataAfterInsertion(ctx context.Context, database, ta
 		Msg("Metadata updates completed successfully after insertion")
 
 	return nil
-}
-
-// ListTableFiles returns a list of files for a table
-func (s *Storage) ListTableFiles(ctx context.Context, database, tableName string) ([]string, error) {
-	metadata, err := s.LoadTableMetadata(ctx, database, tableName)
-	if err != nil {
-		return nil, err
-	}
-
-	var files []string
-	for _, file := range metadata.Files {
-		files = append(files, file.FileName)
-	}
-
-	return files, nil
 }
 
 // GetTableData retrieves data from a table using streaming for memory efficiency

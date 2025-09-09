@@ -4,39 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"sync"
-	"time"
 
 	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
 )
-
-// TableReference represents a simple table reference
-type TableReference struct {
-	Database string `json:"database"`
-	Table    string `json:"table"`
-}
-
-// TableMetadata represents a composite view of table metadata for storage operations
-// This combines information from multiple tables for convenience
-type TableMetadata struct {
-	Database string `json:"database"`
-	Name     string `json:"name"`
-	// Schema is now stored in TableColumn table, not here
-	StorageEngine string                `json:"storage_engine"`
-	EngineConfig  string                `json:"engine_config"`
-	FileCount     int                   `json:"file_count"`
-	TotalSize     int64                 `json:"total_size"`
-	LastModified  time.Time             `json:"last_modified"`
-	Created       time.Time             `json:"created"`
-	Files         []*regtypes.TableFile `json:"files"`
-}
 
 // CompleteTableInfo represents a complete table with all its metadata and lazy loading
 type CompleteTableInfo struct {
 	*regtypes.Table
 	Database string
 
-	// Storage metadata
-	StorageInfo *regtypes.TableMetadata
+	// Note: Storage metadata fields are now part of the Table struct itself
 
 	// Lazy-loaded fields
 	columns     []*regtypes.TableColumn
@@ -255,7 +232,7 @@ func (cti *CompleteTableInfo) loadTableColumns(ctx context.Context) ([]*regtypes
 		var column regtypes.TableColumn
 		err := rows.Scan(
 			&column.ID, &column.TableID, &column.ColumnName, &column.DataType,
-			&column.IsNullable, &column.DefaultValue, &column.Description,
+			&column.IsNullable, &column.DefaultValue,
 		)
 		if err != nil {
 			return nil, err
@@ -394,5 +371,5 @@ type SchemaData struct {
 	Table    string                  `json:"table"`
 	TableID  int64                   `json:"table_id"`
 	Columns  []*regtypes.TableColumn `json:"columns"`
-	Metadata *regtypes.TableMetadata `json:"metadata"`
+	// Note: Metadata fields are now part of the Table struct itself
 }

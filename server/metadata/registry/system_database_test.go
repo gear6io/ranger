@@ -51,10 +51,7 @@ func TestSystemDatabaseManager(t *testing.T) {
 	t.Run("CreateTestTable", func(t *testing.T) {
 		// Create a simple table with columns
 		table := &regtypes.Table{
-			Name:        "users",
-			DisplayName: "users",
-			Description: "Test users table",
-			TableType:   "user",
+			Name: "users",
 		}
 
 		columns := []*regtypes.TableColumn{

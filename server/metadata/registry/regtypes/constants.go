@@ -30,9 +30,9 @@ const (
 
 // Storage engine constants for different storage backends
 const (
-	StorageEngineFilesystem = "filesystem"
-	StorageEngineMemory     = "memory"
-	StorageEngineS3         = "s3"
+	StorageEngineFilesystem = "FILESYSTEM"
+	StorageEngineMemory     = "MEMORY"
+	StorageEngineS3         = "S3"
 )
 
 // =============================================================================
@@ -41,10 +41,7 @@ const (
 
 // File type constants for supported data formats
 const (
-	FileTypeParquet = "parquet"
-	FileTypeJSON    = "json"
-	FileTypeCSV     = "csv"
-	FileTypeAvro    = "avro"
+	FileTypeParquet = "PARQUET"
 )
 
 // =============================================================================

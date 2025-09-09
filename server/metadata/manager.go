@@ -3,7 +3,6 @@ package metadata
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -35,18 +34,6 @@ var (
 
 // ComponentType defines the metadata manager component type identifier
 const ComponentType = "metadata"
-
-// No-op diagnostic logger stub (TODO: remove all diagnostic logging)
-type noOpDiagLogger struct{}
-
-func (n *noOpDiagLogger) LogOperationStart(operation string, context map[string]interface{}) {}
-func (n *noOpDiagLogger) LogOperationEnd(operation string, success bool, err error, result map[string]interface{}) {
-}
-func (n *noOpDiagLogger) LogValidationError(operation string, details interface{})       {}
-func (n *noOpDiagLogger) LogRegistryOperation(operation string, diagnostics interface{}) {}
-func (n *noOpDiagLogger) LogPerformanceMetrics(operation string, duration time.Duration, metrics map[string]interface{}) {
-}
-func (n *noOpDiagLogger) LogSummary() {}
 
 // MetadataManager coordinates between Iceberg catalog and personal metadata storage
 type MetadataManager struct {
@@ -224,45 +211,6 @@ func (mm *MetadataManager) EnsureDeploymentReady(ctx context.Context) error {
 	return mm.hybrid.EnsureDeploymentReady(ctx)
 }
 
-// CreateTable creates a new table with complete metadata
-func (mm *MetadataManager) CreateTable(ctx context.Context, dbName, tableName string, schema []byte, storageEngine string, engineConfig map[string]interface{}) error {
-	// Create table with complete metadata in a single operation
-	_, err := mm.Store.CreateTable(ctx, dbName, tableName, schema, storageEngine, engineConfig)
-	if err != nil {
-		return err
-	}
-
-	// Create in Iceberg catalog if needed
-	// This is where you'd coordinate with the Iceberg catalog
-	log.Printf("Created table %s.%s with complete metadata in personal metadata", dbName, tableName)
-
-	return nil
-}
-
-// DropTable drops a table
-func (mm *MetadataManager) DropTable(ctx context.Context, dbName, tableName string) error {
-	// Drop from personal metadata storage
-	if err := mm.DropTable(ctx, dbName, tableName); err != nil {
-		return err
-	}
-
-	// Drop from Iceberg catalog if needed
-	// This is where you'd coordinate with the Iceberg catalog
-	log.Printf("Dropped table %s from personal metadata", dbName)
-
-	return nil
-}
-
-// ListTables returns a list of tables in a database
-func (mm *MetadataManager) ListTables(ctx context.Context, dbName string) ([]string, error) {
-	return mm.ListTables(ctx, dbName)
-}
-
-// TableExists checks if a table exists
-func (mm *MetadataManager) TableExists(ctx context.Context, dbName, tableName string) bool {
-	return mm.TableExists(ctx, dbName, tableName)
-}
-
 // Close releases resources
 func (mm *MetadataManager) Close() error {
 	if mm != nil {
@@ -306,9 +254,6 @@ func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseNa
 	// Generate transaction ID for tracking
 	transactionID := fmt.Sprintf("create_table_%d", time.Now().UnixNano())
 
-	// No-op diagnostic logger stub (TODO: remove diagnostic logging)
-	diagLogger := &noOpDiagLogger{}
-
 	// Log operation start
 	mm.logger.Info().
 		Str("database", databaseName).
@@ -322,50 +267,28 @@ func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseNa
 		mm.mu.RUnlock()
 
 		err := errors.New(MetadataManagerNotRunning, "metadata manager is not running", nil)
-		diagLogger.LogOperationEnd("check_manager_status", false, err, nil)
 		return 0, err
 	}
 	mm.mu.RUnlock()
 
 	// Validate input parameters with comprehensive error handling
-	diagLogger.LogOperationStart("validate_input_parameters", map[string]interface{}{
-		"database_provided": databaseName != "",
-		"table_provided":    table != nil,
-		"columns_provided":  len(columns),
-	})
-
 	if databaseName == "" {
 		err := errors.New(MetadataOperationFailed, "database name is required", nil)
-		diagLogger.LogOperationEnd("validate_input_parameters", false, err, nil)
 		return 0, err
 	}
 
 	if table == nil {
 		err := errors.New(MetadataOperationFailed, "table cannot be nil", nil)
-		diagLogger.LogOperationEnd("validate_input_parameters", false, err, nil)
 		return 0, err
 	}
 
 	if len(columns) == 0 {
 		err := errors.New(MetadataOperationFailed, "table must have at least one column", nil)
-		diagLogger.LogOperationEnd("validate_input_parameters", false, err, nil)
 		return 0, err
 	}
 
-	diagLogger.LogOperationEnd("validate_input_parameters", true, nil, map[string]interface{}{
-		"validation_passed": true,
-	})
-
 	// Requirement 3.3: Schema validation before registry storage using Iceberg types
-	diagLogger.LogOperationStart("validate_schema_iceberg_types", map[string]interface{}{
-		"table_name":   table.Name,
-		"column_count": len(columns),
-	})
-
 	if err := mm.validateSchemaWithIcebergTypes(table, columns); err != nil {
-		diagLogger.LogValidationError("validate_schema_iceberg_types", err)
-		diagLogger.LogOperationEnd("validate_schema_iceberg_types", false, err, nil)
-
 		mm.logger.Error().Err(err).
 			Str("database", databaseName).
 			Str("table_name", table.Name).
@@ -376,18 +299,8 @@ func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseNa
 		return 0, err
 	}
 
-	diagLogger.LogOperationEnd("validate_schema_iceberg_types", true, nil, map[string]interface{}{
-		"schema_validation_passed": true,
-	})
-
 	// Validate table metadata consistency
-	diagLogger.LogOperationStart("validate_table_metadata", map[string]interface{}{
-		"table_name": table.Name,
-	})
-
 	if err := mm.validateTableMetadata(table); err != nil {
-		diagLogger.LogOperationEnd("validate_table_metadata", false, err, nil)
-
 		mm.logger.Error().Err(err).
 			Str("database", databaseName).
 			Str("table_name", table.Name).
@@ -397,23 +310,10 @@ func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseNa
 		return 0, err
 	}
 
-	diagLogger.LogOperationEnd("validate_table_metadata", true, nil, map[string]interface{}{
-		"metadata_validation_passed": true,
-	})
-
 	// Requirement 3.1 & 3.2: Create table metadata and columns in single transaction
 	// Requirement 3.4: Proper error handling and rollback mechanisms
-	diagLogger.LogOperationStart("create_table_registry_transaction", map[string]interface{}{
-		"database":       databaseName,
-		"table_name":     table.Name,
-		"column_count":   len(columns),
-		"transaction_id": transactionID,
-	})
-
 	tableID, err := mm.CreateTableWithColumns(ctx, databaseName, table, columns)
 	if err != nil {
-		diagLogger.LogOperationEnd("create_table_registry_transaction", false, err, nil)
-
 		mm.logger.Error().Err(err).
 			Str("database", databaseName).
 			Str("table_name", table.Name).
@@ -424,20 +324,8 @@ func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseNa
 		return 0, err
 	}
 
-	// Success - log comprehensive information
-	diagLogger.LogOperationEnd("create_table_registry_transaction", true, nil, map[string]interface{}{
-		"table_id":       tableID,
-		"transaction_id": transactionID,
-	})
-
 	// Requirement 3.5: Complete schema immediately queryable from registry
 	totalDuration := time.Since(startTime)
-
-	diagLogger.LogPerformanceMetrics("create_table_with_schema_complete", totalDuration, map[string]interface{}{
-		"table_id":       tableID,
-		"column_count":   len(columns),
-		"transaction_id": transactionID,
-	})
 
 	// Log successful creation for audit trail with enhanced context
 	mm.logger.Info().
@@ -450,9 +338,6 @@ func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseNa
 		Str("transaction_id", transactionID).
 		Dur("duration", totalDuration).
 		Msg("Successfully created table with schema")
-
-	// Log operation summary
-	diagLogger.LogSummary()
 
 	return tableID, nil
 }

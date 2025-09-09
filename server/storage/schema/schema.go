@@ -276,11 +276,6 @@ func (s *Schema) applyTableMetadataToConfig(config *parquet.ParquetConfig, metad
 		config.Compression = metadata.Compression
 	}
 
-	// Apply batch size setting
-	if metadata.BatchSize > 0 {
-		config.BatchSize = metadata.BatchSize
-	}
-
 	// Parse Settings JSON for additional parquet-specific settings
 	if metadata.Settings != "" {
 		var settings map[string]interface{}

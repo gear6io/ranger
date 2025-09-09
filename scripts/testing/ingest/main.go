@@ -42,10 +42,9 @@ func main() {
 			Password: "",
 			Database: "default",
 		},
-		DialTimeout:  30 * time.Second,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		Logger:       logger,
+		DialTimeout: 30 * time.Second,
+		ReadTimeout: 10 * time.Second,
+		Logger:      logger,
 	}
 
 	// Create and connect to client
@@ -99,16 +98,16 @@ func createTable(client *sdk.Client, tableName string) error {
 	// Create table with appropriate schema
 	createQuery := fmt.Sprintf(`
 		CREATE TABLE %s (
-			id UInt32,
-			name String,
-			email String,
-			age UInt8,
-			city String,
-			created_at DateTime,
-			is_active Boolean,
-			score Float64
-		) ENGINE = FILESYSTEM
-		ORDER BY (id, created_at)
+			id int32,
+			name string,
+			email string,
+			age int32,
+			city string,
+			created_at timestamp,
+			is_active boolean,
+			score float64
+		) STORAGE FILESYSTEM
+		ORDER BY (id, created_at);
 	`, tableName)
 
 	if err := client.Exec(ctx, createQuery); err != nil {
@@ -119,21 +118,21 @@ func createTable(client *sdk.Client, tableName string) error {
 }
 
 // generateUserRecord generates a single user record
-func generateUserRecord(id int) UserRecord {
+func generateUserRecord(id int, rng *rand.Rand) UserRecord {
 	cities := []string{"New York", "Los Angeles", "Chicago", "Houston", "Phoenix", "Philadelphia", "San Antonio", "San Diego", "Dallas", "San Jose"}
 	names := []string{"John", "Jane", "Mike", "Sarah", "David", "Lisa", "Tom", "Emma", "Alex", "Maria"}
 
 	// Generate random data
-	age := 18 + rand.Intn(62) // 18-80 years old
-	city := cities[rand.Intn(len(cities))]
-	name := names[rand.Intn(len(names))]
-	score := rand.Float64() * 100 // 0-100 score
+	age := 18 + rng.Intn(62) // 18-80 years old
+	city := cities[rng.Intn(len(cities))]
+	name := names[rng.Intn(len(names))]
+	score := rng.Float64() * 100 // 0-100 score
 
 	// Generate email
 	email := fmt.Sprintf("%s%d@example.com", name, id)
 
 	// Generate random creation date within last year
-	daysAgo := rand.Intn(365)
+	daysAgo := rng.Intn(365)
 	createdAt := time.Now().AddDate(0, 0, -daysAgo)
 
 	return UserRecord{
@@ -143,7 +142,7 @@ func generateUserRecord(id int) UserRecord {
 		Age:       age,
 		City:      city,
 		CreatedAt: createdAt.Format("2006-01-02 15:04:05"),
-		IsActive:  rand.Float64() > 0.3, // 70% active users
+		IsActive:  rng.Float64() > 0.3, // 70% active users
 		Score:     score,
 	}
 }
@@ -152,8 +151,8 @@ func generateUserRecord(id int) UserRecord {
 func ingestRecords(client *sdk.Client, tableName string, count int) error {
 	ctx := context.Background()
 
-	// Seed random number generator
-	rand.Seed(time.Now().UnixNano())
+	// Create a new random source (Go 1.20+ best practice)
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	// Prepare batch insert
 	insertQuery := fmt.Sprintf(`
@@ -174,7 +173,7 @@ func ingestRecords(client *sdk.Client, tableName string, count int) error {
 
 	// Generate and append records
 	for i := 1; i <= count; i++ {
-		record := generateUserRecord(i)
+		record := generateUserRecord(i, rng)
 
 		// Parse the created_at string back to time for proper insertion
 		createdAt, err := time.Parse("2006-01-02 15:04:05", record.CreatedAt)

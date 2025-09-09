@@ -309,7 +309,7 @@ func convertChangeToEventGeneric[T any](change regtypes.ChangeLog) (Event[T], er
 // parseDataToType is a standalone generic function that parses JSON data to any type T
 func parseDataToType[T any](change regtypes.ChangeLog, result *T) error {
 	// Determine which data to parse based on operation
-	var jsonData string
+	var jsonData *string
 	switch change.Operation {
 	case "INSERT", "UPDATE":
 		jsonData = change.After
@@ -319,12 +319,12 @@ func parseDataToType[T any](change regtypes.ChangeLog, result *T) error {
 		return errors.New(ErrCDCUnknownOperation, "unknown operation", nil).AddContext("operation", change.Operation)
 	}
 
-	if jsonData == "" {
+	if jsonData == nil || *jsonData == "" {
 		return errors.New(ErrCDCNoDataAvailable, "no data available for operation", nil).AddContext("operation", change.Operation)
 	}
 
 	// Parse directly to type T
-	if err := json.Unmarshal([]byte(jsonData), result); err != nil {
+	if err := json.Unmarshal([]byte(*jsonData), result); err != nil {
 		return errors.New(ErrCDCParseDataFailed, "failed to parse data to type", err).AddContext("data_type", fmt.Sprintf("%T", result))
 	}
 

@@ -10,14 +10,15 @@ import (
 func TestGenericEventConversion(t *testing.T) {
 	// Create a sample CDC change for table_files
 	// Note: We'll use simple fields that don't have time.Time to avoid parsing issues
+	afterData := `{"id": 1, "table_id": 100, "file_name": "file1.parquet", "file_path": "/data/file1.parquet", "file_size": 1024, "file_type": "parquet", "row_count": 1000, "is_compressed": false, "iceberg_metadata_state": "pending"}`
 	change := regtypes.ChangeLog{
 		ID:        1,
 		Timestamp: "2024-01-01 12:00:00.000000000",
 		CreatedAt: "2024-01-01 12:00:00.000000000",
 		TableName: "table_files",
 		Operation: "INSERT",
-		After:     `{"id": 1, "table_id": 100, "file_name": "file1.parquet", "file_path": "/data/file1.parquet", "file_size": 1024, "file_type": "parquet", "row_count": 1000, "is_compressed": false, "iceberg_metadata_state": "pending"}`,
-		Before:    "",
+		After:     &afterData,
+		Before:    nil, // INSERT operations have no "before" state
 	}
 
 	t.Run("ConvertToTableFileEvent maintains type safety", func(t *testing.T) {
@@ -49,14 +50,15 @@ func TestGenericEventConversion(t *testing.T) {
 	t.Run("ConvertToTableEvent maintains type safety", func(t *testing.T) {
 		// Create a sample CDC change for tables
 		// Note: We'll use simple fields that don't have time.Time to avoid parsing issues
+		tableAfterData := `{"id": 1, "database_id": 1, "name": "test_table", "display_name": "Test Table", "description": "A test table", "table_type": "user", "is_temporary": false, "is_external": false, "row_count": 0, "file_count": 0, "total_size": 0}`
 		tableChange := regtypes.ChangeLog{
 			ID:        2,
 			Timestamp: "2024-01-01 12:00:00.000000000",
 			CreatedAt: "2024-01-01 12:00:00.000000000",
 			TableName: "tables",
 			Operation: "INSERT",
-			After:     `{"id": 1, "database_id": 1, "name": "test_table", "display_name": "Test Table", "description": "A test table", "table_type": "user", "is_temporary": false, "is_external": false, "row_count": 0, "file_count": 0, "total_size": 0}`,
-			Before:    "",
+			After:     &tableAfterData,
+			Before:    nil, // INSERT operations have no "before" state
 		}
 
 		event, err := ConvertToTableEvent(tableChange)
@@ -98,9 +100,10 @@ func TestGenericEventConversion(t *testing.T) {
 }
 
 func TestParseDataToType(t *testing.T) {
+	afterData := `{"id": 1, "database_id": 1, "name": "test", "display_name": "Test", "description": "Test table", "table_type": "user", "is_temporary": false, "is_external": false, "row_count": 0, "file_count": 0, "total_size": 0}`
 	change := regtypes.ChangeLog{
 		Operation: "INSERT",
-		After:     `{"id": 1, "database_id": 1, "name": "test", "display_name": "Test", "description": "Test table", "table_type": "user", "is_temporary": false, "is_external": false, "row_count": 0, "file_count": 0, "total_size": 0}`,
+		After:     &afterData,
 	}
 
 	t.Run("parseDataToType maintains type safety", func(t *testing.T) {

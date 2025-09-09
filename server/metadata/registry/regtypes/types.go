@@ -8,8 +8,8 @@ import (
 
 // TimeAuditable provides common timestamp fields for all auditable entities
 type TimeAuditable struct {
-	CreatedAt time.Time `bun:"created_at" json:"createdAt"`
-	UpdatedAt time.Time `bun:"updated_at" json:"updatedAt"`
+	CreatedAt time.Time `bun:"created_at,default:datetime('now')" json:"createdAt"`
+	UpdatedAt time.Time `bun:"updated_at,default:datetime('now')" json:"updatedAt"`
 }
 
 // =============================================================================
@@ -37,106 +37,34 @@ type User struct {
 // Database represents the databases table for organizing tables
 type Database struct {
 	bun.BaseModel `bun:"table:databases"`
+	TimeAuditable `bun:",inherit"`
 
-	ID          int64      `bun:"id,pk,autoincrement" json:"id"`
-	Name        string     `bun:"name,notnull,unique" json:"name"`
-	DisplayName string     `bun:"display_name" json:"display_name"`
-	Description string     `bun:"description" json:"description"`
-	IsSystem    bool       `bun:"is_system,notnull,default:false" json:"is_system"`
-	IsReadOnly  bool       `bun:"is_read_only,notnull,default:false" json:"is_read_only"`
-	TableCount  int        `bun:"table_count,notnull,default:0" json:"table_count"`
-	TotalSize   int64      `bun:"total_size,notnull,default:0" json:"total_size"`
-	DeletedAt   *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`
-
-	TimeAuditable
-
-	// Relations
-	// Database belongs to a User (Owner)
-	// Database has many Tables
+	ID         int64  `bun:"id,pk,autoincrement" json:"id"`
+	Name       string `bun:"name,notnull,unique" json:"name"`
+	IsSystem   bool   `bun:"is_system,notnull,default:false" json:"is_system"`
+	TableCount int    `bun:"table_count,notnull,default:0" json:"table_count"`
+	TotalSize  int64  `bun:"total_size,notnull,default:0" json:"total_size"`
 }
 
 // Table represents the tables table for storing table metadata
 type Table struct {
 	bun.BaseModel `bun:"table:tables"`
+	TimeAuditable `bun:",inherit"`
 
-	ID          int64      `bun:"id,pk,autoincrement" json:"id"`
-	DatabaseID  int64      `bun:"database_id,notnull" json:"database_id"`
-	Name        string     `bun:"name,notnull" json:"name"`
-	DisplayName string     `bun:"display_name" json:"display_name"`
-	Description string     `bun:"description" json:"description"`
-	TableType   string     `bun:"table_type,notnull,default:'user'" json:"table_type"`
-	IsTemporary bool       `bun:"is_temporary,notnull,default:false" json:"is_temporary"`
-	IsExternal  bool       `bun:"is_external,notnull,default:false" json:"is_external"`
-	RowCount    int64      `bun:"row_count,notnull,default:0" json:"row_count"`
-	FileCount   int        `bun:"file_count,notnull,default:0" json:"file_count"`
-	TotalSize   int64      `bun:"total_size,notnull,default:0" json:"total_size"`
-	DeletedAt   *time.Time `bun:"deleted_at" json:"deleted_at,omitempty"`
-
-	TimeAuditable
+	ID            int64  `bun:"id,pk,autoincrement" json:"id"`
+	DatabaseID    int64  `bun:"database_id,notnull" json:"database_id"`
+	Name          string `bun:"name,notnull" json:"name"`
+	RowCount      int64  `bun:"row_count,notnull,default:0" json:"row_count"`
+	FileCount     int    `bun:"file_count,notnull,default:0" json:"file_count"`
+	TotalSize     int64  `bun:"total_size,notnull,default:0" json:"total_size"`
+	StorageEngine string `bun:"storage_engine,notnull" json:"storage_engine"`
+	Settings      string `bun:"settings,default:'{}'" json:"settings"`
+	PartitionBy   string `bun:"partition_by" json:"partition_by"`
+	OrderBy       string `bun:"order_by" json:"order_by"`
 
 	// Relations
 	Database *Database `bun:"rel:belongs-to,join:database_id=id"`
 	// Table has many TableMetadata, TableFile, TableColumn, etc.
-}
-
-// =============================================================================
-// TABLE METADATA AND SCHEMA
-// =============================================================================
-
-// TableMetadata represents the table_metadata table for schema and engine info
-type TableMetadata struct {
-	bun.BaseModel `bun:"table:table_metadata"`
-
-	ID            int64  `bun:"id,pk,autoincrement" json:"id"`
-	TableID       int64  `bun:"table_id,notnull" json:"table_id"`
-	SchemaVersion int    `bun:"schema_version,notnull,default:1" json:"schema_version"`
-	StorageEngine string `bun:"storage_engine,notnull" json:"storage_engine"`
-	EngineConfig  string `bun:"engine_config,default:'{}'" json:"engine_config"`
-	Format        string `bun:"format" json:"format"`
-	Compression   string `bun:"compression" json:"compression"`
-	PartitionBy   string `bun:"partition_by" json:"partition_by"`
-	SortBy        string `bun:"sort_by" json:"sort_by"`
-	Settings      string `bun:"settings,default:'{}'" json:"settings"` // Renamed from Properties
-
-	// Table configuration (JSON)
-	TableConfig string `bun:"table_config,default:'{}'" json:"table_config"`
-
-	// Enhanced partitioning (JSON arrays instead of strings)
-	PartitionOrder    string `bun:"partition_order,default:'[]'" json:"partition_order"` // JSON array of partition columns
-	PartitionStrategy string `bun:"partition_strategy,default:'column'" json:"partition_strategy"`
-
-	// Enhanced sorting (JSON arrays instead of strings)
-	SortOrder    string `bun:"sort_order,default:'[]'" json:"sort_order"` // JSON array of sort columns
-	SortStrategy string `bun:"sort_strategy,default:'asc'" json:"sort_strategy"`
-
-	// Performance configuration
-	CacheEnabled       bool `bun:"cache_enabled,default:true" json:"cache_enabled"`
-	CacheSize          int  `bun:"cache_size,default:1000" json:"cache_size"`
-	BatchSize          int  `bun:"batch_size,default:10000" json:"batch_size"`
-	ParallelProcessing bool `bun:"parallel_processing,default:true" json:"parallel_processing"`
-
-	// Schema evolution configuration
-	StrictValidation    bool `bun:"strict_validation,default:true" json:"strict_validation"`
-	StrictCompliance    bool `bun:"strict_compliance,default:true" json:"strict_compliance"`
-	AllowTypePromotions bool `bun:"allow_type_promotions,default:false" json:"allow_type_promotions"`
-	MaxSchemaVersions   int  `bun:"max_schema_versions,default:1" json:"max_schema_versions"`
-
-	// Validation configuration
-	BatchValidationSize int `bun:"batch_validation_size,default:10000" json:"batch_validation_size"`
-	MaxValidationErrors int `bun:"max_validation_errors,default:100" json:"max_validation_errors"`
-
-	// Table metadata
-	TableUUID       string `bun:"table_uuid" json:"table_uuid"`
-	FormatVersion   int    `bun:"format_version,default:2" json:"format_version"`
-	LastColumnID    int    `bun:"last_column_id,default:0" json:"last_column_id"`
-	LastPartitionID int    `bun:"last_partition_id,default:999" json:"last_partition_id"`
-
-	LastModified time.Time `bun:"last_modified,notnull,default:current_timestamp" json:"last_modified"`
-
-	TimeAuditable
-
-	// Relations
-	Table *Table `bun:"rel:belongs-to,join:table_id=id"`
 }
 
 // TableColumn represents the table_columns table for column definitions
@@ -146,13 +74,11 @@ type TableColumn struct {
 	ID              int    `bun:"id,pk,autoincrement" json:"id"`
 	TableID         int64  `bun:"table_id,notnull" json:"table_id"`
 	ColumnName      string `bun:"column_name,notnull" json:"column_name"`
-	DisplayName     string `bun:"display_name" json:"display_name"`
 	DataType        string `bun:"data_type,notnull" json:"data_type"`
 	IsNullable      bool   `bun:"is_nullable,notnull,default:true" json:"is_nullable"`
 	IsPrimary       bool   `bun:"is_primary,notnull,default:false" json:"is_primary"`
 	IsUnique        bool   `bun:"is_unique,notnull,default:false" json:"is_unique"`
 	DefaultValue    string `bun:"default_value" json:"default_value"`
-	Description     string `bun:"description" json:"description"`
 	OrdinalPosition int    `bun:"ordinal_position,notnull" json:"ordinal_position"`
 	MaxLength       int    `bun:"max_length" json:"max_length"`
 	Precision       int    `bun:"precision" json:"precision"`
@@ -322,11 +248,11 @@ type SchemaVersion struct {
 type ChangeLog struct {
 	bun.BaseModel `bun:"table:__cdc_log"`
 
-	ID        int64  `bun:"id,pk,autoincrement" json:"id"`
-	Timestamp string `bun:"timestamp,notnull" json:"timestamp"`
-	TableName string `bun:"tablename,notnull" json:"tablename"`
-	Operation string `bun:"operation,notnull" json:"operation"`
-	Before    string `bun:"before" json:"before"` // JSON string of OLD values
-	After     string `bun:"after" json:"after"`   // JSON string of NEW values
-	CreatedAt string `bun:"created_at,notnull" json:"created_at"`
+	ID        int64   `bun:"id,pk,autoincrement" json:"id"`
+	Timestamp string  `bun:"timestamp,notnull" json:"timestamp"`
+	TableName string  `bun:"tablename,notnull" json:"tablename"`
+	Operation string  `bun:"operation,notnull" json:"operation"`
+	Before    *string `bun:"before" json:"before,omitempty"` // JSON string of OLD values (nullable for INSERT)
+	After     *string `bun:"after" json:"after,omitempty"`   // JSON string of NEW values (nullable for DELETE)
+	CreatedAt string  `bun:"created_at,notnull" json:"created_at"`
 }

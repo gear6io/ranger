@@ -74,23 +74,7 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	}
 
 	// Create table-related metadata tables
-
-	// Table metadata table (enhanced schema and engine info)
-	if _, err := tx.NewCreateTable().
-		Model((*regtypes.TableMetadata)(nil)).
-		ForeignKey(`("table_id") REFERENCES "tables" ("id") ON DELETE CASCADE`).
-		Exec(ctx); err != nil {
-		return errors.New(MigrationTableCreationFailed, "failed to create table_metadata table", err)
-	}
-
-	// Table metadata indexes (enhanced)
-	tableMetadataIndexes := []string{
-		`CREATE INDEX IF NOT EXISTS idx_table_metadata_table ON table_metadata(table_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_table_metadata_uuid ON table_metadata(table_uuid)`,
-		`CREATE INDEX IF NOT EXISTS idx_table_metadata_storage ON table_metadata(storage_engine)`,
-		`CREATE INDEX IF NOT EXISTS idx_table_metadata_partition ON table_metadata(partition_strategy)`,
-		`CREATE INDEX IF NOT EXISTS idx_table_metadata_validation ON table_metadata(strict_validation, strict_compliance)`,
-	}
+	// Note: TableMetadata fields have been moved to the Table struct
 
 	// Table files table (file tracking)
 	if _, err := tx.NewCreateTable().
@@ -216,7 +200,6 @@ func (m *Migration001) Up(ctx context.Context, tx bun.Tx) error {
 	allIndexes := [][]string{
 		databaseIndexes,
 		tableIndexes,
-		tableMetadataIndexes,
 		tableFilesIndexes,
 		tablePartitionsIndexes,
 		tableColumnsIndexes,
