@@ -47,10 +47,6 @@ func (s *MemoryEventStore) StoreEvent(ctx context.Context, event any) error {
 		table = e.Table
 		eventID = e.ID
 		operation = e.Operation
-	case Event[regtypes.TableMetadata]:
-		table = e.Table
-		eventID = e.ID
-		operation = e.Operation
 	case Event[regtypes.TableStatistic]:
 		table = e.Table
 		eventID = e.ID
@@ -100,8 +96,6 @@ func (s *MemoryEventStore) GetEvents(ctx context.Context, table string, limit in
 			eventID = e.ID
 		case Event[regtypes.TableFile]:
 			eventID = e.ID
-		case Event[regtypes.TableMetadata]:
-			eventID = e.ID
 		case Event[regtypes.TableStatistic]:
 			eventID = e.ID
 		default:
@@ -145,8 +139,6 @@ func (s *MemoryEventStore) CleanupProcessedEvents() {
 			case Event[regtypes.Table]:
 				eventID = e.ID
 			case Event[regtypes.TableFile]:
-				eventID = e.ID
-			case Event[regtypes.TableMetadata]:
 				eventID = e.ID
 			case Event[regtypes.TableStatistic]:
 				eventID = e.ID

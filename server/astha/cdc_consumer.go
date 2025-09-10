@@ -22,9 +22,6 @@ type TableEvent = Event[regtypes.Table]
 // TableFileEvent represents an event with TableFile data
 type TableFileEvent = Event[regtypes.TableFile]
 
-// TableMetadataEvent represents an event with TableMetadata data
-type TableMetadataEvent = Event[regtypes.TableMetadata]
-
 // TableStatisticEvent represents an event with TableStatistic data
 type TableStatisticEvent = Event[regtypes.TableStatistic]
 
@@ -236,18 +233,6 @@ func (c *CDCConsumer) convertChangeToEvent(change regtypes.ChangeLog) (any, erro
 		}
 		return event, nil
 
-	case "table_metadata":
-		event, err := convertChangeToEventGeneric[regtypes.TableMetadata](change)
-		if err != nil {
-			c.logger.Error().
-				Err(err).
-				Str("table", change.TableName).
-				Str("operation", change.Operation).
-				Msg("Failed to parse table data")
-			return nil, errors.New(ErrCDCParseDataFailed, "failed to parse table data", err)
-		}
-		return event, nil
-
 	case "table_statistics":
 		event, err := convertChangeToEventGeneric[regtypes.TableStatistic](change)
 		if err != nil {
@@ -343,11 +328,6 @@ func ConvertToTableEvent(change regtypes.ChangeLog) (TableEvent, error) {
 // ConvertToTableFileEvent converts a CDC change to a TableFileEvent with type safety
 func ConvertToTableFileEvent(change regtypes.ChangeLog) (TableFileEvent, error) {
 	return convertChangeToEventGeneric[regtypes.TableFile](change)
-}
-
-// ConvertToTableMetadataEvent converts a CDC change to a TableMetadataEvent with type safety
-func ConvertToTableMetadataEvent(change regtypes.ChangeLog) (TableMetadataEvent, error) {
-	return convertChangeToEventGeneric[regtypes.TableMetadata](change)
 }
 
 // ConvertToTableStatisticEvent converts a CDC change to a TableStatisticEvent with type safety

@@ -367,9 +367,6 @@ func (cti *CompleteTableInfo) loadTableStatistics(ctx context.Context) ([]*regty
 
 // SchemaData represents the complete schema data for a table
 type SchemaData struct {
-	Database string                  `json:"database"`
-	Table    string                  `json:"table"`
-	TableID  int64                   `json:"table_id"`
-	Columns  []*regtypes.TableColumn `json:"columns"`
-	// Note: Metadata fields are now part of the Table struct itself
+	Table   *regtypes.Table         `json:"table"`
+	Columns []*regtypes.TableColumn `json:"columns"`
 }

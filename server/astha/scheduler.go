@@ -313,10 +313,6 @@ func (s *Scheduler) distributeEventToSubscribers(event any, subscribers []string
 			eventID = e.ID
 			table = e.Table
 			operation = e.Operation
-		case Event[regtypes.TableMetadata]:
-			eventID = e.ID
-			table = e.Table
-			operation = e.Operation
 		case Event[regtypes.TableStatistic]:
 			eventID = e.ID
 			table = e.Table
@@ -342,15 +338,6 @@ func (s *Scheduler) distributeEventToSubscribers(event any, subscribers []string
 				CreatedAt: e.CreatedAt,
 			}
 		case Event[regtypes.TableFile]:
-			eventAny = Event[any]{
-				ID:        e.ID,
-				Table:     e.Table,
-				Operation: e.Operation,
-				Data:      e.Data,
-				Timestamp: e.Timestamp,
-				CreatedAt: e.CreatedAt,
-			}
-		case Event[regtypes.TableMetadata]:
 			eventAny = Event[any]{
 				ID:        e.ID,
 				Table:     e.Table,

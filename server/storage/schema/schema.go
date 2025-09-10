@@ -74,7 +74,7 @@ func (s *Schema) prePopulateCache(ctx context.Context) error {
 			schema,
 			"registry",
 			"initial_load",
-			schemaData.TableID,
+			schemaData.Table.ID,
 			false, // Not a new table during initialization
 		)
 	}
@@ -215,27 +215,6 @@ func (s *Schema) GetCacheStats() CacheStats {
 	return s.cache.GetStats()
 }
 
-// RegisterWithAstha registers the schema manager as an Astha subscriber
-// Requirement 5.1: WHEN Schema Manager starts THEN it SHALL register as an Astha subscriber for table creation events
-// Requirement 5.2: WHEN new tables are created THEN Astha SHALL notify all subscribed components
-func (s *Schema) RegisterWithAstha(asthaInstance AsthaInterface) error {
-	subscriber := NewSchemaManagerSubscriber(s, s.logger)
-
-	componentInfo := subscriber.GetComponentInfo()
-
-	err := asthaInstance.RegisterComponentWithInstance(componentInfo, subscriber)
-	if err != nil {
-		return err
-	}
-
-	s.logger.Info().
-		Str("component", componentInfo.Name).
-		Strs("subscriptions", componentInfo.Subscriptions).
-		Msg("Successfully registered schema manager with Astha")
-
-	return nil
-}
-
 // PerformMaintenanceCleanup performs comprehensive cache maintenance
 // Requirement 6.4: WHEN cache refresh fails THEN the system SHALL retry with exponential backoff
 func (s *Schema) PerformMaintenanceCleanup() error {
@@ -262,7 +241,7 @@ func (s *Schema) GetParquetConfigForTable(ctx context.Context, database, tableNa
 	config := parquet.DefaultParquetConfig()
 
 	// Override with table metadata settings
-	if err := s.applyTableMetadataToConfig(config, schemaData.Metadata); err != nil {
+	if err := s.applyTableMetadataToConfig(config, schemaData.Table); err != nil {
 		return nil, err
 	}
 
@@ -270,18 +249,18 @@ func (s *Schema) GetParquetConfigForTable(ctx context.Context, database, tableNa
 }
 
 // applyTableMetadataToConfig applies table metadata settings to parquet config
-func (s *Schema) applyTableMetadataToConfig(config *parquet.ParquetConfig, metadata *regtypes.TableMetadata) error {
+func (s *Schema) applyTableMetadataToConfig(config *parquet.ParquetConfig, table *regtypes.Table) error {
 	// Apply compression setting
-	if metadata.Compression != "" {
-		config.Compression = metadata.Compression
+	if table.Compression != "" {
+		config.Compression = table.Compression
 	}
 
 	// Parse Settings JSON for additional parquet-specific settings
-	if metadata.Settings != "" {
+	if table.Settings != "" {
 		var settings map[string]interface{}
-		if err := json.Unmarshal([]byte(metadata.Settings), &settings); err != nil {
+		if err := json.Unmarshal([]byte(table.Settings), &settings); err != nil {
 			return errors.New(ErrSchemaManagerRetrievalError, "failed to parse table settings JSON", err).
-				AddContext("settings", metadata.Settings)
+				AddContext("settings", table.Settings)
 		}
 
 		// Apply parquet-specific settings from JSON

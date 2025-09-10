@@ -71,10 +71,8 @@ func (sm *Store) buildSchemaDataFromRelations(databases []DatabaseWithRelations)
 		for _, table := range db.Tables {
 			cacheKey := fmt.Sprintf("%s.%s", db.Name, table.Name)
 			schemas[cacheKey] = &SchemaData{
-				Database: db.Name,
-				Table:    table.Name,
-				TableID:  table.ID,
-				Columns:  table.Columns, // Bun already loaded these
+				Table:   &table.Table,
+				Columns: table.Columns, // Bun already loaded these
 				// Note: Metadata fields are now part of the Table struct itself
 			}
 		}
@@ -86,10 +84,8 @@ func (sm *Store) buildSchemaDataFromRelations(databases []DatabaseWithRelations)
 // buildSchemaDataFromTable converts table relation to SchemaData
 func (sm *Store) buildSchemaDataFromTable(table TableWithRelations) *SchemaData {
 	return &SchemaData{
-		Database: table.Database.Name,
-		Table:    table.Name,
-		TableID:  table.ID,
-		Columns:  table.Columns, // Bun already loaded these
+		Table:   &table.Table,
+		Columns: table.Columns, // Bun already loaded these
 		// Note: Metadata fields are now part of the Table struct itself
 	}
 }

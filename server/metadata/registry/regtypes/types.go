@@ -61,6 +61,7 @@ type Table struct {
 	Settings      string `bun:"settings,default:'{}'" json:"settings"`
 	PartitionBy   string `bun:"partition_by" json:"partition_by"`
 	OrderBy       string `bun:"order_by" json:"order_by"`
+	Compression   string `bun:"compression,notnull" json:"compression"`
 
 	// Relations
 	Database *Database `bun:"rel:belongs-to,join:database_id=id"`

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/gear6io/ranger/server/astha"
@@ -245,103 +244,6 @@ func (mm *MetadataManager) GetCatalog() catalog.CatalogInterface {
 	return mm.iceberg
 }
 
-// CreateTableWithSchema creates a table with schema in a single transaction
-// Enhanced with Iceberg type validation, proper error handling, and rollback mechanisms
-// This method implements Requirements 3.1-3.7 for transactional schema storage
-func (mm *MetadataManager) CreateTableWithSchema(ctx context.Context, databaseName string, table *regtypes.Table, columns []*regtypes.TableColumn) (int64, error) {
-	startTime := time.Now()
-
-	// Generate transaction ID for tracking
-	transactionID := fmt.Sprintf("create_table_%d", time.Now().UnixNano())
-
-	// Log operation start
-	mm.logger.Info().
-		Str("database", databaseName).
-		Str("table_name", table.Name).
-		Int("column_count", len(columns)).
-		Str("transaction_id", transactionID).
-		Msg("CREATE TABLE with schema started")
-
-	mm.mu.RLock()
-	if !mm.running {
-		mm.mu.RUnlock()
-
-		err := errors.New(MetadataManagerNotRunning, "metadata manager is not running", nil)
-		return 0, err
-	}
-	mm.mu.RUnlock()
-
-	// Validate input parameters with comprehensive error handling
-	if databaseName == "" {
-		err := errors.New(MetadataOperationFailed, "database name is required", nil)
-		return 0, err
-	}
-
-	if table == nil {
-		err := errors.New(MetadataOperationFailed, "table cannot be nil", nil)
-		return 0, err
-	}
-
-	if len(columns) == 0 {
-		err := errors.New(MetadataOperationFailed, "table must have at least one column", nil)
-		return 0, err
-	}
-
-	// Requirement 3.3: Schema validation before registry storage using Iceberg types
-	if err := mm.validateSchemaWithIcebergTypes(table, columns); err != nil {
-		mm.logger.Error().Err(err).
-			Str("database", databaseName).
-			Str("table_name", table.Name).
-			Int("column_count", len(columns)).
-			Str("transaction_id", transactionID).
-			Msg("Schema validation failed")
-
-		return 0, err
-	}
-
-	// Validate table metadata consistency
-	if err := mm.validateTableMetadata(table); err != nil {
-		mm.logger.Error().Err(err).
-			Str("database", databaseName).
-			Str("table_name", table.Name).
-			Str("transaction_id", transactionID).
-			Msg("Table metadata validation failed")
-
-		return 0, err
-	}
-
-	// Requirement 3.1 & 3.2: Create table metadata and columns in single transaction
-	// Requirement 3.4: Proper error handling and rollback mechanisms
-	tableID, err := mm.CreateTableWithColumns(ctx, databaseName, table, columns)
-	if err != nil {
-		mm.logger.Error().Err(err).
-			Str("database", databaseName).
-			Str("table_name", table.Name).
-			Int("column_count", len(columns)).
-			Str("transaction_id", transactionID).
-			Msg("Failed to create table with schema in registry")
-
-		return 0, err
-	}
-
-	// Requirement 3.5: Complete schema immediately queryable from registry
-	totalDuration := time.Since(startTime)
-
-	// Log successful creation for audit trail with enhanced context
-	mm.logger.Info().
-		Int64("table_id", tableID).
-		Str("database", databaseName).
-		Str("table_name", table.Name).
-		Int("column_count", len(columns)).
-		Bool("is_temporary", table.IsTemporary).
-		Bool("is_external", table.IsExternal).
-		Str("transaction_id", transactionID).
-		Dur("duration", totalDuration).
-		Msg("Successfully created table with schema")
-
-	return tableID, nil
-}
-
 // validateSchemaWithIcebergTypes validates all column types using Iceberg type system
 // This method implements comprehensive schema validation using the centralized Iceberg type system
 func (mm *MetadataManager) validateSchemaWithIcebergTypes(table *regtypes.Table, columns []*regtypes.TableColumn) error {
@@ -433,22 +335,6 @@ func (mm *MetadataManager) validateTableMetadata(table *regtypes.Table) error {
 	// Validate database name if provided (table.Database is a relation, not a string field)
 	// Database validation is handled at the method parameter level
 
-	// Validate table type
-	if table.TableType != "" {
-		validTypes := []string{"user", "system", "view", "temporary"}
-		isValid := false
-		for _, tableType := range validTypes {
-			if table.TableType == tableType {
-				isValid = true
-				break
-			}
-		}
-		if !isValid {
-			return fmt.Errorf("invalid table type '%s'. Supported types: %v",
-				table.TableType, validTypes)
-		}
-	}
-
 	// Validate numeric fields
 	if table.RowCount < 0 {
 		return fmt.Errorf("row count cannot be negative")
@@ -458,16 +344,6 @@ func (mm *MetadataManager) validateTableMetadata(table *regtypes.Table) error {
 	}
 	if table.TotalSize < 0 {
 		return fmt.Errorf("total size cannot be negative")
-	}
-
-	// Validate consistency between temporary flag and table type
-	if table.IsTemporary && table.TableType != "temporary" && table.TableType != "" {
-		return fmt.Errorf("temporary table flag conflicts with table type '%s'", table.TableType)
-	}
-
-	// Validate external table constraints
-	if table.IsExternal && table.IsTemporary {
-		return fmt.Errorf("table cannot be both external and temporary")
 	}
 
 	return nil

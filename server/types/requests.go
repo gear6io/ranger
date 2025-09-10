@@ -12,16 +12,6 @@ type UserContext struct {
 	IsAdmin  bool   `json:"is_admin"`
 }
 
-// CreateTableRequest represents a request to create a table
-type CreateTableRequest struct {
-	Statement     interface{}            `json:"statement"` // Use interface{} to avoid import cycle
-	Database      string                 `json:"database"`
-	RequestID     string                 `json:"request_id"`
-	UserContext   *UserContext           `json:"user_context"`
-	StorageEngine string                 `json:"storage_engine"`
-	EngineConfig  map[string]interface{} `json:"engine_config"`
-}
-
 // CreateTableResponse represents the response from creating a table
 type CreateTableResponse struct {
 	TableID  int64                  `json:"table_id"`

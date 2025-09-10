@@ -239,7 +239,7 @@ func ConvertRegistryDataToIcebergSchema(schemaData *registry.SchemaData) (*icebe
 			return nil, errors.New(ParquetSchemaTypeConversionFailed, "failed to parse registry data type", err).
 				AddContext("column", col.ColumnName).
 				AddContext("data_type", col.DataType).
-				AddContext("database", schemaData.Database).
+				AddContext("database", schemaData.Table.Database.Name).
 				AddContext("table", schemaData.Table)
 		}
 

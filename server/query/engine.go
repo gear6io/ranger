@@ -172,7 +172,7 @@ func (e *Engine) getDatabaseFromContext(queryCtx *types.QueryContext) string {
 // getDefaultStorageEngine returns the default storage engine for CREATE TABLE operations
 func (e *Engine) getDefaultStorageEngine() string {
 	// Default to iceberg storage engine
-	return "iceberg"
+	return "FILESYSTEM"
 }
 
 // getDefaultEngineConfig returns the default engine configuration for CREATE TABLE operations
@@ -372,32 +372,8 @@ func (e *Engine) executeCreateTable(ctx context.Context, stmt *parser.CreateTabl
 		}
 	}
 
-	// Create user context for the request
-	userCtx := &types.UserContext{
-		UserID:   0, // Default user ID - would be set by authentication layer
-		Username: queryCtx.User,
-		Database: database,
-		IsAdmin:  false, // Default to non-admin - would be set by authentication layer
-	}
-
-	// Determine storage engine
-	storageEngine := e.getDefaultStorageEngine()
-	if stmt.StorageEngine != nil {
-		storageEngine = stmt.StorageEngine.Value
-	}
-
-	// Create Storage Manager request
-	req := &types.CreateTableRequest{
-		Statement:     stmt,
-		Database:      database,
-		RequestID:     requestID,
-		UserContext:   userCtx,
-		StorageEngine: storageEngine,
-		EngineConfig:  e.getDefaultEngineConfig(),
-	}
-
 	// Delegate to Storage Manager (proper abstraction)
-	response, err := e.storageMgr.CreateTable(ctx, req)
+	response, err := e.storageMgr.CreateTable(ctx, stmt)
 	if err != nil {
 		e.logger.Error().Err(err).
 			Str("request_id", requestID).

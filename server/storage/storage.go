@@ -16,7 +16,6 @@ import (
 	"github.com/gear6io/ranger/server/config"
 	"github.com/gear6io/ranger/server/metadata"
 	"github.com/gear6io/ranger/server/metadata/registry"
-	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
 	"github.com/gear6io/ranger/server/paths"
 	"github.com/gear6io/ranger/server/query/parser"
 	"github.com/gear6io/ranger/server/storage/filesystem"
@@ -314,114 +313,48 @@ func generateTableFileName(tableName string, date time.Time, ulid string) string
 // ============================================================================
 
 // CreateTable creates a new table with parsed CREATE TABLE statement
-func (s *Storage) CreateTable(ctx context.Context, req *types.CreateTableRequest) (*types.CreateTableResponse, error) {
+func (s *Storage) CreateTable(ctx context.Context, stmt *parser.CreateTableStmt) (*types.CreateTableResponse, error) {
 	startTime := time.Now()
-
-	s.logger.Info().
-		Str("database", req.Database).
-		Str("storage_engine", req.StorageEngine).
-		Str("request_id", req.RequestID).
-		Msg("Starting CREATE TABLE operation")
-
-	// Cast the statement interface{} to the proper type
-	stmt, ok := req.Statement.(*parser.CreateTableStmt)
-	if !ok {
-		err := errors.Newf(ErrStorageManagerUnsupportedType, "invalid statement type - expected *parser.CreateTableStmt, received type: %T", req.Statement).
-			AddContext("database", req.Database).
-			AddContext("request_id", req.RequestID).
-			AddSuggestion("Ensure the statement is properly parsed before calling CreateTable")
-		return nil, err
-	}
-
-	// Get table name from statement
-	tableName := stmt.TableName.Table.Value
-
-	s.logger.Info().
-		Str("database", req.Database).
-		Str("table", tableName).
-		Str("storage_engine", req.StorageEngine).
-		Str("request_id", req.RequestID).
-		Msg("Creating new table with parsed statement")
 
 	// 1. Validate statement
 	if err := stmt.Validate(); err != nil {
-		return nil, errors.AddContext(err, "table_name", tableName).
-			AddContext("database", req.Database).
-			AddContext("request_id", req.RequestID)
-	}
-
-	// 2. Validate storage engine
-	if err := s.validateStorageEngine(req.StorageEngine); err != nil {
-		return nil, errors.AddContext(err, "table_name", tableName).
-			AddContext("database", req.Database).
-			AddContext("request_id", req.RequestID)
-	}
-
-	// 3. Convert to registry types
-	var tableRecord *regtypes.Table
-	var columns []*regtypes.TableColumn
-
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				panic(errors.Newf(ErrStorageManagerPanicRecovery, "failed to convert statement to registry types: %v", r))
-			}
-		}()
-
-		tableRecord = s.convertToTableRecord(req, stmt)
-		columns = s.convertToColumnRecords(stmt.TableSchema.ColumnDefinitions)
-	}()
-
-	// 4. Create table through metadata manager
-	tableID, err := s.CreateTableWithSchema(ctx, req.Database, tableRecord, columns)
-	if err != nil {
-		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "duplicate") {
-			return nil, errors.AddContext(err, "table_name", tableName).
-				AddContext("database", req.Database).
-				AddContext("request_id", req.RequestID)
-		}
-
-		return nil, errors.AddContext(err, "table_name", tableName).
-			AddContext("database", req.Database).
-			AddContext("request_id", req.RequestID)
-	}
-
-	// 5. Get storage engine
-	engine, err := s.GetEngine(req.StorageEngine)
-	if err != nil {
-		return nil, errors.AddContext(err, "table_name", tableName).
-			AddContext("database", req.Database).
-			AddContext("request_id", req.RequestID)
-	}
-
-	// 6. Setup storage environment
-	if err := engine.SetupTable(req.Database, tableName); err != nil {
 		return nil, err
 	}
 
-	// 7. Success - Create response
-	totalDuration := time.Since(startTime)
-	response := &types.CreateTableResponse{
-		TableID: tableID,
-		Success: true,
-		Metadata: &types.TableCreationMetadata{
-			CreatedAt:     time.Now(),
-			ColumnCount:   len(stmt.TableSchema.ColumnDefinitions),
-			StorageEngine: req.StorageEngine,
-			SchemaVersion: 1,
-		},
+	// 2. Validate storage engine
+	if err := s.validateStorageEngine(stmt.StorageEngine.Value); err != nil {
+		return nil, err
+	}
+
+	// 4. Create table through metadata manager
+	resp, err := s.CreateTable(ctx, stmt)
+	if err != nil {
+		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "duplicate") {
+			return nil, err
+		}
+
+		return nil, err
+	}
+
+	// 5. Get storage engine
+	engine, err := s.GetEngine(stmt.StorageEngine.Value)
+	if err != nil {
+		return nil, err
+	}
+
+	// 6. Setup storage environment
+	if err := engine.SetupTable(stmt.TableName.Database.Value, stmt.TableName.Table.Value); err != nil {
+		return nil, err
 	}
 
 	s.logger.Info().
-		Str("database", req.Database).
-		Str("table", tableName).
-		Str("storage_engine", req.StorageEngine).
-		Int64("table_id", tableID).
-		Str("request_id", req.RequestID).
-		Dur("duration", totalDuration).
+		Str("database", stmt.TableName.Database.Value).
+		Str("table", stmt.TableName.Table.Value).
+		Str("storage_engine", stmt.StorageEngine.Value).
+		Dur("duration", time.Since(startTime)).
 		Msg("Table created successfully")
 
-	return response, nil
+	return resp, nil
 }
 
 // InsertData inserts data into a table using streaming for memory efficiency
@@ -824,57 +757,4 @@ func (s *Storage) validateStorageEngine(storageEngine string) error {
 		return errors.Newf(ErrStorageManagerUnsupportedEngine, "unsupported storage engine '%s'. Available engines: %v", storageEngine, availableEngines)
 	}
 	return nil
-}
-
-// convertToTableRecord converts CREATE TABLE request to registry Table record
-func (s *Storage) convertToTableRecord(req *types.CreateTableRequest, stmt *parser.CreateTableStmt) *regtypes.Table {
-	now := time.Now()
-	return &regtypes.Table{
-		// DatabaseID will be set by the registry when creating the table
-		Name:        stmt.TableName.Table.Value,
-		DisplayName: stmt.TableName.Table.Value, // Use table name as display name
-		Description: "",                         // No description in CREATE TABLE statement
-		TableType:   "user",
-		IsTemporary: false, // TODO: Support temporary tables in parser
-		IsExternal:  false, // TODO: Support external tables in parser
-		RowCount:    0,
-		FileCount:   0,
-		TotalSize:   0,
-		TimeAuditable: regtypes.TimeAuditable{
-			CreatedAt: now,
-			UpdatedAt: now,
-		},
-	}
-}
-
-// convertToColumnRecords converts column definitions to registry TableColumn records
-func (s *Storage) convertToColumnRecords(columns map[string]*parser.ColumnDefinition) []*regtypes.TableColumn {
-	result := make([]*regtypes.TableColumn, 0, len(columns))
-	ordinalPosition := 1
-	now := time.Now()
-
-	for columnName, colDef := range columns {
-		column := &regtypes.TableColumn{
-			ColumnName:      columnName,
-			DisplayName:     columnName, // Use column name as display name
-			DataType:        colDef.DataType,
-			IsNullable:      colDef.IsNullable,
-			IsPrimary:       false, // TODO: Support primary key constraints in parser
-			IsUnique:        false, // TODO: Support unique constraints in parser
-			DefaultValue:    colDef.DefaultValue,
-			Description:     "", // No description in CREATE TABLE statement
-			OrdinalPosition: ordinalPosition,
-			MaxLength:       colDef.Length,
-			Precision:       colDef.Precision,
-			Scale:           colDef.Scale,
-			TimeAuditable: regtypes.TimeAuditable{
-				CreatedAt: now,
-				UpdatedAt: now,
-			},
-		}
-		result = append(result, column)
-		ordinalPosition++
-	}
-
-	return result
 }

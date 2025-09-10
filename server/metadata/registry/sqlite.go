@@ -12,6 +12,7 @@ import (
 	"github.com/gear6io/ranger/pkg/errors"
 	"github.com/gear6io/ranger/server/metadata/registry/regtypes"
 	"github.com/gear6io/ranger/server/metadata/registry/system"
+	"github.com/gear6io/ranger/server/query/parser"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/uptrace/bun"
 )
@@ -226,16 +227,42 @@ func (sm *Store) DatabaseExists(ctx context.Context, dbName string) bool {
 }
 
 // CreateTable creates a new table with complete metadata using Bun ORM
-// Can optionally create columns if provided
-func (sm *Store) CreateTable(ctx context.Context, database, tableName string, schema []byte, storageEngine string, settings map[string]interface{}, columns ...[]*regtypes.TableColumn) (*CompleteTableInfo, error) {
+// Accepts CreateTableStmt from parser package directly
+func (sm *Store) CreateTable(ctx context.Context, stmt *parser.CreateTableStmt) (*CompleteTableInfo, error) {
+	// Validate the statement first
+	if err := stmt.Validate(); err != nil {
+		return nil, errors.New(errors.CommonInternal, "invalid CREATE TABLE statement", err)
+	}
+
+	// Extract database and table name from the statement
+	var database, tableName string
+	if stmt.TableName.IsQualified() {
+		database = stmt.TableName.Database.Value
+		tableName = stmt.TableName.Table.Value
+	} else {
+		// If not qualified, we need to determine the database from context
+		// For now, we'll require it to be qualified or use a default
+		return nil, errors.New(errors.CommonInternal, "table name must be qualified (database.table)", nil)
+	}
+
+	// Extract storage engine
+	storageEngine := "iceberg" // default
+	if stmt.StorageEngine != nil {
+		storageEngine = stmt.StorageEngine.Value
+	}
+
+	// Extract settings
 	settingsJSON := "{}"
-	if settings != nil {
-		settingsBytes, err := json.Marshal(settings)
+	if stmt.Settings != nil {
+		settingsBytes, err := json.Marshal(stmt.Settings)
 		if err != nil {
 			return nil, errors.New(errors.CommonInternal, "failed to marshal engine config", err)
 		}
 		settingsJSON = string(settingsBytes)
 	}
+
+	// Convert column definitions to registry types
+	columns := sm.convertColumnDefinitions(stmt.TableSchema.ColumnDefinitions)
 
 	tableRecord := &regtypes.Table{
 		Name:          tableName,
@@ -263,17 +290,15 @@ func (sm *Store) CreateTable(ctx context.Context, database, tableName string, sc
 			return errors.New(errors.CommonInternal, "failed to create table", err).AddContext("table", tableName)
 		}
 
-		// Create column records if provided
-		if len(columns) > 0 && len(columns[0]) > 0 {
-			for _, column := range columns[0] {
-				column.TableID = tableRecord.ID
-				// Timestamps will be set by SQLite DEFAULT values¯
-				_, err = tx.NewInsert().Model(column).Exec(ctx)
-				if err != nil {
-					return errors.New(errors.CommonInternal, "failed to create table column", err).
-						AddContext("table", tableName).
-						AddContext("column", column.ColumnName)
-				}
+		// Create column records
+		for _, column := range columns {
+			column.TableID = tableRecord.ID
+			// Timestamps will be set by SQLite DEFAULT values
+			_, err = tx.NewInsert().Model(column).Exec(ctx)
+			if err != nil {
+				return errors.New(errors.CommonInternal, "failed to create table column", err).
+					AddContext("table", tableName).
+					AddContext("column", column.ColumnName)
 			}
 		}
 
@@ -291,6 +316,31 @@ func (sm *Store) CreateTable(ctx context.Context, database, tableName string, sc
 
 	// Return the complete table info using the existing method
 	return sm.GetCompleteTableInfoByID(ctx, tableRecord.ID)
+}
+
+// convertColumnDefinitions converts parser ColumnDefinition to regtypes.TableColumn
+func (sm *Store) convertColumnDefinitions(columnDefs map[string]*parser.ColumnDefinition) []*regtypes.TableColumn {
+	columns := make([]*regtypes.TableColumn, 0, len(columnDefs))
+	ordinalPosition := 1
+
+	for columnName, colDef := range columnDefs {
+		column := &regtypes.TableColumn{
+			ColumnName:      columnName,
+			DataType:        colDef.DataType,
+			IsNullable:      colDef.IsNullable,
+			IsPrimary:       false, // Primary key detection would need additional logic
+			IsUnique:        colDef.Unique,
+			DefaultValue:    colDef.DefaultValue,
+			OrdinalPosition: ordinalPosition,
+			MaxLength:       colDef.Length,
+			Precision:       colDef.Precision,
+			Scale:           colDef.Scale,
+		}
+		columns = append(columns, column)
+		ordinalPosition++
+	}
+
+	return columns
 }
 
 // DropTable drops a table from the specified database
